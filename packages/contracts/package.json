@@ -1,0 +1,36 @@
+{
+  "name": "@mgx/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contrats de l'API MG-Exchange (schémas Zod des requêtes, réponses et erreurs), partagés avec les clients web et mobile.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning ./node_modules/jest/bin/jest.js",
+    "test:unit": "pnpm run test"
+  },
+  "dependencies": {
+    "@mgx/validation": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@jest/globals": "catalog:",
+    "@mgx/config": "workspace:*",
+    "jest": "catalog:",
+    "ts-jest": "catalog:",
+    "typescript": "catalog:"
+  }
+}

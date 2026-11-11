@@ -1,0 +1,151 @@
+# Intégration continue de MG-Exchange (GitHub Actions).
+#
+# EMPLACEMENT PROVISOIRE — GitHub n'exécute que les fichiers du dossier `.github/workflows/`,
+# et l'outil qui a préparé ce dépôt n'est pas autorisé à y écrire. Pour activer la CI,
+# déplacer ce fichier (puis retirer ce bandeau) :
+#
+#   git mv infrastructure/ci/ci.yml .github/workflows/ci.yml
+#   git commit -m "ci: activer l'intégration continue" && git push
+#
+# Sur github.com : ouvrir ce fichier, « Edit », remplacer son chemin par
+# `.github/workflows/ci.yml`, puis valider sur la branche de la demande de fusion.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Principe du moindre privilège : lecture seule du dépôt.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Qualité, build et tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24]
+
+    services:
+      postgres:
+        image: postgres:18-bookworm
+        env:
+          POSTGRES_PASSWORD: ci-disposable-instance
+          # Base créée par l'image au démarrage : la base fantôme du contrôle de dérive.
+          POSTGRES_DB: mgx_shadow
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready --host 127.0.0.1 --username postgres"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+
+    env:
+      # Instances jetables du job : ces identifiants n'existent nulle part ailleurs.
+      TEST_DATABASE_ADMIN_URL: postgresql://postgres:ci-disposable-instance@127.0.0.1:5432/postgres
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Installer les dépendances (lockfile figé)
+        run: pnpm install --frozen-lockfile
+
+      - name: Mise en forme
+        run: pnpm format:check
+
+      - name: Build
+        run: pnpm build
+
+      - name: Analyse statique (ESLint, règles d'architecture)
+        run: pnpm lint
+
+      - name: Vérification des types
+        run: pnpm typecheck
+
+      - name: Les migrations correspondent au schéma Prisma
+        env:
+          # Base fantôme jetable : Prisma la vide, y rejoue les migrations, puis compare.
+          SHADOW_DATABASE_URL: postgresql://postgres:ci-disposable-instance@127.0.0.1:5432/mgx_shadow
+        run: pnpm db:check-drift
+
+      - name: Tests unitaires, d'intégration et de bout en bout
+        run: pnpm test
+
+      - name: Vulnérabilités connues des dépendances de production
+        run: pnpm audit:deps
+
+  docker:
+    name: Images Docker et pile Compose
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Générer un fichier .env jetable
+        run: |
+          {
+            echo "POSTGRES_SUPERUSER_PASSWORD=$(openssl rand -hex 24)"
+            echo "MGX_DB_OWNER_PASSWORD=$(openssl rand -hex 24)"
+            echo "MGX_DB_APP_PASSWORD=$(openssl rand -hex 24)"
+            echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
+          } > .env
+
+      - name: Valider la configuration Compose
+        run: docker compose --profile app config --quiet
+
+      - name: Construire les images et démarrer la pile complète
+        run: docker compose --profile app up --build --detach --wait --wait-timeout 180
+
+      - name: Test de fumée à travers Nginx
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8080/health/live
+          echo
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/v1/system/status
+          echo
+          # La sonde de disponibilité indique l'état de chaque dépendance : Nginx ne la relaie
+          # pas et répond lui-même, au format d'erreur de l'API.
+          refusal="$(curl --silent --output /tmp/problem.json --write-out '%{http_code} %{content_type}' http://127.0.0.1:8080/health/ready)"
+          cat /tmp/problem.json
+          test "$refusal" = "404 application/problem+json"
+          grep --quiet '"code":"NOT_FOUND"' /tmp/problem.json
+
+      # Le parcours documenté pour un poste de développement : rôle propriétaire (sans
+      # privilège de superutilisateur) et base fantôme créée par le script d'initialisation.
+      - name: Contrôle de dérive avec le rôle propriétaire et la base fantôme locale
+        run: |
+          owner_password="$(sed -n 's/^MGX_DB_OWNER_PASSWORD=//p' .env)"
+          docker compose --profile app run --rm \
+            --env "SHADOW_DATABASE_URL=postgresql://mgx_owner:${owner_password}@postgres:5432/mgx_shadow" \
+            migrate pnpm run db:check-drift
+
+      - name: Journaux en cas d'échec
+        if: failure()
+        run: docker compose --profile app logs --no-color --tail 200
+
+      - name: Arrêter la pile
+        if: always()
+        run: docker compose --profile app down --volumes

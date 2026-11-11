@@ -1,0 +1,34 @@
+{
+  "name": "@mgx/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Primitives métier partagées MG-Exchange (montants exacts sans virgule flottante).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning ./node_modules/jest/bin/jest.js",
+    "test:unit": "pnpm run test",
+    "test:cov": "pnpm run test --coverage"
+  },
+  "devDependencies": {
+    "@jest/globals": "catalog:",
+    "@mgx/config": "workspace:*",
+    "fast-check": "catalog:",
+    "jest": "catalog:",
+    "ts-jest": "catalog:",
+    "typescript": "catalog:"
+  }
+}

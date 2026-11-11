@@ -1,0 +1,121 @@
+// Schéma de données MG-Exchange — PostgreSQL 18+.
+//
+// Conventions (détail : docs/DATABASE.md)
+//  - tables au pluriel et colonnes en snake_case ; modèles et champs Prisma en camelCase ;
+//  - clés primaires UUID v7 générées par PostgreSQL (`uuidv7()`), ordonnées dans le temps ;
+//  - horodatages `timestamptz(6)` en UTC ;
+//  - les contraintes CHECK, index partiels et déclencheurs sont écrits à la main dans les
+//    migrations (Prisma ne les modélise pas) et recensés dans docs/DATABASE.md ;
+//  - toute évolution passe par `prisma migrate` : jamais de modification manuelle d'une base.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------------------
+// Paramètres système
+// ---------------------------------------------------------------------------------------
+
+/// Paramètres de la plateforme modifiables à chaud (maintenance, activation des
+/// fonctionnalités réglementées). Les clés autorisées et le schéma de leurs valeurs sont
+/// définis dans le code ; chaque modification est tracée dans `audit_logs`.
+model SystemSetting {
+  key       String   @id @db.VarChar(128)
+  value     Json
+  /// Verrou optimiste : incrémenté à chaque modification.
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}
+
+// ---------------------------------------------------------------------------------------
+// Journal d'audit
+// ---------------------------------------------------------------------------------------
+
+enum AuditActorType {
+  /// Utilisateur ou administrateur authentifié.
+  USER
+  /// La plateforme elle-même (tâche planifiée, traitement asynchrone).
+  SYSTEM
+  /// Système tiers authentifié (prestataire de paiement, webhook signé).
+  SERVICE
+
+  @@map("audit_actor_type")
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+
+  @@map("audit_outcome")
+}
+
+/// Journal d'audit des actions sensibles. Table en ajout seul : toute modification ou
+/// suppression est refusée par la base elle-même (déclencheurs `audit_logs_append_only_*`).
+model AuditLog {
+  id           String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  occurredAt   DateTime       @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  actorType    AuditActorType @map("actor_type")
+  /// Identifiant de l'acteur ; NULL uniquement pour l'acteur SYSTEM.
+  actorId      String?        @map("actor_id") @db.VarChar(64)
+  /// Action au format `ressource.verbe`, par exemple `system_setting.updated`.
+  action       String         @db.VarChar(128)
+  resourceType String         @map("resource_type") @db.VarChar(64)
+  resourceId   String?        @map("resource_id") @db.VarChar(128)
+  outcome      AuditOutcome
+  requestId    String?        @map("request_id") @db.VarChar(128)
+  ipAddress    String?        @map("ip_address") @db.Inet
+  userAgent    String?        @map("user_agent") @db.VarChar(512)
+  /// Contexte de l'action (valeurs avant/après…), expurgé de toute donnée secrète.
+  metadata     Json           @default("{}")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([actorType, actorId, occurredAt(sort: Desc)])
+  @@index([resourceType, resourceId, occurredAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------------------
+// Boîte d'envoi transactionnelle (outbox)
+// ---------------------------------------------------------------------------------------
+
+enum OutboxStatus {
+  /// En attente de publication (ou de nouvelle tentative).
+  PENDING
+  /// Remis à la file de traitement.
+  PUBLISHED
+  /// Abandonné après le nombre maximal de tentatives : intervention requise.
+  DEAD
+
+  @@map("outbox_status")
+}
+
+/// Événements de domaine écrits dans la même transaction que les données métier, puis
+/// publiés de façon asynchrone (au moins une fois) par le relais.
+model OutboxEvent {
+  id            String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  aggregateType String       @map("aggregate_type") @db.VarChar(64)
+  aggregateId   String       @map("aggregate_id") @db.VarChar(128)
+  eventType     String       @map("event_type") @db.VarChar(128)
+  payload       Json
+  /// Corrélation : identifiant de requête, acteur…
+  metadata      Json         @default("{}")
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?      @map("last_error") @db.VarChar(1024)
+  occurredAt    DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  /// Date à partir de laquelle l'événement peut être (re)publié.
+  availableAt   DateTime     @default(now()) @map("available_at") @db.Timestamptz(6)
+  publishedAt   DateTime?    @map("published_at") @db.Timestamptz(6)
+
+  @@index([aggregateType, aggregateId])
+  @@map("outbox_events")
+}
