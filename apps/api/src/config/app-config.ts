@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { type AppEnvironment, envSchema, type LogLevel, type ValidatedEnv } from './env.schema.js';
+import {
+  type AppEnvironment,
+  envSchema,
+  type LogLevel,
+  type NotificationDelivery,
+  type ValidatedEnv,
+} from './env.schema.js';
 
 export const SERVICE_NAME = 'mg-exchange-api';
 
@@ -64,6 +70,19 @@ export class AppConfig {
     readonly maxAttempts: number;
   };
 
+  readonly auth: {
+    /** Clé du HMAC des codes à usage unique. Ne jamais journaliser. */
+    readonly codeHmacSecret: string;
+    readonly codeTtlSeconds: number;
+    readonly accessTokenTtlMs: number;
+    readonly sessionIdleTtlMs: number;
+    readonly sessionAbsoluteTtlMs: number;
+    readonly refreshReuseGraceMs: number;
+    readonly passwordHash: { readonly memoryKib: number; readonly passes: number };
+  };
+
+  readonly notifications: { readonly delivery: NotificationDelivery };
+
   constructor(env: ValidatedEnv, version: string) {
     this.app = {
       name: SERVICE_NAME,
@@ -105,6 +124,25 @@ export class AppConfig {
       pollIntervalMs: env.OUTBOX_POLL_INTERVAL_MS,
       batchSize: env.OUTBOX_BATCH_SIZE,
       maxAttempts: env.OUTBOX_MAX_ATTEMPTS,
+    };
+    this.auth = {
+      codeHmacSecret: env.AUTH_CODE_HMAC_SECRET,
+      codeTtlSeconds: env.AUTH_CODE_TTL_SECONDS,
+      accessTokenTtlMs: env.AUTH_ACCESS_TOKEN_TTL_SECONDS * 1000,
+      sessionIdleTtlMs: env.AUTH_SESSION_IDLE_TTL_SECONDS * 1000,
+      sessionAbsoluteTtlMs: env.AUTH_SESSION_ABSOLUTE_TTL_SECONDS * 1000,
+      refreshReuseGraceMs: env.AUTH_REFRESH_REUSE_GRACE_SECONDS * 1000,
+      passwordHash: {
+        memoryKib: env.AUTH_PASSWORD_HASH_MEMORY_KIB,
+        passes: env.AUTH_PASSWORD_HASH_PASSES,
+      },
+    };
+    this.notifications = {
+      // Par défaut : boîte en mémoire sur les environnements de développement, rien ailleurs
+      // tant qu'aucun prestataire d'envoi n'est configuré.
+      delivery:
+        env.NOTIFICATION_DELIVERY ??
+        (['local', 'development', 'test'].includes(env.APP_ENV) ? 'memory' : 'none'),
     };
     Object.freeze(this);
   }

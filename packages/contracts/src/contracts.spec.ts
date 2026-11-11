@@ -6,8 +6,15 @@ import {
   FEATURE_KEYS,
   featureFlagsSchema,
   isErrorCode,
+  loginRequestSchema,
+  PERMISSION_KEY_PATTERN,
+  PERMISSION_KEYS,
+  permissionKeySchema,
+  PERMISSIONS,
   problemDetailsSchema,
+  registerRequestSchema,
   systemStatusSchema,
+  updateSystemSettingRequestSchema,
 } from './index.js';
 
 describe('catalogue des codes d’erreur', () => {
@@ -76,5 +83,70 @@ describe('systemStatusSchema', () => {
       features: allDisabled,
     };
     expect(systemStatusSchema.parse(status)).toEqual(status);
+  });
+});
+
+describe('contrats d’identité', () => {
+  it('l’inscription exige l’acceptation explicite des conditions et refuse toute propriété inconnue', () => {
+    const valid = {
+      email: ' Jean@Example.com ',
+      password: 'correct horse battery',
+      countryCode: 'CD',
+      acceptTerms: true,
+    };
+    expect(registerRequestSchema.parse(valid)).toEqual({ ...valid, email: 'jean@example.com' });
+
+    expect(registerRequestSchema.safeParse({ ...valid, acceptTerms: false }).success).toBe(false);
+    expect(registerRequestSchema.safeParse({ ...valid, role: 'super_admin' }).success).toBe(false);
+    expect(registerRequestSchema.safeParse({ ...valid, status: 'ACTIVE' }).success).toBe(false);
+    expect(registerRequestSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
+  });
+
+  it('la connexion n’applique pas les règles de choix du mot de passe', () => {
+    expect(loginRequestSchema.parse({ email: 'A@b.cd', password: 'old' })).toEqual({
+      email: 'a@b.cd',
+      password: 'old',
+    });
+    expect(loginRequestSchema.safeParse({ email: 'a@b.cd', password: '' }).success).toBe(false);
+    expect(
+      loginRequestSchema.safeParse({ email: 'a@b.cd', password: 'x', deviceName: ' ' }).success,
+    ).toBe(false);
+  });
+
+  it('chaque permission suit le format ressource.action et porte une description', () => {
+    expect(PERMISSION_KEYS.length).toBeGreaterThan(0);
+    for (const key of PERMISSION_KEYS) {
+      expect(key).toMatch(PERMISSION_KEY_PATTERN);
+      expect(PERMISSIONS[key].length).toBeGreaterThan(10);
+    }
+    expect(permissionKeySchema.safeParse('wallets.drain').success).toBe(false);
+  });
+
+  it('une modification de paramètre exige une valeur typée et une justification', () => {
+    expect(
+      updateSystemSettingRequestSchema.parse({
+        value: true,
+        reason: '  Regulatory approval received  ',
+      }),
+    ).toEqual({ value: true, reason: 'Regulatory approval received' });
+    expect(
+      updateSystemSettingRequestSchema.parse({
+        value: { enabled: true, message: null },
+        reason: 'Planned database upgrade',
+      }).value,
+    ).toEqual({ enabled: true, message: null });
+
+    expect(
+      updateSystemSettingRequestSchema.safeParse({ value: true, reason: 'short' }).success,
+    ).toBe(false);
+    expect(
+      updateSystemSettingRequestSchema.safeParse({ reason: 'No value provided here' }).success,
+    ).toBe(false);
+    expect(
+      updateSystemSettingRequestSchema.safeParse({
+        value: 'yes',
+        reason: 'A string is not a value',
+      }).success,
+    ).toBe(false);
   });
 });

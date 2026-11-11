@@ -12,6 +12,7 @@
     "prebuild": "pnpm run db:generate",
     "build": "nest build",
     "start": "node --enable-source-maps dist/main.js",
+    "cli": "node --enable-source-maps dist/cli/main.js",
     "prestart:dev": "pnpm run db:generate",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

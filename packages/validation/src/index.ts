@@ -1,4 +1,23 @@
 export {
+  COUNTRY_CODE_PATTERN,
+  countryCodeSchema,
+  E164_PHONE_PATTERN,
+  EMAIL_MAX_LENGTH,
+  emailSchema,
+  localeSchema,
+  PASSWORD_MAX_LENGTH,
+  PASSWORD_MIN_LENGTH,
+  passwordSchema,
+  phoneNumberSchema,
+  presentedPasswordSchema,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+  uuidSchema,
+  VERIFICATION_CODE_LENGTH,
+  VERIFICATION_CODE_PATTERN,
+  verificationCodeSchema,
+} from './identity.js';
+export {
   assetCodeSchema,
   decimalAmountSchema,
   isoDateTimeSchema,

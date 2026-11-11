@@ -35,6 +35,12 @@ L'historique des migrations (`_prisma_migrations`) n'est pas une donnée applica
 peut l'écrire peut faire rejouer ou ignorer une migration au déploiement suivant. Le rôle
 applicatif n'y a **aucun accès**, pas même en lecture.
 
+Les droits d'administration (`permissions`, `roles`, `role_permissions`, `user_roles`) sont
+en **lecture seule** pour le rôle applicatif : ils ne changent que par migration ou par
+l'outil d'amorçage en ligne de commande, exécutés avec le rôle propriétaire. Une API
+compromise ne peut donc pas s'attribuer de droits. Ce verrou sera desserré, de façon ciblée,
+lorsque l'attribution des rôles depuis le back-office sera livrée.
+
 En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
 utilisée pour les migrations.
 
@@ -96,23 +102,86 @@ Contraintes : `attempts >= 0` ; un événement est `PUBLISHED` si et seulement s
 Index : `(aggregate_type, aggregate_id)` et l'index partiel
 `outbox_events_pending_idx (available_at, id) WHERE status = 'PENDING'`, qui sert la file du relais.
 
+## Tables (phase 2 — identité)
+
+### `users` — comptes
+
+| Colonne                      | Type           | Notes                                                              |
+| ---------------------------- | -------------- | ------------------------------------------------------------------ |
+| `id`                         | `uuid`         | UUID v7                                                            |
+| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                           |
+| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`            |
+| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion |
+| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement               |
+| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                             |
+| `locale`                     | `varchar(10)`  | langue des messages                                                |
+| `terms_accepted_at`          | `timestamptz`  | acceptation des conditions d'utilisation                           |
+
+Contraintes : adresse normalisée et bien formée, téléphone E.164, code pays en majuscules,
+**un compte `ACTIVE` a toujours une adresse vérifiée**. Un compte n'est jamais supprimé :
+il est clôturé (toutes les clés étrangères vers `users` sont `ON DELETE RESTRICT`).
+
+### `user_credentials` — secret d'authentification
+
+Table séparée de `users` : aucune lecture d'un compte ne renvoie son secret.
+`password_hash` est une empreinte Argon2id au format PHC ; une contrainte refuse toute autre
+valeur — un mot de passe en clair ne peut pas y être écrit, même par erreur.
+
+### `permissions`, `roles`, `role_permissions`, `user_roles` — droits du back-office
+
+`permissions` est la copie du catalogue du code (`@mgx/contracts`) ; un test vérifie que les
+deux sont identiques. `roles` contient les rôles système (`super_admin`, qui détient toutes
+les permissions). `user_roles` attribue un rôle à un compte (`granted_by` : auteur, `NULL`
+pour l'amorçage). Tables en lecture seule pour le rôle applicatif (voir « Rôles et privilèges »).
+
+### `verification_challenges` — codes à usage unique
+
+| Colonne                                       | Notes                                                                  |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `purpose`                                     | `EMAIL_VERIFICATION`, `PASSWORD_RESET`                                 |
+| `target`                                      | adresse à laquelle le code est envoyé — la seule qu'il vérifie         |
+| `code_hash`                                   | HMAC-SHA-256 du code, clé hors base ; `NULL` tant qu'il n'est pas émis |
+| `attempts`, `max_attempts`                    | essais comptés ; la base refuse tout dépassement                       |
+| `expires_at`, `consumed_at`, `invalidated_at` | cycle de vie                                                           |
+
+Le code n'est jamais stocké. Un index unique partiel garantit **un seul code en cours** par
+compte et par usage.
+
+### `user_sessions`, `session_tokens` — sessions
+
+`user_sessions` : une ligne par connexion (appareil, adresse IP, agent utilisateur, échéances
+d'inactivité et absolue, révocation et son motif). `session_tokens` : une ligne par paire de
+jetons émise ; seules les **empreintes SHA-256** des jetons sont stockées (contrainte de
+longueur : 32 octets), `consumed_at` marque le renouvellement. Les paires renouvelées depuis
+plus de 24 heures sont supprimées au renouvellement suivant.
+
 ## Éléments écrits à la main dans les migrations
 
 Prisma ne modélise ni les contraintes `CHECK`, ni les index partiels, ni les déclencheurs.
 Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** :
 
-| Objet                                                                                                           | Table                |
-| --------------------------------------------------------------------------------------------------------------- | -------------------- |
-| `system_settings_key_format_check`, `system_settings_version_check`                                             | `system_settings`    |
-| `audit_logs_actor_id_check`, `audit_logs_action_format_check`, `audit_logs_metadata_is_object_check`            | `audit_logs`         |
-| fonction `mgx_forbid_mutation()` ; déclencheurs `audit_logs_append_only_row`, `audit_logs_append_only_truncate` | `audit_logs`         |
-| retrait des privilèges `UPDATE`, `DELETE`, `TRUNCATE` aux rôles non propriétaires                               | `audit_logs`         |
-| `outbox_events_attempts_check`, `outbox_events_published_at_check`, `outbox_events_event_type_format_check`     | `outbox_events`      |
-| index partiel `outbox_events_pending_idx`                                                                       | `outbox_events`      |
-| retrait de tout privilège aux rôles non propriétaires                                                           | `_prisma_migrations` |
+| Objet                                                                                                                                                                             | Table                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `system_settings_key_format_check`, `system_settings_version_check`                                                                                                               | `system_settings`                                        |
+| `audit_logs_actor_id_check`, `audit_logs_action_format_check`, `audit_logs_metadata_is_object_check`                                                                              | `audit_logs`                                             |
+| fonction `mgx_forbid_mutation()` ; déclencheurs `audit_logs_append_only_row`, `audit_logs_append_only_truncate`                                                                   | `audit_logs`                                             |
+| retrait des privilèges `UPDATE`, `DELETE`, `TRUNCATE` aux rôles non propriétaires                                                                                                 | `audit_logs`                                             |
+| `outbox_events_attempts_check`, `outbox_events_published_at_check`, `outbox_events_event_type_format_check`                                                                       | `outbox_events`                                          |
+| index partiel `outbox_events_pending_idx`                                                                                                                                         | `outbox_events`                                          |
+| retrait de tout privilège aux rôles non propriétaires                                                                                                                             | `_prisma_migrations`                                     |
+| `users_email_normalized_check`, `users_phone_format_check`, `users_country_code_check`, `users_active_requires_verified_email_check`, `users_phone_verified_requires_phone_check` | `users`                                                  |
+| index unique partiel `users_verified_phone_key`                                                                                                                                   | `users`                                                  |
+| `user_credentials_password_hash_format_check`                                                                                                                                     | `user_credentials`                                       |
+| `permissions_key_format_check`, `roles_key_format_check`                                                                                                                          | `permissions`, `roles`                                   |
+| `verification_challenges_attempts_check`, `…_code_hash_length_check`, `…_single_outcome_check`, `…_expiry_check`                                                                  | `verification_challenges`                                |
+| index unique partiel `verification_challenges_active_key`                                                                                                                         | `verification_challenges`                                |
+| `user_sessions_revocation_check`, `user_sessions_expiry_check`                                                                                                                    | `user_sessions`                                          |
+| `session_tokens_hash_length_check`                                                                                                                                                | `session_tokens`                                         |
+| données initiales : catalogue des permissions, rôle `super_admin`                                                                                                                 | `permissions`, `roles`, `role_permissions`               |
+| retrait des privilèges d'écriture aux rôles non propriétaires                                                                                                                     | `permissions`, `roles`, `role_permissions`, `user_roles` |
 
 Leur présence et leur effet sont vérifiés par
-`apps/api/test/integration/database-constraints.spec.ts`.
+`apps/api/test/integration/database-constraints.spec.ts` et `identity-schema.spec.ts`.
 
 ## Migrations
 
@@ -152,14 +221,18 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 
 ## Conservation des données
 
-| Table             | Règle actuelle                                                                     |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| `audit_logs`      | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)   |
-| `outbox_events`   | les événements publiés pourront être purgés après un délai — purge non implémentée |
-| `system_settings` | historique complet des changements dans `audit_logs`                               |
+| Table                       | Règle actuelle                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `audit_logs`                | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                            |
+| `outbox_events`             | les événements publiés pourront être purgés après un délai — purge non implémentée                          |
+| `system_settings`           | historique complet des changements dans `audit_logs`                                                        |
+| `users`, `user_credentials` | conservés ; un compte clôturé n'est pas supprimé. Purge des inscriptions jamais vérifiées : non implémentée |
+| `user_sessions`             | sessions expirées ou révoquées conservées (historique de sécurité) ; purge non implémentée                  |
+| `session_tokens`            | paires renouvelées supprimées après 24 heures                                                               |
+| `verification_challenges`   | conservés après usage ou expiration ; purge non implémentée                                                 |
 
 ## Tables à venir
 
-Le modèle cible (utilisateurs, KYC, portefeuilles, grand livre en partie double, échanges,
+Le modèle cible (profils, KYC, portefeuilles, grand livre en partie double, échanges,
 paiements, blockchain, P2P, séquestre, risque, support…) sera introduit phase par phase,
 chaque table arrivant avec le module qui l'utilise, ses contraintes et ses tests.

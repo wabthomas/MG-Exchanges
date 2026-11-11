@@ -7,6 +7,7 @@ import { SettingsChangedHandler } from './application/settings-changed.handler.j
 import { SystemSettingsRepository } from './application/system-settings.repository.js';
 import { SystemSettingsService } from './application/system-settings.service.js';
 import { PrismaSystemSettingsRepository } from './infrastructure/prisma-system-settings.repository.js';
+import { AdminSystemSettingsController } from './presentation/admin-system-settings.controller.js';
 import { FeatureEnabledGuard } from './presentation/feature-enabled.guard.js';
 import { MaintenanceGuard } from './presentation/maintenance.guard.js';
 import { SystemStatusController } from './presentation/system-status.controller.js';
@@ -18,7 +19,7 @@ import { SystemStatusController } from './presentation/system-status.controller.
 @Global()
 @Module({
   imports: [AuditModule, OutboxModule],
-  controllers: [SystemStatusController],
+  controllers: [SystemStatusController, AdminSystemSettingsController],
   providers: [
     { provide: SystemSettingsRepository, useClass: PrismaSystemSettingsRepository },
     SystemSettingsService,

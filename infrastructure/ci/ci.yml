@@ -112,6 +112,7 @@ jobs:
             echo "MGX_DB_OWNER_PASSWORD=$(openssl rand -hex 24)"
             echo "MGX_DB_APP_PASSWORD=$(openssl rand -hex 24)"
             echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
+            echo "AUTH_CODE_HMAC_SECRET=$(openssl rand -hex 32)"
           } > .env
 
       - name: Valider la configuration Compose
@@ -132,6 +133,19 @@ jobs:
           cat /tmp/problem.json
           test "$refusal" = "404 application/problem+json"
           grep --quiet '"code":"NOT_FOUND"' /tmp/problem.json
+
+      # Le premier administrateur se crée hors de l'API, avec le rôle propriétaire de la base
+      # (image de migration) ; le reste du parcours passe par Nginx comme un vrai client.
+      - name: Parcours d'identité à travers Nginx
+        env:
+          ADMIN_EMAIL: admin@ci.example
+          BASE_URL: http://127.0.0.1:8080
+        run: |
+          MGX_ADMIN_PASSWORD="ci-$(openssl rand -hex 16)"
+          export MGX_ADMIN_PASSWORD
+          docker compose --profile app run --rm --env MGX_ADMIN_PASSWORD \
+            migrate node dist/cli/main.js admin:create --email "$ADMIN_EMAIL"
+          infrastructure/ci/smoke-identity.sh
 
       # Le parcours documenté pour un poste de développement : rôle propriétaire (sans
       # privilège de superutilisateur) et base fantôme créée par le script d'initialisation.

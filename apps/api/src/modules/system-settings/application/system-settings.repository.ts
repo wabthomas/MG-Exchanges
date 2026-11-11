@@ -4,6 +4,7 @@ export interface StoredSetting {
   readonly key: string;
   readonly value: unknown;
   readonly version: number;
+  readonly updatedAt: Date;
 }
 
 /** Port de persistance des paramètres système (implémenté par l'infrastructure). */

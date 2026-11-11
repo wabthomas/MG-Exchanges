@@ -2,6 +2,7 @@ import { Controller, Get, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { HealthCheck, type HealthCheckResult, HealthCheckService } from '@nestjs/terminus';
 
+import { Public } from '../../common/auth/auth.decorators.js';
 import { AppError } from '../../common/errors/app-error.js';
 import { ApiProblemResponses } from '../../common/http/openapi.js';
 import { SkipRateLimit } from '../../infrastructure/rate-limit/rate-limit.decorators.js';
@@ -14,6 +15,7 @@ import { DependencyHealthIndicator } from './dependency-health.indicator.js';
  *  - `ready` : l'instance peut servir du trafic (PostgreSQL et Redis joignables).
  */
 @ApiTags('Health')
+@Public()
 @SkipRateLimit()
 @AllowDuringMaintenance()
 @Controller({ path: 'health', version: VERSION_NEUTRAL })

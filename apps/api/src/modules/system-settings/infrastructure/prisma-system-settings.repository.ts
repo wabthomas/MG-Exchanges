@@ -7,7 +7,7 @@ import {
   SystemSettingsRepository,
 } from '../application/system-settings.repository.js';
 
-const SELECTION = { key: true, value: true, version: true } as const;
+const SELECTION = { key: true, value: true, version: true, updatedAt: true } as const;
 
 @Injectable()
 export class PrismaSystemSettingsRepository extends SystemSettingsRepository {

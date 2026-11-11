@@ -3,7 +3,36 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
-## [Non publié] — Phase 1 : analyse et fondations
+## [Non publié] — Phase 2, lot 1 : comptes, authentification, sessions, autorisations
+
+### Ajouté
+
+- Inscription de comptes individuels avec vérification de l'adresse e-mail par code à usage
+  unique ; aucune réponse ne révèle l'existence d'un compte.
+- Connexion avec blocage temporaire après échecs répétés ; sessions par jetons opaques,
+  renouvellement avec détection de réutilisation, expiration par inactivité et absolue.
+- Gestion de ses sessions (liste, fermeture, déconnexion) ; mot de passe oublié,
+  réinitialisation et changement ; hachage Argon2id natif, règles de choix NIST.
+- Authentification exigée par défaut sur toutes les routes ; rôles et permissions du
+  back-office ; administration des paramètres de la plateforme (`/api/v1/admin/system-settings`).
+- Outil en ligne de commande `admin:create` : premier compte d'administration, créé hors de l'API.
+- Module de notifications : port d'envoi, modèles en français et en anglais, boîte de
+  réception de développement (`/api/v1/dev/mailbox`).
+- Migration `identity_foundations` : comptes, secrets, rôles, permissions, codes, sessions,
+  avec leurs contraintes ; tables de droits en lecture seule pour le rôle applicatif.
+- Codes d'erreur : `INVALID_CREDENTIALS`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`,
+  `INVALID_OR_EXPIRED_CODE`, `COUNTRY_NOT_SUPPORTED`.
+- Variables : `AUTH_CODE_HMAC_SECRET` (obligatoire), `AUTH_*`, `NOTIFICATION_DELIVERY`.
+- CI : parcours d'identité de bout en bout à travers Nginx (`infrastructure/ci/smoke-identity.sh`).
+- Tests : 492 au total, dont 165 sur PostgreSQL, Redis et BullMQ réels.
+- ADR 0013 à 0016.
+
+### Modifié
+
+- Document OpenAPI : schéma d'erreur partagé (`ProblemDetails`), authentification par jeton.
+- Les réponses `401` portent l'en-tête `WWW-Authenticate: Bearer`.
+
+## Phase 1 : analyse et fondations
 
 ### Ajouté
 

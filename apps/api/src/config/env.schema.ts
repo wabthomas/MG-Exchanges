@@ -9,6 +9,17 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 /** Environnements exposés à des utilisateurs ou à des données réelles : règles durcies. */
 const HARDENED_ENVIRONMENTS: readonly AppEnvironment[] = ['staging', 'production'];
 
+/** Modes de remise des notifications : boîte en mémoire (développement, tests) ou aucun. */
+export const NOTIFICATION_DELIVERY_MODES = ['memory', 'none'] as const;
+export type NotificationDelivery = (typeof NOTIFICATION_DELIVERY_MODES)[number];
+
+/**
+ * Coût minimal d'Argon2id hors développement (recommandation OWASP : 19 Mio, 2 passes).
+ * Les tests utilisent un coût réduit ; un environnement réel ne le peut pas.
+ */
+export const MIN_PASSWORD_HASH_MEMORY_KIB = 19_456;
+export const MIN_PASSWORD_HASH_PASSES = 2;
+
 const booleanFlag = z.enum(['true', 'false']).transform((value) => value === 'true');
 
 const integer = (min: number, max: number) =>
@@ -102,6 +113,31 @@ export const envSchema = z
     OUTBOX_POLL_INTERVAL_MS: integer(100, 60_000).default(1000),
     OUTBOX_BATCH_SIZE: integer(1, 1000).default(100),
     OUTBOX_MAX_ATTEMPTS: integer(1, 100).default(10),
+
+    // --- Identité et sessions ---
+    /**
+     * Clé du HMAC des codes à usage unique : un code n'est jamais stocké, et son empreinte
+     * est inexploitable sans cette clé, absente de la base de données.
+     */
+    AUTH_CODE_HMAC_SECRET: z.string().min(32, { error: 'Must be at least 32 characters.' }),
+    AUTH_CODE_TTL_SECONDS: integer(60, 3600).default(900),
+    AUTH_ACCESS_TOKEN_TTL_SECONDS: integer(60, 3600).default(600),
+    /** Durée d'inactivité au-delà de laquelle une session expire (14 jours). */
+    AUTH_SESSION_IDLE_TTL_SECONDS: integer(300, 7_776_000).default(1_209_600),
+    /** Durée de vie maximale d'une session, quelle que soit son activité (60 jours). */
+    AUTH_SESSION_ABSOLUTE_TTL_SECONDS: integer(300, 31_536_000).default(5_184_000),
+    /**
+     * Délai pendant lequel un jeton de renouvellement déjà utilisé reste accepté (réponse
+     * perdue sur un réseau instable). Au-delà, sa réutilisation révoque la session.
+     */
+    AUTH_REFRESH_REUSE_GRACE_SECONDS: integer(0, 60).default(10),
+    /** Coût d'Argon2id : mémoire (Kio) et nombre de passes. */
+    AUTH_PASSWORD_HASH_MEMORY_KIB: integer(8, 1_048_576).default(MIN_PASSWORD_HASH_MEMORY_KIB),
+    AUTH_PASSWORD_HASH_PASSES: integer(1, 10).default(MIN_PASSWORD_HASH_PASSES),
+
+    // --- Notifications ---
+    /** Par défaut : `memory` en local, development et test ; `none` ailleurs. */
+    NOTIFICATION_DELIVERY: z.enum(NOTIFICATION_DELIVERY_MODES).optional(),
   })
   .superRefine((env, context) => {
     const hardened = HARDENED_ENVIRONMENTS.includes(env.APP_ENV);
@@ -139,6 +175,30 @@ export const envSchema = z
     }
     if ((env.SWAGGER_USER === undefined) !== (env.SWAGGER_PASSWORD === undefined)) {
       issue('SWAGGER_USER', 'SWAGGER_USER and SWAGGER_PASSWORD must be set together.');
+    }
+
+    // Identité : durées cohérentes, et aucun affaiblissement possible hors développement.
+    if (env.AUTH_SESSION_IDLE_TTL_SECONDS > env.AUTH_SESSION_ABSOLUTE_TTL_SECONDS) {
+      issue('AUTH_SESSION_IDLE_TTL_SECONDS', 'Must not exceed AUTH_SESSION_ABSOLUTE_TTL_SECONDS.');
+    }
+    if (hardened && env.AUTH_PASSWORD_HASH_MEMORY_KIB < MIN_PASSWORD_HASH_MEMORY_KIB) {
+      issue(
+        'AUTH_PASSWORD_HASH_MEMORY_KIB',
+        `Must be at least ${MIN_PASSWORD_HASH_MEMORY_KIB} when APP_ENV is "${env.APP_ENV}".`,
+      );
+    }
+    if (hardened && env.AUTH_PASSWORD_HASH_PASSES < MIN_PASSWORD_HASH_PASSES) {
+      issue(
+        'AUTH_PASSWORD_HASH_PASSES',
+        `Must be at least ${MIN_PASSWORD_HASH_PASSES} when APP_ENV is "${env.APP_ENV}".`,
+      );
+    }
+    // La boîte en mémoire expose les codes à usage unique : outil de développement uniquement.
+    if (hardened && env.NOTIFICATION_DELIVERY === 'memory') {
+      issue(
+        'NOTIFICATION_DELIVERY',
+        `"memory" is a development tool and is forbidden when APP_ENV is "${env.APP_ENV}".`,
+      );
     }
   });
 

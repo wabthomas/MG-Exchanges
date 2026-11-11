@@ -37,6 +37,8 @@ export interface Problem {
   readonly code: ErrorCode;
   readonly detail: string;
   readonly errors?: readonly FieldError[] | undefined;
+  /** Délai avant nouvelle tentative (en-tête `Retry-After`), en secondes. */
+  readonly retryAfterSeconds?: number | undefined;
 }
 
 /** Traduit n'importe quelle exception en erreur publique, sans jamais exposer de détail interne. */
@@ -47,6 +49,7 @@ export function toProblem(exception: unknown): Problem {
       code: exception.code,
       detail: exception.message,
       errors: exception.errors,
+      retryAfterSeconds: exception.retryAfterSeconds,
     };
   }
 
@@ -84,6 +87,13 @@ export function sendProblem(request: Request, response: Response, problem: Probl
       : {}),
   };
 
+  if (problem.retryAfterSeconds !== undefined) {
+    response.setHeader('Retry-After', Math.max(1, Math.ceil(problem.retryAfterSeconds)));
+  }
+  // RFC 6750 : une réponse 401 indique le schéma d'authentification attendu.
+  if (problem.status === 401) {
+    response.setHeader('WWW-Authenticate', 'Bearer');
+  }
   response.status(problem.status).type(PROBLEM_JSON_MEDIA_TYPE).json(body);
 }
 

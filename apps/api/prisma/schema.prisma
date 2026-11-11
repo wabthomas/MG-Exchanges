@@ -119,3 +119,223 @@ model OutboxEvent {
   @@index([aggregateType, aggregateId])
   @@map("outbox_events")
 }
+
+// ---------------------------------------------------------------------------------------
+// Identité : comptes, secrets d'authentification, rôles et permissions
+// ---------------------------------------------------------------------------------------
+
+enum AccountType {
+  INDIVIDUAL
+  BUSINESS
+
+  @@map("account_type")
+}
+
+enum UserStatus {
+  /// Compte créé, adresse e-mail pas encore vérifiée : connexion impossible.
+  PENDING_VERIFICATION
+  ACTIVE
+  /// Bloqué par la plateforme (sécurité, conformité) : réversible.
+  SUSPENDED
+  /// Clôturé : définitif.
+  CLOSED
+
+  @@map("user_status")
+}
+
+/// Compte d'un utilisateur — client ou membre du personnel. Un compte n'est jamais supprimé
+/// physiquement : il est clôturé (`CLOSED`).
+model User {
+  id              String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountType     AccountType @default(INDIVIDUAL) @map("account_type")
+  status          UserStatus  @default(PENDING_VERIFICATION)
+  /// Adresse e-mail normalisée (minuscules) : identifiant de connexion.
+  email           String      @unique @db.VarChar(254)
+  emailVerifiedAt DateTime?   @map("email_verified_at") @db.Timestamptz(6)
+  /// Numéro de téléphone au format E.164. Unique seulement une fois vérifié (index partiel) :
+  /// un numéro simplement déclaré ne doit pas empêcher son vrai titulaire de s'inscrire.
+  phone           String?     @db.VarChar(16)
+  phoneVerifiedAt DateTime?   @map("phone_verified_at") @db.Timestamptz(6)
+  /// Pays de résidence déclaré (ISO 3166-1 alpha-2).
+  countryCode     String      @map("country_code") @db.Char(2)
+  /// Langue des messages adressés à l'utilisateur.
+  locale          String      @default("fr") @db.VarChar(10)
+  /// Acceptation des conditions d'utilisation.
+  termsAcceptedAt DateTime    @map("terms_accepted_at") @db.Timestamptz(6)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  credential   UserCredential?
+  roles        UserRole[]              @relation("RoleHolder")
+  grantedRoles UserRole[]              @relation("RoleGrantor")
+  sessions     UserSession[]
+  challenges   VerificationChallenge[]
+
+  @@map("users")
+}
+
+/// Secret d'authentification, isolé du compte : aucune lecture de `users` ne le renvoie.
+model UserCredential {
+  userId            String   @id @map("user_id") @db.Uuid
+  /// Empreinte Argon2id au format PHC : `$argon2id$v=19$m=…,t=…,p=…$sel$empreinte`.
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  passwordChangedAt DateTime @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_credentials")
+}
+
+/// Catalogue des permissions du back-office, copie de celui du code (`@mgx/contracts`).
+/// Modifié uniquement par migration.
+model Permission {
+  key         String   @id @db.VarChar(96)
+  description String   @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+/// Rôle du back-office : un ensemble nommé de permissions.
+model Role {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(128)
+  description String   @db.VarChar(512)
+  /// Rôle système : défini par migration.
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  users       UserRole[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId        String   @map("role_id") @db.Uuid
+  permissionKey String   @map("permission_key") @db.VarChar(96)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Restrict)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+/// Attribution d'un rôle à un compte.
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  /// Auteur de l'attribution ; NULL lorsqu'elle provient de l'amorçage en ligne de commande.
+  grantedBy String?  @map("granted_by") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+
+  user    User  @relation("RoleHolder", fields: [userId], references: [id], onDelete: Restrict)
+  role    Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  grantor User? @relation("RoleGrantor", fields: [grantedBy], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// ---------------------------------------------------------------------------------------
+// Identité : codes à usage unique et sessions
+// ---------------------------------------------------------------------------------------
+
+enum ChallengePurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+
+  @@map("challenge_purpose")
+}
+
+/// Code à usage unique envoyé à l'utilisateur (vérification d'adresse, réinitialisation du
+/// mot de passe). Le code lui-même n'est jamais stocké ; le nombre d'essais est borné.
+model VerificationChallenge {
+  id            String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId        String           @map("user_id") @db.Uuid
+  purpose       ChallengePurpose
+  /// Destinataire du code : c'est cette adresse, et elle seule, que le code vérifie.
+  target        String           @db.VarChar(254)
+  /// HMAC-SHA-256 du code, calculé avec une clé absente de la base. NULL tant que le code
+  /// n'a pas été émis (il l'est de façon asynchrone, à l'envoi du message).
+  codeHash      Bytes?           @map("code_hash")
+  attempts      Int              @default(0)
+  maxAttempts   Int              @map("max_attempts")
+  expiresAt     DateTime         @map("expires_at") @db.Timestamptz(6)
+  consumedAt    DateTime?        @map("consumed_at") @db.Timestamptz(6)
+  /// Remplacé par un code plus récent, ou annulé.
+  invalidatedAt DateTime?        @map("invalidated_at") @db.Timestamptz(6)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, purpose])
+  @@map("verification_challenges")
+}
+
+enum SessionRevocationReason {
+  /// Déconnexion par l'utilisateur, depuis la session elle-même.
+  LOGOUT
+  /// Révoquée par l'utilisateur depuis une autre session (gestion des appareils).
+  USER_REVOKED
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  /// Un jeton de renouvellement déjà utilisé a été présenté : vol de jeton présumé.
+  TOKEN_REUSE
+  /// Compte suspendu ou clôturé.
+  ACCOUNT_DISABLED
+  ADMIN_REVOKED
+
+  @@map("session_revocation_reason")
+}
+
+/// Session ouverte par une connexion, sur un appareil.
+model UserSession {
+  id               String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId           String                   @map("user_id") @db.Uuid
+  createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime                 @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  /// Expiration par inactivité : repoussée à chaque renouvellement des jetons.
+  idleExpiresAt    DateTime                 @map("idle_expires_at") @db.Timestamptz(6)
+  /// Expiration absolue : jamais repoussée.
+  expiresAt        DateTime                 @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime?                @map("revoked_at") @db.Timestamptz(6)
+  revocationReason SessionRevocationReason? @map("revocation_reason")
+  ipAddress        String?                  @map("ip_address") @db.Inet
+  userAgent        String?                  @map("user_agent") @db.VarChar(512)
+  deviceName       String?                  @map("device_name") @db.VarChar(64)
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokens SessionToken[]
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+/// Paire de jetons émise pour une session. Seules les empreintes SHA-256 sont stockées.
+/// Chaque renouvellement consomme la paire présentée et en émet une nouvelle ; présenter
+/// un jeton de renouvellement déjà consommé révoque la session.
+model SessionToken {
+  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  sessionId        String    @map("session_id") @db.Uuid
+  accessTokenHash  Bytes     @unique @map("access_token_hash")
+  accessExpiresAt  DateTime  @map("access_expires_at") @db.Timestamptz(6)
+  refreshTokenHash Bytes     @unique @map("refresh_token_hash")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Date d'utilisation du jeton de renouvellement.
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  session UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("session_tokens")
+}

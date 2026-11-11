@@ -37,6 +37,10 @@ Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env
 | `TRUST_PROXY_HOPS`       | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                 |
 | `CORS_ALLOWED_ORIGINS`   | selon clients         | origines autorisées                                                                              |
 | `LOG_LEVEL`              | non                   | `info` par défaut                                                                                |
+| `AUTH_CODE_HMAC_SECRET`  | oui                   | clé du HMAC des codes à usage unique (32 caractères au moins) — secret                           |
+| `AUTH_*_TTL_SECONDS`     | non                   | durées des codes, des jetons d'accès et des sessions                                             |
+| `AUTH_PASSWORD_HASH_*`   | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production           |
+| `NOTIFICATION_DELIVERY`  | non                   | `memory` (développement, tests) ou `none` ; `memory` interdit en staging et en production        |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
@@ -78,6 +82,42 @@ est corrigée par une nouvelle migration. Procédure détaillée et testée : ph
 **Première mise en service d'une base.** Créer les deux rôles et exécuter
 `infrastructure/docker/postgres/sql/grant-app-privileges.sql` (voir `DATABASE.md`) avant
 la première migration.
+
+**Rotation de `AUTH_CODE_HMAC_SECRET`.** Les codes en cours deviennent invalides (il suffit
+d'en redemander un) ; les sessions ne sont pas affectées.
+
+## Premier compte d'administration
+
+Aucune route de l'API ne permet d'obtenir un rôle. Le premier administrateur se crée en ligne
+de commande, avec le **rôle propriétaire** de la base (celui des migrations), seul autorisé à
+attribuer un rôle. L'opération est inscrite au journal d'audit.
+
+```bash
+read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD   # saisie masquée, 10 caractères au moins
+
+# poste de développement (DATABASE_MIGRATION_URL lue dans apps/api/.env)
+pnpm build && pnpm admin:create --email admin@example.com
+
+# pile conteneurisée : l'image de migration détient l'URL du rôle propriétaire
+docker compose --profile app run --rm --env MGX_ADMIN_PASSWORD \
+  migrate node dist/cli/main.js admin:create --email admin@example.com
+```
+
+Le compte reçoit le rôle `super_admin`. C'est lui qui ouvre ensuite les fonctionnalités
+(`PUT /api/v1/admin/system-settings/features.registration`…). Le mot de passe est haché avec
+le coût exigé en production, quel que soit l'environnement.
+
+## Notifications
+
+Aucun prestataire d'e-mail ou de SMS n'est encore branché (décision en attente). En
+conséquence :
+
+- en local, en développement et en test, les messages restent en mémoire et se lisent sur
+  `GET /api/v1/dev/mailbox?recipient=<adresse>` ;
+- en pré-production et en production, rien ne part : l'inscription et la réinitialisation du
+  mot de passe répondent `503` — **l'inscription ne peut donc pas être ouverte au public
+  avant le choix d'un prestataire**. Un administrateur créé en ligne de commande peut, lui,
+  se connecter.
 
 ## Environnement local avec Docker Compose
 
@@ -135,8 +175,10 @@ Il s'exécute ensuite à chaque demande de fusion et sur `main` :
    migrations/schéma, tous les tests sur PostgreSQL 18 et Redis 8 réels, audit des dépendances ;
 2. **docker** — validation de la configuration Compose, construction des images, démarrage
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
-   à travers Nginx, puis contrôle de cohérence migrations/schéma avec le rôle propriétaire
-   et la base fantôme créée par le script d'initialisation.
+   à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
+   ouverture de l'inscription, inscription, vérification, connexion, contrôle des droits),
+   puis contrôle de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme
+   créée par le script d'initialisation.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.

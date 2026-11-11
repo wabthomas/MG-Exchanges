@@ -1,4 +1,4 @@
-import type { FeatureKey } from '@mgx/contracts';
+import type { FeatureKey, SystemSettingView } from '@mgx/contracts';
 import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 
@@ -8,14 +8,16 @@ import { AuditService } from '../../audit/application/audit.service.js';
 import type { AuditActor } from '../../audit/domain/audit-entry.js';
 import { OutboxService } from '../../outbox/application/outbox.service.js';
 import {
+  defaultSettingValue,
   FEATURE_SETTING_KEYS,
   resolveSnapshot,
+  SETTING_KEYS,
   type SettingKey,
   settingSchema,
   type SettingsSnapshot,
   type SettingValue,
 } from '../domain/setting-definitions.js';
-import { SystemSettingsRepository } from './system-settings.repository.js';
+import { type StoredSetting, SystemSettingsRepository } from './system-settings.repository.js';
 
 export const SYSTEM_SETTING_CHANGED_EVENT = 'system_setting.changed';
 
@@ -24,7 +26,9 @@ const SNAPSHOT_TTL_MS = 5000;
 
 export interface SettingChangeContext {
   readonly actor: AuditActor;
-  readonly requestId?: string;
+  readonly requestId?: string | undefined;
+  readonly ipAddress?: string | undefined;
+  readonly userAgent?: string | undefined;
   /** Justification de la modification, conservée dans le journal d'audit. */
   readonly reason?: string;
 }
@@ -74,6 +78,19 @@ export class SystemSettingsService {
     this.cached = null;
   }
 
+  /** Tous les paramètres connus, avec leur valeur en vigueur — enregistrée ou par défaut. */
+  async describeAll(): Promise<SystemSettingView[]> {
+    const stored = new Map(
+      (await this.repository.findAll()).map((setting) => [setting.key, setting]),
+    );
+    return SETTING_KEYS.map((key) => toView(key, stored.get(key)));
+  }
+
+  async describe(key: SettingKey): Promise<SystemSettingView> {
+    const stored = (await this.repository.findAll()).find((setting) => setting.key === key);
+    return toView(key, stored);
+  }
+
   async set<K extends SettingKey>(
     key: K,
     value: SettingValue<K>,
@@ -99,6 +116,8 @@ export class SystemSettingsService {
         resource: { type: 'system_setting', id: key },
         outcome: 'SUCCESS',
         requestId: context.requestId,
+        ipAddress: context.ipAddress,
+        userAgent: context.userAgent,
         metadata: {
           previousValue: previous?.value ?? null,
           newValue: saved.value,
@@ -141,4 +160,25 @@ export class SystemSettingsService {
     this.cached = { snapshot, expiresAt: Date.now() + SNAPSHOT_TTL_MS };
     return snapshot;
   }
+}
+
+/** Une valeur enregistrée invalide est ignorée : c'est la valeur par défaut qui s'applique. */
+function toView(key: SettingKey, stored: StoredSetting | undefined): SystemSettingView {
+  const parsed = stored === undefined ? undefined : settingSchema(key).safeParse(stored.value);
+  if (stored === undefined || parsed?.success !== true) {
+    return {
+      key,
+      value: defaultSettingValue(key),
+      isDefault: true,
+      version: null,
+      updatedAt: null,
+    };
+  }
+  return {
+    key,
+    value: parsed.data,
+    isDefault: false,
+    version: stored.version,
+    updatedAt: stored.updatedAt.toISOString(),
+  };
 }

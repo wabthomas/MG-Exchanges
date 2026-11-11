@@ -4,10 +4,12 @@ Plateforme fintech permettant d'acheter, vendre, échanger, envoyer, recevoir et
 actifs numériques et des devises depuis une interface unique. Marché de lancement : la
 République démocratique du Congo ; l'architecture est prévue pour s'étendre à d'autres marchés.
 
-> **État : phase 1 — fondations techniques de l'API.** Aucune fonctionnalité financière n'est
-> ouverte : ni paiement, ni transfert, ni retrait. L'application web, les applications mobiles
-> et le back-office n'existent pas encore (phase 7). L'avancement détaillé, les résultats de
-> tests et les limites connues sont dans [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **État : phase 2 en cours — comptes, authentification, sessions et autorisations sont
+> livrés ; second facteur, profil et KYC restent à faire.** Aucune fonctionnalité financière
+> n'existe : ni paiement, ni transfert, ni retrait. L'inscription est fermée par défaut.
+> L'application web, les applications mobiles et le back-office n'existent pas encore
+> (phase 7). L'avancement détaillé, les résultats de tests et les limites connues sont dans
+> [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Ce que contient le dépôt
 
@@ -48,11 +50,16 @@ docker compose up -d
 # 2. Dépendances et configuration de l'API
 pnpm install
 cp apps/api/.env.example apps/api/.env   # reporter les mots de passe du fichier .env racine
+                                         # et générer AUTH_CODE_HMAC_SECRET : openssl rand -hex 32
 
 # 3. Schéma de base de données, compilation, lancement
 pnpm db:migrate:deploy
 pnpm build
 pnpm dev:api
+
+# 4. Premier compte d'administration (hors de l'API, voir docs/DEPLOYMENT.md)
+read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
+pnpm admin:create --email admin@example.com
 ```
 
 L'API écoute sur `http://localhost:3000` :
@@ -61,8 +68,17 @@ L'API écoute sur `http://localhost:3000` :
 | ----------------------- | ----------------------------------------------------------- |
 | `/api/docs`             | documentation interactive (Swagger UI) — développement seul |
 | `/api/v1/system/status` | état de la plateforme et fonctionnalités ouvertes           |
+| `/api/v1/auth/…`        | inscription, connexion, session, mot de passe               |
+| `/api/v1/me`            | compte connecté et ses sessions                             |
+| `/api/v1/admin/…`       | back-office (permissions requises)                          |
+| `/api/v1/dev/mailbox`   | messages « envoyés » — développement seul                   |
 | `/health/live`          | sonde de vivacité                                           |
 | `/health/ready`         | sonde de disponibilité (PostgreSQL, Redis)                  |
+
+Toute route exige une authentification, sauf celles explicitement publiques. L'inscription
+est fermée par défaut : un administrateur l'ouvre avec
+`PUT /api/v1/admin/system-settings/features.registration`. En développement, le code de
+vérification se lit sur `/api/v1/dev/mailbox?recipient=<adresse>`.
 
 Pile entièrement conteneurisée (migrations, API, Nginx sur le port 8080) :
 
@@ -84,6 +100,7 @@ curl http://localhost:8080/api/v1/system/status
 | `pnpm test:unit`               | tests unitaires seuls (aucun service requis)                                            |
 | `pnpm db:migrate:dev`          | crée et applique une migration en développement                                         |
 | `pnpm db:migrate:deploy`       | applique les migrations en attente                                                      |
+| `pnpm admin:create --email …`  | crée un compte d'administration (rôle propriétaire de la base)                          |
 | `pnpm db:check-drift`          | vérifie que les migrations correspondent au schéma Prisma (exige `SHADOW_DATABASE_URL`) |
 | `pnpm audit:deps`              | vulnérabilités connues des dépendances de production                                    |
 | `pnpm verify`                  | mise en forme, lint, build, types et tests                                              |

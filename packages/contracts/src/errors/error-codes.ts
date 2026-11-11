@@ -8,9 +8,18 @@
 export const ERROR_CODES = {
   VALIDATION_FAILED: { status: 400, title: 'Bad Request' },
   MALFORMED_REQUEST: { status: 400, title: 'Bad Request' },
+  /** Code à usage unique erroné, expiré, déjà utilisé ou trop souvent essayé. */
+  INVALID_OR_EXPIRED_CODE: { status: 400, title: 'Bad Request' },
+  /** Jeton d'accès absent, invalide ou expiré : renouveler la session ou se reconnecter. */
   UNAUTHENTICATED: { status: 401, title: 'Unauthorized' },
+  /** Identifiant ou mot de passe erroné — sans préciser lequel. */
+  INVALID_CREDENTIALS: { status: 401, title: 'Unauthorized' },
   FORBIDDEN: { status: 403, title: 'Forbidden' },
   FEATURE_DISABLED: { status: 403, title: 'Forbidden' },
+  /** Mot de passe correct, mais l'adresse e-mail du compte n'a pas encore été vérifiée. */
+  EMAIL_NOT_VERIFIED: { status: 403, title: 'Forbidden' },
+  /** Mot de passe correct, mais le compte est suspendu ou clôturé. */
+  ACCOUNT_DISABLED: { status: 403, title: 'Forbidden' },
   NOT_FOUND: { status: 404, title: 'Not Found' },
   METHOD_NOT_ALLOWED: { status: 405, title: 'Method Not Allowed' },
   NOT_ACCEPTABLE: { status: 406, title: 'Not Acceptable' },
@@ -19,6 +28,8 @@ export const ERROR_CODES = {
   PAYLOAD_TOO_LARGE: { status: 413, title: 'Content Too Large' },
   UNSUPPORTED_MEDIA_TYPE: { status: 415, title: 'Unsupported Media Type' },
   UNPROCESSABLE_ENTITY: { status: 422, title: 'Unprocessable Content' },
+  /** Le pays de résidence déclaré n'est pas (encore) desservi. */
+  COUNTRY_NOT_SUPPORTED: { status: 422, title: 'Unprocessable Content' },
   RATE_LIMITED: { status: 429, title: 'Too Many Requests' },
   INTERNAL_ERROR: { status: 500, title: 'Internal Server Error' },
   MAINTENANCE: { status: 503, title: 'Service Unavailable' },

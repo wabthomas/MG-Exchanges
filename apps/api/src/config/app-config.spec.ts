@@ -3,9 +3,11 @@ import { describe, expect, it } from '@jest/globals';
 import { ConfigValidationError, loadAppConfig } from './app-config.js';
 
 const DB_PASSWORD = 'sup3r-s3cret-db-password';
+const CODE_SECRET = 'code-hmac-secret-0123456789abcdef-0123456789abcdef';
 const minimal = {
   DATABASE_URL: `postgresql://mgx_app:${DB_PASSWORD}@db.internal:5432/mgx`,
   REDIS_URL: 'redis://cache.internal:6379/0',
+  AUTH_CODE_HMAC_SECRET: CODE_SECRET,
 };
 const production = { ...minimal, NODE_ENV: 'production', APP_ENV: 'production' };
 
@@ -173,5 +175,91 @@ describe('loadAppConfig', () => {
         loadAppConfig({ ...minimal, CORS_ALLOWED_ORIGINS: '*' }).http.corsAllowedOrigins,
       ).toEqual(['*']);
     });
+  });
+});
+
+describe('configuration de l’identité et des notifications', () => {
+  it('applique des durées et un coût de hachage par défaut conformes aux recommandations', () => {
+    const { auth, notifications } = loadAppConfig(minimal);
+
+    expect(auth).toEqual({
+      codeHmacSecret: CODE_SECRET,
+      codeTtlSeconds: 900,
+      accessTokenTtlMs: 10 * 60_000,
+      sessionIdleTtlMs: 14 * 24 * 3600_000,
+      sessionAbsoluteTtlMs: 60 * 24 * 3600_000,
+      refreshReuseGraceMs: 10_000,
+      passwordHash: { memoryKib: 19_456, passes: 2 },
+    });
+    expect(notifications).toEqual({ delivery: 'memory' });
+  });
+
+  it('exige une clé de HMAC d’au moins 32 caractères, sans jamais l’afficher', () => {
+    const { AUTH_CODE_HMAC_SECRET: _removed, ...withoutSecret } = minimal;
+    expect(problemsOf(withoutSecret)).toEqual(['AUTH_CODE_HMAC_SECRET: is required.']);
+
+    const short = 'too-short-secret';
+    const problems = problemsOf({ ...minimal, AUTH_CODE_HMAC_SECRET: short });
+    expect(problems).toEqual(['AUTH_CODE_HMAC_SECRET: Must be at least 32 characters.']);
+    expect(problems.join(' ')).not.toContain(short);
+  });
+
+  it('refuse une durée d’inactivité supérieure à la durée de vie maximale d’une session', () => {
+    expect(
+      problemsOf({
+        ...minimal,
+        AUTH_SESSION_IDLE_TTL_SECONDS: '7200',
+        AUTH_SESSION_ABSOLUTE_TTL_SECONDS: '3600',
+      }),
+    ).toEqual([
+      'AUTH_SESSION_IDLE_TTL_SECONDS: Must not exceed AUTH_SESSION_ABSOLUTE_TTL_SECONDS.',
+    ]);
+  });
+
+  it('hors développement, la remise par défaut est « aucune » : rien ne part sans prestataire', () => {
+    expect(loadAppConfig(production).notifications.delivery).toBe('none');
+    expect(loadAppConfig({ ...minimal, APP_ENV: 'development' }).notifications.delivery).toBe(
+      'memory',
+    );
+    expect(
+      loadAppConfig({ ...minimal, NOTIFICATION_DELIVERY: 'none' }).notifications.delivery,
+    ).toBe('none');
+  });
+
+  it.each(['staging', 'production'])(
+    'en %s : ni hachage affaibli, ni boîte de réception en mémoire',
+    (environment) => {
+      const hardened = { ...minimal, NODE_ENV: 'production', APP_ENV: environment };
+
+      expect(
+        problemsOf({
+          ...hardened,
+          AUTH_PASSWORD_HASH_MEMORY_KIB: '64',
+          AUTH_PASSWORD_HASH_PASSES: '1',
+          NOTIFICATION_DELIVERY: 'memory',
+        }),
+      ).toEqual([
+        expect.stringMatching(/^AUTH_PASSWORD_HASH_MEMORY_KIB: Must be at least 19456/),
+        expect.stringMatching(/^AUTH_PASSWORD_HASH_PASSES: Must be at least 2/),
+        expect.stringMatching(/^NOTIFICATION_DELIVERY: "memory" is a development tool/),
+      ]);
+
+      // Un coût supérieur au minimum est, lui, toujours accepté.
+      const stronger = loadAppConfig({
+        ...hardened,
+        AUTH_PASSWORD_HASH_MEMORY_KIB: '65536',
+        AUTH_PASSWORD_HASH_PASSES: '3',
+      });
+      expect(stronger.auth.passwordHash).toEqual({ memoryKib: 65_536, passes: 3 });
+    },
+  );
+
+  it('en test et en développement, un coût réduit est toléré', () => {
+    const config = loadAppConfig({
+      ...minimal,
+      AUTH_PASSWORD_HASH_MEMORY_KIB: '64',
+      AUTH_PASSWORD_HASH_PASSES: '1',
+    });
+    expect(config.auth.passwordHash).toEqual({ memoryKib: 64, passes: 1 });
   });
 });

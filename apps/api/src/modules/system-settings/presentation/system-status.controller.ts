@@ -2,6 +2,7 @@ import { type SystemStatus, systemStatusSchema } from '@mgx/contracts';
 import { Controller, Get } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
+import { Public } from '../../../common/auth/auth.decorators.js';
 import { ApiProblemResponses, toOpenApiSchema } from '../../../common/http/openapi.js';
 import { AppConfig } from '../../../config/app-config.js';
 import { SystemSettingsService } from '../application/system-settings.service.js';
@@ -16,6 +17,7 @@ export class SystemStatusController {
   ) {}
 
   @Get('status')
+  @Public()
   @AllowDuringMaintenance()
   @ApiOperation({
     summary: 'Platform status',

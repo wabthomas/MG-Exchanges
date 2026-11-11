@@ -9,6 +9,7 @@ import { buildLoggerOptions } from './logger-options.js';
 const config = loadAppConfig({
   DATABASE_URL: 'postgresql://app:pw@localhost:5432/db',
   REDIS_URL: 'redis://localhost:6379/0',
+  AUTH_CODE_HMAC_SECRET: 'unit-test-code-hmac-secret-0123456789abcdef',
   LOG_LEVEL: 'debug',
 });
 

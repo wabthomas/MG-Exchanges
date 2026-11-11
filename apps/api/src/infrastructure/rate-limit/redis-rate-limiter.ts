@@ -78,4 +78,19 @@ export class RedisRateLimiter {
       retryAfterSeconds: Math.ceil(blockTtlMs / 1000),
     };
   }
+
+  /**
+   * Secondes restantes du blocage en cours pour cette clé, ou 0. Ne compte aucune requête :
+   * sert aux compteurs d'échecs (connexion), incrémentés seulement lorsqu'un essai échoue.
+   */
+  async blockedForSeconds(key: string): Promise<number> {
+    const ttlMs = await this.redis.client.pttl(`rate-limit:{${key}}:blocked`);
+    return ttlMs > 0 ? Math.ceil(ttlMs / 1000) : 0;
+  }
+
+  /** Remet le compteur à zéro et lève le blocage éventuel. */
+  async reset(key: string): Promise<void> {
+    const base = `rate-limit:{${key}}`;
+    await this.redis.client.del(`${base}:hits`, `${base}:blocked`);
+  }
 }

@@ -29,10 +29,27 @@ describe('Règles par environnement — bout en bout', () => {
       const response = await http.get('/api/docs-json').expect(200);
       expect(response.body.openapi).toMatch(/^3\./);
       expect(Object.keys(response.body.paths).sort()).toEqual([
+        '/api/v1/admin/system-settings',
+        '/api/v1/admin/system-settings/{key}',
+        '/api/v1/auth/email/resend',
+        '/api/v1/auth/email/verify',
+        '/api/v1/auth/login',
+        '/api/v1/auth/logout',
+        '/api/v1/auth/password/change',
+        '/api/v1/auth/password/forgot',
+        '/api/v1/auth/password/reset',
+        '/api/v1/auth/refresh',
+        '/api/v1/auth/register',
+        '/api/v1/me',
+        '/api/v1/me/sessions',
+        '/api/v1/me/sessions/revoke-others',
+        '/api/v1/me/sessions/{sessionId}',
         '/api/v1/system/status',
         '/health/live',
         '/health/ready',
       ]);
+      // Les outils de développement (boîte de réception) ne font pas partie du contrat publié.
+      expect(JSON.stringify(response.body.paths)).not.toContain('/dev/');
 
       // docs/api/openapi.json est le contrat publié (importable dans Postman, Insomnia…).
       // `pnpm --filter @mgx/api openapi:export` le régénère ; ce test échoue s'il a dérivé.

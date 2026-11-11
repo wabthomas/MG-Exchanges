@@ -13,6 +13,9 @@ import { AppConfig, loadAppConfig } from '../../src/config/app-config.js';
 import { createTestDatabase, type TestDatabase } from './test-database.js';
 import { redisUrl } from './test-environment.js';
 
+/** Clé de test uniquement : elle n'existe dans aucun environnement réel. */
+export const TEST_CODE_HMAC_SECRET = 'test-only-code-hmac-secret-0123456789abcdef';
+
 export interface TestApp {
   readonly app: NestExpressApplication;
   readonly config: AppConfig;
@@ -38,6 +41,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   await flush.flushdb();
   await flush.quit();
 
+  // Un environnement durci refuse un hachage affaibli : le coût réduit ne vaut qu'en test.
+  const hardened = ['staging', 'production'].includes(options.env?.['APP_ENV'] ?? 'test');
+
   const config = loadAppConfig({
     NODE_ENV: 'test',
     APP_ENV: 'test',
@@ -47,6 +53,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
     REDIS_URL: redisUrl(),
     RATE_LIMIT_MAX_REQUESTS: '1000',
     OUTBOX_POLL_INTERVAL_MS: '100',
+    AUTH_CODE_HMAC_SECRET: TEST_CODE_HMAC_SECRET,
+    // Coût de hachage minimal : les tests vérifient le comportement, pas la résistance.
+    ...(hardened ? {} : { AUTH_PASSWORD_HASH_MEMORY_KIB: '64', AUTH_PASSWORD_HASH_PASSES: '1' }),
     ...options.env,
   });
 

@@ -5,6 +5,8 @@ export interface AppErrorOptions {
   readonly cause?: unknown;
   /** Détail par champ, renvoyé au client (erreurs de validation). */
   readonly errors?: readonly FieldError[];
+  /** Délai avant nouvelle tentative, renvoyé dans l'en-tête `Retry-After` (secondes). */
+  readonly retryAfterSeconds?: number;
 }
 
 /**
@@ -17,11 +19,13 @@ export interface AppErrorOptions {
 export class AppError extends Error {
   readonly code: ErrorCode;
   readonly errors: readonly FieldError[] | undefined;
+  readonly retryAfterSeconds: number | undefined;
 
   constructor(code: ErrorCode, message: string, options: AppErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'AppError';
     this.code = code;
     this.errors = options.errors;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }

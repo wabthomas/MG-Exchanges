@@ -60,8 +60,13 @@ export function isSettingKey(value: string): value is SettingKey {
 }
 
 /** Schéma de validation de la valeur d'un paramètre. */
-export function settingSchema(key: SettingKey): z.ZodType {
+export function settingSchema(key: SettingKey): z.ZodType<MaintenanceStatus | boolean> {
   return key === MAINTENANCE_SETTING_KEY ? maintenanceStatusSchema : featureEnabledSchema;
+}
+
+/** Valeur en vigueur tant qu'aucune décision n'a été enregistrée pour ce paramètre. */
+export function defaultSettingValue(key: SettingKey): MaintenanceStatus | boolean {
+  return key === MAINTENANCE_SETTING_KEY ? DEFAULT_MAINTENANCE : DEFAULT_FEATURE_ENABLED;
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, type OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 
+import { PROBLEM_OPENAPI_SCHEMA, PROBLEM_SCHEMA_NAME } from '../common/http/openapi.js';
 import type { AppConfig } from '../config/app-config.js';
 import { basicAuthMiddleware } from './basic-auth.middleware.js';
 
@@ -15,6 +16,7 @@ const DESCRIPTION = [
   '- Monetary amounts are decimal **strings** (`"12.34"`), never JSON numbers.',
   '- Timestamps are ISO 8601 in UTC.',
   '- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.',
+  '- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.',
   '- Every response carries an `X-Request-Id` header for support and log correlation.',
 ].join('\n');
 
@@ -26,11 +28,29 @@ export function buildOpenApiDocument(
     .setTitle('MG-Exchange API')
     .setDescription(DESCRIPTION)
     .setVersion(config.app.version)
+    .addBearerAuth({
+      type: 'http',
+      scheme: 'bearer',
+      bearerFormat: 'opaque',
+      description: 'Access token of a session, returned by `POST /api/v1/auth/login`.',
+    })
     .addTag('System', 'Platform status and feature availability')
+    .addTag('Authentication', 'Sign-up, sign-in, session tokens, password')
+    .addTag('Account', 'The signed-in account and its sessions')
+    .addTag('Administration', 'Back-office (requires permissions)')
     .addTag('Health', 'Liveness and readiness probes (infrastructure)')
     .build();
 
-  return SwaggerModule.createDocument(app, options);
+  const document = SwaggerModule.createDocument(app, options);
+  // Schéma d'erreur partagé : référencé par toutes les réponses d'erreur.
+  document.components = {
+    ...document.components,
+    schemas: {
+      ...document.components?.schemas,
+      [PROBLEM_SCHEMA_NAME]: PROBLEM_OPENAPI_SCHEMA,
+    },
+  };
+  return document;
 }
 
 /**

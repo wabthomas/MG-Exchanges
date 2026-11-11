@@ -23,8 +23,8 @@ comme une unité, mais découpée en modules aux frontières strictes afin qu'un
               └─────────────┘   └────────────────┘
 ```
 
-PostgreSQL est l'unique source de vérité. Redis ne contient que des données reconstructibles
-ou transitoires (compteurs, files de traitement).
+PostgreSQL est l'unique source de vérité — sessions comprises. Redis ne contient que des
+données reconstructibles ou transitoires (compteurs, blocages temporaires, files de traitement).
 
 ## Organisation du dépôt
 
@@ -49,18 +49,34 @@ apps/api/src/
   app.module.ts           racine : assemble socle technique et modules
   bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests
   config/                 schéma des variables d'environnement, configuration typée
-  common/                 transverse : erreurs, filtre global, validation, expurgation
+  common/                 transverse : erreurs, filtre global, validation, expurgation,
+                          décorateurs d'accès (@Public, @RequirePermissions, @CurrentUser)
   infrastructure/         PostgreSQL (Prisma), Redis, files (BullMQ), journalisation, débit
   modules/
     health/               sondes de vivacité et de disponibilité
-    system-settings/      mode maintenance, activation des fonctionnalités
+    system-settings/      mode maintenance, activation des fonctionnalités, leur administration
     audit/                journal d'audit en ajout seul
     outbox/               boîte d'envoi transactionnelle et distribution des événements
+    notifications/        messages aux utilisateurs (port d'envoi, modèles, boîte de développement)
+    identity/             comptes, authentification, sessions, mots de passe, autorisations
+  cli/                    outil d'exploitation (création du premier administrateur)
 ```
+
+### Chaîne de traitement d'une requête
+
+Quatre gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
+
+1. **limitation de débit** par adresse IP ;
+2. **maintenance** — `503` sauf routes `@AllowDuringMaintenance()` ;
+3. **authentification** — refus par défaut : `401` sauf routes `@Public()` ;
+4. **permissions** — `403` si la route porte `@RequirePermissions(...)` et que le compte ne
+   les détient pas.
+
+Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
 
 ### Couches d'un module métier
 
-`system-settings` sert de modèle aux modules métier à venir :
+`system-settings` et `identity` servent de modèles aux modules métier à venir :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
@@ -87,6 +103,10 @@ l'opération auditée : une action sensible ne peut pas aboutir sans son entrée
 **Événements fiables.** `OutboxService.append(tx, …)` enregistre l'événement avec les
 données ; un relais le publie ensuite sur une file BullMQ, au moins une fois, sans doublon
 entre instances (`FOR UPDATE SKIP LOCKED`). Les consommateurs sont idempotents.
+
+**Accès refusé par défaut.** Une route n'est accessible sans authentification que si elle
+est marquée `@Public()` ; un test compare l'ensemble des routes publiques à une liste fermée.
+L'identité de l'appelant s'obtient par `@CurrentUser()` — jamais d'un paramètre de la requête.
 
 **Fonctionnalités fermées par défaut.** Chaque fonctionnalité réglementée est un paramètre
 système, désactivé tant qu'aucune décision tracée ne l'ouvre. `@RequiresFeature('exchange')`
@@ -117,6 +137,8 @@ partie du code ne lit `process.env` en dehors de `config/`.
    y ajouter contraintes et déclencheurs à la main, la documenter dans `DATABASE.md`.
 3. Définir les contrats (schémas Zod) dans `@mgx/contracts`.
 4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi.
-5. Protéger les routes : `@RequiresFeature(...)`, limites de débit dédiées, permissions.
+5. Protéger les routes : elles exigent déjà une authentification ; ajouter
+   `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
+   back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.
 6. Tester : unitaires, intégration sur PostgreSQL réel (concurrence comprise), bout en bout.
 7. Importer le module dans `app.module.ts`.
