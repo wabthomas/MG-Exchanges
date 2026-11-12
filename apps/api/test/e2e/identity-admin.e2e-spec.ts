@@ -170,6 +170,7 @@ describe('Back-office des comptes — bout en bout', () => {
         ['post', `/admin/users/${target.id}/reactivate`, true],
         ['post', `/admin/users/${target.id}/sessions/revoke`, true],
         ['post', `/admin/users/${target.id}/mfa/reset`, false],
+        ['post', `/admin/users/${target.id}/close`, false],
         ['get', '/admin/roles', false],
         ['get', '/admin/role-changes', false],
         ['post', '/admin/role-changes', false],
@@ -234,10 +235,11 @@ describe('Back-office des comptes — bout en bout', () => {
       );
       expect(roles.roles.map((role) => role.key)).toEqual(['compliance', 'super_admin', 'support']);
       const [compliance, superAdmin, supportRole] = roles.roles;
-      // La conformité examine les dossiers de vérification ; elle n'agit pas sur les comptes.
+      // La conformité examine les dossiers de vérification et clôt les comptes ; elle ne les
+      // suspend pas, ne révoque pas leurs sessions et ne touche pas à leur second facteur.
       expect(compliance).toMatchObject({
         isSystem: true,
-        permissions: ['kyc.read', 'kyc.review', 'kyc.revoke', 'users.read'],
+        permissions: ['kyc.read', 'kyc.review', 'kyc.revoke', 'users.close', 'users.read'],
         holders: 0,
       });
       expect(superAdmin).toMatchObject({

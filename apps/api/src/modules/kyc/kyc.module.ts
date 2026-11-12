@@ -7,6 +7,7 @@ import { AuditModule } from '../audit/audit.module.js';
 import { IdentityModule } from '../identity/identity.module.js';
 import { OutboxModule } from '../outbox/outbox.module.js';
 import { SystemSettingsModule } from '../system-settings/system-settings.module.js';
+import { KycAccountData } from './application/kyc-account-data.js';
 import { KycCaseRepository } from './application/kyc-case.repository.js';
 import { KycDraftPurge } from './application/kyc-draft-purge.js';
 import { KycReviewService } from './application/kyc-review.service.js';
@@ -24,7 +25,9 @@ import { KycController } from './presentation/kyc.controller.js';
  * examen par la conformité.
  *
  * Le module s'appuie sur l'identité (comptes, rôles, purge périodique) ; l'identité ne dépend
- * pas de lui : elle lit ce que les dossiers acceptés établissent, sans rien en écrire.
+ * pas de lui : elle lit ce que les dossiers acceptés établissent, sans rien en écrire. À la
+ * clôture d'un compte, c'est ce module qui met fin à ses dossiers, efface ou conserve leurs
+ * pièces, puis les efface à l'échéance (`KycAccountData`).
  *
  * Sans `KYC_STORAGE_DIR` ni `KYC_ENCRYPTION_KEY`, le module démarre mais ses opérations
  * répondent `SERVICE_UNAVAILABLE` : aucune pièce n'est jamais conservée en clair.
@@ -50,6 +53,7 @@ import { KycController } from './presentation/kyc.controller.js';
     KycService,
     KycReviewService,
     KycDraftPurge,
+    KycAccountData,
     KycUploadSlots,
   ],
 })

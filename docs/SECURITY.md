@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2, lots 1 à 3)
+## En place (phases 1 et 2, lots 1 à 4)
 
 ### Configuration et secrets
 
@@ -169,9 +169,13 @@ jour. Décisions et limites : ADR 0022.
 - **Rien n'est servi au titulaire.** Une pièce envoyée ne se retélécharge pas par l'API
   cliente, et le numéro de la pièce n'est rendu que masqué : une session volée ne donne pas
   accès aux documents du compte.
+- **Rien en clair sur le disque du proxy.** Une pièce y transite au fil de l'eau à l'envoi, et
+  depuis la mémoire au téléchargement par un examinateur : Nginx n'écrit aucun fichier
+  temporaire, dans un sens comme dans l'autre (vérifié sur la pile complète).
 - **Examen cloisonné.** Seuls les détenteurs de `kyc.read` voient les dossiers — et
   uniquement ceux qui ont été déposés. Le rôle `support` n'y a pas accès ; le rôle
-  `compliance` n'a aucune prise sur les comptes. **Nul n'examine son propre dossier.**
+  `compliance` ne suspend ni ne déconnecte un compte, et ne touche pas à son second facteur :
+  il peut seulement le clore (ADR 0023). **Nul n'examine son propre dossier.**
 - **Tout accès est tracé avant d'être servi** : chaque page de la file, chaque fiche, chaque
   téléchargement, avec son auteur. Une pièce n'est rendue qu'en pièce jointe (`attachment`,
   `nosniff`) : le navigateur d'un examinateur ne l'interprète pas comme une page.
@@ -232,8 +236,9 @@ jour. Décisions et limites : ADR 0022.
   leur présence. Elle ne protège pas d'un attaquant qui exécuterait du SQL arbitraire sous le
   rôle de l'API ; elle garantit seulement qu'il laisserait une trace ineffaçable (ADR 0018).
 - **Séparation du support et de l'administration** : le rôle `support` trouve les comptes,
-  les suspend et ferme leurs sessions ; il ne retire pas un second facteur, ne gère pas les
-  rôles et **n'agit pas sur les comptes du personnel**. Nul n'agit sur son propre compte.
+  les suspend et ferme leurs sessions ; il ne retire pas un second facteur, ne clôt aucun
+  compte, ne gère pas les rôles et **n'agit pas sur les comptes du personnel**. Nul n'agit sur
+  son propre compte.
 - **Toute action est justifiée et tracée** dans la transaction qui l'applique ; **tout accès
   aux données d'un compte l'est aussi** (recherches, pages de la liste, consultations). Le
   journal ne retient qu'une empreinte de l'identifiant recherché.
@@ -254,16 +259,76 @@ jour. Décisions et limites : ADR 0022.
 > demandeur** : cela relève d'une procédure du support (pièce d'identité, délai de
 > carence, rappel sur le numéro vérifié…) qui n'est pas encore écrite.
 
+### Clôture, copie et effacement des données
+
+Décisions et limites : ADR 0023.
+
+- **Preuve du titulaire.** Clore son compte ou en demander la copie exige de présenter à
+  nouveau le mot de passe et — si elle est activée — la validation en deux étapes. Un jeton
+  dérobé n'y suffit pas ; le seul mot de passe d'un compte protégé non plus. Les essais erronés
+  sont bornés, tracés et visibles dans l'historique du compte.
+- **Une clôture ne laisse rien d'utilisable.** Dans une seule transaction, le mot de passe, le
+  second facteur, les codes de secours, les codes à usage unique, les sessions et le profil
+  sont supprimés, et le compte ne porte plus ni adresse ni numéro. Les jetons en circulation
+  cessent de valoir aussitôt ; une connexion restée à mi-chemin (seconde étape) n'aboutit
+  plus ; l'ancienne adresse reçoit la réponse d'une adresse inconnue, et « mot de passe
+  oublié » n'envoie rien.
+- **La base de données refuse toute écriture sur un compte clôturé** (erreur `MGX05`), y
+  compris celle d'une requête partie avant la clôture : elle attend l'issue de la clôture,
+  puis échoue (`409`). Un service qui l'oublierait — aujourd'hui ou demain — ne peut pas
+  ranimer un compte ni lui rattacher une donnée.
+- **Rien n'est réattribué.** L'adresse, le numéro et la pièce d'identité redeviennent libres,
+  mais le compte ouvert ensuite avec eux est un autre compte : il ne voit ni l'historique, ni
+  les sessions, ni les dossiers de l'ancien.
+- **La conservation légale est imposée par la base.** Les dossiers de vérification sur
+  lesquels une décision a été prise ne s'effacent pas avant dix ans : la base lit l'échéance
+  **à sa propre horloge**, pas à celle de l'application. Une horloge applicative en avance ou
+  un défaut du code n'effacent rien : l'étape de purge échoue et le signale. Un dossier jamais
+  examiné, lui, est effacé à la clôture, fichiers compris.
+- **La trace d'une clôture ne se réécrit pas** : ni modification, ni suppression, ni vidage de
+  la table — seul le constat de son effacement, une fois, à l'échéance.
+- **Clôture par le personnel** : permission `users.close` (administrateurs et conformité),
+  que la base vérifie elle aussi ; motif et justification au journal d'audit, dans la
+  transaction ; titulaire toujours prévenu, jamais de la raison ; jamais sur son propre
+  compte, jamais sur un compte qui détient un rôle.
+- **Copie des données** : aucun secret, numéro de pièce masqué, **aucun fichier** — une
+  session et un mot de passe dérobés ne suffisent pas à emporter une pièce d'identité. Trois
+  copies au plus par vingt-quatre heures ; chacune est tracée et signalée au titulaire par
+  e-mail, avec l'adresse IP d'origine.
+
+> **Limites à connaître.**
+>
+> - **La lecture de la loi n'est pas confirmée.** Dix ans de conservation, trente jours avant
+>   l'effacement des identifiants, étendue des droits d'accès et d'effacement : ces choix
+>   s'appuient sur notre lecture de la loi n° 22/068 et sur un **résumé non officiel** du Code
+>   du numérique. Un conseil juridique doit les valider avant l'ouverture au public.
+> - **Une personne habilitée suffit à clore un compte**, définitivement : il n'y a pas de
+>   double validation, à la différence des rôles. Le journal dit qui, quand et pourquoi.
+> - **Le journal d'audit n'est pas effacé** : il garde l'identifiant technique du compte,
+>   l'adresse IP et l'appareil des événements passés, le numéro masqué des vérifications de
+>   téléphone, l'empreinte des identifiants recherchés par le personnel et le texte de ses
+>   justifications. Ni adresse e-mail, ni numéro complet.
+> - **Sauvegardes et journaux applicatifs** échappent à l'API : leur durée de conservation, à
+>   fixer à l'hébergement, borne le délai réel d'effacement.
+> - **L'échéance d'effacement d'un compte sans conservation légale se lit à l'horloge de
+>   l'application** : seule la conservation légale est relue par la base.
+
 ### Conservation et purge
 
 - Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
   terminées (90 jours après leur échéance — la plus récente de chaque compte est conservée),
   les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), les
-  dossiers de vérification jamais déposés (30 jours, avec leurs pièces), et clôt les demandes
-  de rôle échues. Chaque suppression d'inscription ou de dossier est tracée.
-- **Un dossier de vérification déposé n'est jamais effacé par l'application** : la loi
-  demande de conserver les pièces d'identité dix ans après la fin de la relation. L'effacement
-  à l'échéance reste à écrire, avec la clôture des comptes.
+  dossiers de vérification jamais déposés (30 jours, avec leurs pièces), les événements
+  publiés de la boîte d'envoi (30 jours), et clôt les demandes de rôle échues. Chaque
+  suppression d'inscription ou de dossier est tracée.
+- **Comptes clôturés** : à l'échéance (trente jours après la clôture, ou dix ans si des
+  dossiers de vérification sont conservés), la même tâche efface les dossiers conservés et
+  leurs pièces, puis l'adresse et le numéro que gardait la trace de la clôture — 200 comptes
+  au plus par passage ; chaque effacement est tracé. Un compte qui ne peut pas être effacé est
+  signalé et retenté à chaque passage, sans bloquer les autres.
+- **Un dossier de vérification déposé n'est effacé que par ces deux voies** : à la clôture
+  s'il n'a jamais été examiné, à l'échéance légale sinon. Tant que le compte est ouvert, il
+  est conservé.
 - **Le journal d'audit n'est jamais purgé.**
 
 ### Base de données
@@ -309,27 +374,29 @@ jour. Décisions et limites : ADR 0022.
 
 ## Prévu — non réalisé à ce jour
 
-| Sujet                                                                                      | Phase |
-| ------------------------------------------------------------------------------------------ | ----- |
-| Procédure du support pour le retrait d'un second facteur (vérification d'identité)         | 2     |
-| Rotation des clés de chiffrement — secrets de connexion, pièces de vérification            | 2     |
-| Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage          | 2+    |
-| Vérification des mots de passe contre les fuites connues                                   | 2     |
-| E-mails : exploitation des non-remises et des plaintes, plafond global d'envoi             | 2     |
-| Acceptation versionnée des conditions, clôture de compte, effacement et export des données | 2     |
-| KYC : analyse antivirus des pièces, contrôle automatique des pièces et du visage           | 2+    |
-| KYC : filtrage (sanctions, personnes politiquement exposées), relance des pièces expirées  | 8     |
-| KYC : vérification des entreprises (KYB), plafonds par niveau                              | 2–3   |
-| KYC : conservation légale puis effacement des dossiers à l'échéance                        | 2     |
-| Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé         | 9     |
-| Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |
-| Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)        | 7     |
-| Idempotence des opérations financières, contrôle de concurrence du grand livre             | 3     |
-| Webhooks signés, protection contre le rejeu                                                | 4     |
-| Gestion des clés blockchain hors de l'application (HSM / KMS), politiques de signature     | 5     |
-| Surveillance des transactions, plafonds, filtrage, dossiers de conformité                  | 8     |
-| TLS de bout en bout, sauvegardes chiffrées, restauration testée, alertes                   | 9     |
-| Analyse de vulnérabilités des images, tests d'intrusion                                    | 9     |
+| Sujet                                                                                     | Phase |
+| ----------------------------------------------------------------------------------------- | ----- |
+| Procédure du support pour le retrait d'un second facteur (vérification d'identité)        | 2     |
+| Rotation des clés de chiffrement — secrets de connexion, pièces de vérification           | 2     |
+| Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage         | 2+    |
+| Vérification des mots de passe contre les fuites connues                                  | 2     |
+| E-mails : exploitation des non-remises et des plaintes, plafond global d'envoi            | 2     |
+| Acceptation versionnée des conditions d'utilisation                                       | 2     |
+| Données personnelles : validation juridique des durées, formalités auprès de l'autorité   | 8     |
+| Remise au titulaire des fichiers de ses pièces ; double validation d'une clôture          | 2+    |
+| Durée de conservation du journal d'audit, des sauvegardes et des journaux applicatifs     | 8–9   |
+| KYC : analyse antivirus des pièces, contrôle automatique des pièces et du visage          | 2+    |
+| KYC : filtrage (sanctions, personnes politiquement exposées), relance des pièces expirées | 8     |
+| KYC : vérification des entreprises (KYB), plafonds par niveau                             | 2–3   |
+| Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé        | 9     |
+| Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles | 2+    |
+| Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)       | 7     |
+| Idempotence des opérations financières, contrôle de concurrence du grand livre            | 3     |
+| Webhooks signés, protection contre le rejeu                                               | 4     |
+| Gestion des clés blockchain hors de l'application (HSM / KMS), politiques de signature    | 5     |
+| Surveillance des transactions, plafonds, filtrage, dossiers de conformité                 | 8     |
+| TLS de bout en bout, sauvegardes chiffrées, restauration testée, alertes                  | 9     |
+| Analyse de vulnérabilités des images, tests d'intrusion                                   | 9     |
 
 ## Signaler une vulnérabilité
 

@@ -111,9 +111,72 @@ Cette clé chiffre le secret du second facteur de chaque compte. Générer :
 toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **purge des
 données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
-déposés — durées dans `DATABASE.md`). Un échec est journalisé
+déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
+échéance** — durées dans `DATABASE.md`). Un échec est journalisé
 (`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
 l'exécution suivante réessaie.
+
+## Clôture des comptes et effacement
+
+Décisions : ADR 0023. Ce que l'exploitation doit savoir :
+
+- **Avant la migration `20261112182356_account_closure`.** Elle réserve le domaine
+  `closed.invalid` aux comptes clôturés, et échoue si une inscription porte déjà une adresse
+  de ce domaine (`check constraint "users_reserved_email_domain_check" … is violated by some
+row`) — de même si un compte avait été mis au statut `CLOSED` à la main, ce qu'aucune
+  version précédente ne faisait. Le vérifier avant de déployer :
+
+  ```sql
+  SELECT id, email, status FROM users WHERE email LIKE '%@closed.invalid' OR status = 'CLOSED';
+  ```
+
+  Si la migration a échoué pour cette raison, elle n'a rien modifié (constaté ici : ni table,
+  ni fonction, ni contrainte), mais Prisma la retient comme échouée et refuse les suivantes
+  (`P3009`). Supprimer l'inscription en cause — aucun message n'arrive à une adresse de ce
+  domaine : hors développement, il ne peut s'agir que d'une inscription jamais vérifiée —,
+  puis :
+
+  ```bash
+  pnpm --filter @mgx/api exec prisma migrate resolve --rolled-back 20261112182356_account_closure
+  pnpm db:migrate:deploy
+  ```
+
+- **Horloges.** La conservation légale se compte **à l'horloge de PostgreSQL** : c'est elle
+  qui autorise l'effacement d'un dossier conservé, et qui refuse une clôture antidatée de
+  plus de vingt-quatre heures. Serveur de base et instances de l'API doivent être
+  synchronisés (NTP). Une instance de l'API en retard de plus de vingt-quatre heures verrait
+  ses clôtures refusées (`409`, et `Account closure refused by the database` dans ses
+  journaux) ; très en avance, elle tenterait des effacements que la base refuse.
+- **Journaux d'une clôture.** `Account closure refused by the database` (erreur) : la base a
+  refusé une clôture que l'API croyait permise — une horloge déréglée, ou un défaut à
+  signaler. `Cleanup after account closure failed` (avertissement) : la clôture est acquise,
+  mais un nettoyage qui la suit a échoué (Redis injoignable, fichier non supprimé) ; rien
+  n'est à refaire côté compte.
+- **Surveiller l'effacement.** L'étape `erase-closed-accounts` traite au plus 200 comptes par
+  heure, de l'échéance la plus ancienne à la plus récente. Un compte qui ne peut pas être
+  effacé est journalisé (`Closed account not erased`, avec son identifiant) et retenté à
+  chaque passage ; l'étape est alors signalée en échec (`Account maintenance step failed`).
+  **Cette alerte doit être traitée** : au-delà de 200 comptes durablement bloqués, les
+  suivants ne seraient plus effacés.
+- **Stockage des pièces.** Clore un compte ou l'effacer supprime des fichiers du volume des
+  pièces (`KYC_STORAGE_DIR`).
+  - La ligne en base est supprimée d'abord, dans la transaction ; le fichier ensuite. Un
+    fichier qui ne peut pas être supprimé reste sur le volume — **indéchiffrable**, sa clé
+    ayant disparu avec la ligne — et il est journalisé avec son emplacement
+    (`Verification document file not removed`) : le supprimer à la main suffit.
+  - **Sans stockage configuré**, la clôture reste possible (les fichiers restants sont
+    signalés : `Verification document files not removed: storage is not configured`), mais un
+    compte dont des pièces sont conservées **n'est pas effacé à l'échéance** : il est signalé
+    à chaque passage, jusqu'à ce que le stockage soit rétabli.
+  - Sans stockage configuré, la copie des données d'un compte qui a déclaré une pièce
+    d'identité répond `503` : le numéro de la pièce, chiffré, ne peut pas être relu.
+- **Sauvegardes.** Une donnée effacée de la base subsiste dans les sauvegardes antérieures :
+  **leur durée de conservation borne le délai réel d'effacement**. Elle est à fixer avec la
+  politique de sauvegarde (phase 9), en gardant à l'esprit qu'une restauration ranime les
+  données effacées depuis : après une restauration, laisser passer la purge horaire avant de
+  rouvrir le service.
+- **Journal d'audit.** Il n'est jamais purgé (identifiant technique du compte, adresse IP,
+  appareil). Sa durée de conservation reste à fixer avec le conseil juridique.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -260,9 +323,15 @@ relayés ; `/health/ready` est réservée au réseau interne.
 
 Les corps sont bornés à 128 Ko, sauf sur **une** route : l'envoi d'une pièce de vérification
 (6 Mio). Le fichier y est transmis à l'API au fil de l'eau, **sans copie sur le disque du
-proxy** — une pièce d'identité n'y est jamais écrite en clair —, avec au plus quatre envois
-simultanés par adresse. Un proxy ou un répartiteur placé devant Nginx doit admettre des
-corps de 6 Mio sur cette route, et ne pas les mettre en tampon sur disque.
+proxy**, avec au plus quatre envois simultanés par adresse.
+
+**Aucune réponse de l'API n'est copiée sur le disque du proxy non plus**
+(`proxy_max_temp_file_size 0`) : une réponse plus grande que ses tampons — une pièce
+téléchargée par un examinateur, la copie des données d'un compte — est relayée au rythme du
+client, depuis la mémoire. Une pièce d'identité ne passe donc en clair par aucun fichier
+temporaire, dans un sens comme dans l'autre. Un proxy ou un répartiteur placé devant Nginx
+doit admettre des corps de 6 Mio sur la route d'envoi, et ne rien mettre en tampon sur
+disque — ni les envois, ni les réponses.
 
 Les erreurs que Nginx produit lui-même (route non relayée, corps trop volumineux, limitation
 de débit, API injoignable) sont renvoyées au format d'erreur de l'API (voir `API.md`). Leur

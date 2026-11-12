@@ -9,6 +9,7 @@ import {
   adminKycCaseSchema,
   adminUserDetailSchema,
   currentUserSchema,
+  dataExportSchema,
   KYC_DOCUMENT_MAX_BYTES,
   type KycCase,
   kycCaseSchema,
@@ -53,7 +54,9 @@ import {
   png,
   type TestFile,
 } from '../support/kyc.js';
+import { addDocument, insertCase } from '../support/kyc-sql.js';
 import { createTestApp, eventually, type TestApp, testClock } from '../support/test-app.js';
+import { withConnection } from '../support/test-database.js';
 
 const UNKNOWN_ID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
 const NOTE = 'Photo de la pièce illisible, voir ticket conformité 2026-0311';
@@ -1053,13 +1056,15 @@ describe('Vérification d’identité (KYC) — bout en bout', () => {
         );
       }
 
-      // L'agent de conformité détient les trois permissions, et la lecture des comptes.
+      // L'agent de conformité détient les trois permissions, la lecture des comptes et leur
+      // clôture.
       const me = currentUserSchema.parse((await get(claire.accessToken, '/me').expect(200)).body);
       expect(me.roles).toEqual(['compliance']);
       expect([...me.permissions].sort()).toEqual([
         'kyc.read',
         'kyc.review',
         'kyc.revoke',
+        'users.close',
         'users.read',
       ]);
       for (const path of paths) {
@@ -2676,9 +2681,65 @@ describe('Vérification d’identité sans stockage chiffré configuré — bout
       expect(response.status).toBe(503);
     }
 
-    // La purge périodique s'exécute sans rien toucher.
+    // La purge périodique s'exécute sans toucher à aucun dossier ni à aucun compte.
     const report = await testApp.app.get(AccountMaintenanceService).run();
     expect(report.failures).toBe(0);
-    expect(report.otherSteps).toEqual({ 'purge-stale-kyc-drafts': 0 });
+    expect(Object.keys(report.otherSteps).sort()).toEqual([
+      'erase-closed-accounts',
+      'purge-published-events',
+      'purge-stale-kyc-drafts',
+    ]);
+    expect(report.otherSteps).toMatchObject({
+      'purge-stale-kyc-drafts': 0,
+      'erase-closed-accounts': 0,
+    });
+  });
+
+  it('un compte qui avait déclaré une pièce n’obtient pas la copie de ses données, mais peut se clore', async () => {
+    const prisma = testApp.app.get(PrismaService);
+    const user = await registerVerifiedUser(http, testApp);
+    const session = await login(http, user);
+    const auth = bearer(session.tokens.accessToken);
+    // Un dossier reçu lorsque le stockage était encore configuré, avec une pièce.
+    const caseId = await withConnection(testApp.database.appUrl, async (db) => {
+      const id = await insertCase(db, session.user.id, 1);
+      await addDocument(db, id, 'IDENTITY_FRONT');
+      return id;
+    });
+
+    // Le numéro de la pièce, chiffré, ne peut pas être relu : pas de copie tronquée en silence.
+    const refused = await http
+      .post('/api/v1/me/data-export')
+      .set(auth)
+      .send({ currentPassword: user.password })
+      .expect(503);
+    expect(problemDetailsSchema.parse(refused.body).code).toBe('SERVICE_UNAVAILABLE');
+    expect(
+      await prisma.auditLog.count({
+        where: { action: 'user.data_exported', resourceId: session.user.id },
+      }),
+    ).toBe(0);
+
+    // La clôture reste possible : le dossier jamais déposé disparaît avec la ligne de sa pièce.
+    await http
+      .post('/api/v1/me/close')
+      .set(auth)
+      .send({ currentPassword: user.password, confirm: true })
+      .expect(200);
+    expect(await prisma.kycCase.count({ where: { id: caseId } })).toBe(0);
+    expect(await prisma.kycDocument.count({ where: { caseId } })).toBe(0);
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: session.user.id } })).status).toBe(
+      'CLOSED',
+    );
+
+    // Un compte sans dossier, lui, obtient sa copie.
+    const other = await registerVerifiedUser(http, testApp);
+    const copy = await http
+      .post('/api/v1/me/data-export')
+      .set(bearer((await login(http, other)).tokens.accessToken))
+      .send({ currentPassword: other.password })
+      .expect(200);
+    expect(dataExportSchema.parse(copy.body).verification).toEqual({ level: 0, cases: [] });
+    await backgroundWorkDone(testApp);
   });
 });

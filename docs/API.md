@@ -66,7 +66,7 @@ erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 | `FORBIDDEN`               | 403    | action non autorisée                                      |
 | `FEATURE_DISABLED`        | 403    | fonctionnalité non ouverte                                |
 | `EMAIL_NOT_VERIFIED`      | 403    | mot de passe correct, adresse e-mail non vérifiée         |
-| `ACCOUNT_DISABLED`        | 403    | mot de passe correct, compte suspendu ou clôturé          |
+| `ACCOUNT_DISABLED`        | 403    | mot de passe correct, compte suspendu                     |
 | `NOT_FOUND`               | 404    | ressource ou route inexistante                            |
 | `METHOD_NOT_ALLOWED`      | 405    |                                                           |
 | `NOT_ACCEPTABLE`          | 406    |                                                           |
@@ -234,6 +234,9 @@ Un code refusé répond `400 INVALID_OR_EXPIRED_CODE` ; un jeton expiré, épuis
   15 minutes ; 20 échecs en une heure bloquent le compte une heure pour tous. Réponse :
   `429 RATE_LIMITED` avec `Retry-After`. Pendant le blocage, même le bon mot de passe est refusé.
 - `EMAIL_NOT_VERIFIED` et `ACCOUNT_DISABLED` ne sont renvoyés qu'à qui présente le bon mot de passe.
+- Un compte **clôturé** n'existe plus pour la connexion : son ancienne adresse reçoit
+  `401 INVALID_CREDENTIALS`, comme une adresse inconnue — jusqu'à ce qu'un nouveau compte
+  l'utilise.
 
 ### Mot de passe
 
@@ -316,6 +319,47 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   personnel fait au compte d'un client figure dans l'historique de ce client, pas dans le sien.
   Pagination par curseur : `before` = `nextCursor` de la page précédente ; `limit` ≤ 100.
 
+### Copie des données et clôture du compte
+
+| Route                         | Corps                                                  | Réponse                                                 |
+| ----------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| `POST /api/v1/me/data-export` | `currentPassword`, `code` \| `recoveryCode`            | `200` la copie (JSON, proposée en téléchargement)       |
+| `POST /api/v1/me/close`       | `currentPassword`, `code` \| `recoveryCode`, `confirm` | `200` `{ closedAt, legalRetentionUntil, erasureDueAt }` |
+
+- **Preuve du titulaire.** Une session ouverte ne suffit pas : ces deux routes exigent de
+  nouveau le mot de passe (`currentPassword`) et — **si** la validation en deux étapes est
+  activée sur le compte — `code` (application d'authentification) **ou** `recoveryCode` (code
+  de secours, consommé). Mot de passe erroné : `401 INVALID_CREDENTIALS` ; second facteur
+  attendu mais absent : `422 UNPROCESSABLE_ENTITY` ; code refusé :
+  `400 INVALID_OR_EXPIRED_CODE` ; les deux à la fois : `400 VALIDATION_FAILED`. Les essais
+  erronés sont comptés comme ailleurs (`429 RATE_LIMITED` avec `Retry-After`) et inscrits à
+  l'historique du compte.
+- **Copie des données.** Un document JSON (`Content-Disposition: attachment`,
+  `mg-exchange-data.json`) : `formatVersion` (`1`), `generatedAt`, `account`, `profile`,
+  `security`, `sessions`, `activity` (les 2 000 événements les plus récents ; `truncated`
+  indique s'il en existe de plus anciens) et `verification` (niveau et dossiers). Elle ne
+  contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
+  joints aux dossiers y sont **décrits, pas inclus**. Au plus **3 copies par 24 heures**
+  (`429` ensuite). Chaque copie figure dans l'historique et est signalée au titulaire par
+  e-mail, avec l'adresse IP d'origine. `503 SERVICE_UNAVAILABLE` si le compte a déclaré une
+  pièce d'identité alors que le stockage chiffré n'est pas configuré côté serveur.
+- **Clôture.** `confirm` doit valoir `true`. Elle est **immédiate et définitive** :
+  - toutes les sessions sont fermées ; mot de passe, second facteur et profil sont effacés ;
+    l'ancienne adresse ne permet plus de se connecter ni de réinitialiser un mot de passe ;
+  - l'adresse e-mail, le numéro de téléphone et la pièce d'identité sont **libres aussitôt**
+    pour une nouvelle inscription — le nouveau compte n'hérite de rien ;
+  - un dossier de vérification jamais examiné (en préparation ou déposé) est effacé avec ses
+    pièces ; ceux sur lesquels une décision a été prise sont conservés jusqu'à
+    `legalRetentionUntil` (dix ans après la clôture ; `null` s'il n'y en a pas) ;
+  - ce qui reste — l'ancienne adresse, l'ancien numéro, les dossiers conservés — est effacé à
+    partir de `erasureDueAt` (le terme légal, et jamais moins de 30 jours après la clôture) ;
+  - le titulaire reçoit un e-mail de confirmation à son ancienne adresse.
+
+  `409 CONFLICT` si le compte détient un rôle du back-office : il lui est d'abord retiré.
+
+- Ces deux routes suivent le mode maintenance (`503 MAINTENANCE`) ; le back-office, lui, peut
+  toujours clore un compte.
+
 ## Vérification d'identité (KYC)
 
 Réservée aux **particuliers**, et à la fonctionnalité `kyc` (`403 FEATURE_DISABLED` tant
@@ -348,7 +392,8 @@ y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
   son statut et, s'il a été refusé, les motifs).
 - **Statuts d'un dossier.** `DRAFT` (en préparation), `SUBMITTED` (déposé, en attente),
   `APPROVED`, `REJECTED`, `SUPERSEDED` (remplacé par un dossier plus récent), `REVOKED`
-  (vérification retirée). Seul un `DRAFT` se modifie ou s'efface.
+  (vérification retirée), `ACCOUNT_CLOSED` (accepté, jusqu'à la clôture du compte — visible du
+  seul back-office). Seul un `DRAFT` se modifie ou s'efface.
 - **Enregistrer une déclaration** crée le dossier en préparation du niveau, ou remplace sa
   déclaration — les pièces déjà jointes sont conservées. `409 CONFLICT` tant qu'un dossier du
   niveau attend l'examen, ou si le niveau précédent n'est pas vérifié. Au plus 30
@@ -418,6 +463,7 @@ d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les p
 | `POST /api/v1/admin/users/{userId}/reactivate`        | `users.suspend`         | lever une suspension (`reason`)                  |
 | `POST /api/v1/admin/users/{userId}/sessions/revoke`   | `users.revoke_sessions` | déconnecter le compte partout (`reason`)         |
 | `POST /api/v1/admin/users/{userId}/mfa/reset`         | `users.reset_mfa`       | retirer le second facteur (`reason`)             |
+| `POST /api/v1/admin/users/{userId}/close`             | `users.close`           | clore le compte (`ground`, `reason`, `confirm`)  |
 | `GET /api/v1/admin/roles`                             | `roles.read`            | rôles, permissions, nombre de détenteurs         |
 | `GET /api/v1/admin/role-changes`                      | `roles.read`            | demandes de changement de rôle                   |
 | `POST /api/v1/admin/role-changes`                     | `roles.manage`          | demander l'attribution ou le retrait d'un rôle   |
@@ -433,9 +479,9 @@ d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les p
 | `POST /api/v1/admin/kyc/cases/{caseId}/revoke`        | `kyc.revoke`            | retirer une vérification acceptée (`reason`)     |
 
 Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
-`users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `kyc.read`,
-`kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité ; la conformité n'a
-aucune prise sur les comptes.
+`users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `users.close`,
+`kyc.read`, `kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité et ne
+clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt.
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -470,6 +516,20 @@ et sa justification sont écrits au journal d'audit dans la même transaction.
 - **Retirer le second facteur** ramène le compte à la seule protection de son mot de passe :
   toutes ses sessions sont fermées et le titulaire est **toujours** prévenu. La procédure du
   support doit avoir établi l'identité du demandeur auparavant (voir `SECURITY.md`).
+- **Clore** (`users.close`) est **définitif** et vaut exactement la clôture par le titulaire
+  (voir « Copie des données et clôture du compte ») : `ground` dit pourquoi — `HOLDER_REQUEST`
+  (le titulaire l'a demandé par un autre canal, par exemple parce qu'il n'a plus accès à son
+  compte) ou `PLATFORM_DECISION` —, `confirm` vaut `true`, et le titulaire est **toujours**
+  prévenu, jamais de la raison. Compte actif ou suspendu seulement. `409 CONFLICT` tant que
+  le compte détient un rôle, ou qu'un de ses dossiers de vérification attend l'examen : le
+  dossier est d'abord décidé, pour que la décision soit conservée.
+- **Compte clôturé.** Sa fiche porte `closure` : `closedAt`, `origin` (`HOLDER` \| `STAFF`),
+  `closedBy`, `legalRetentionUntil`, `erasureDueAt`, `formerEmail`, `formerPhone` et
+  `erasedAt` — l'ancienne adresse et l'ancien numéro valent `null` une fois effacés. Son
+  adresse affichée est factice (`closed-<id>@closed.invalid`). Une recherche par adresse ou
+  par numéro rend d'abord le compte qui les porte aujourd'hui, puis les comptes clôturés qui
+  les portaient — jusqu'à leur effacement. Plus aucune action ne s'y applique
+  (`409 CONFLICT`).
 - **Nul n'agit sur son propre compte** par le back-office (`403`), et agir sur le compte d'un
   membre du personnel exige en plus `roles.manage` : le support ne peut ni suspendre ni
   déconnecter un administrateur.
@@ -544,8 +604,8 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Acceptation versionnée des conditions d'utilisation, clôture de compte, vérification des
-entreprises (KYB) et plafonds par niveau de vérification (fin de la phase 2 et phase 3) ;
+Acceptation versionnée des conditions d'utilisation, vérification des entreprises (KYB) et
+plafonds par niveau de vérification (fin de la phase 2 et phase 3) ;
 en-tête `Idempotency-Key` obligatoire sur toute opération financière (phase 3) ; webhooks
 entrants signés et protégés contre le rejeu (phase 4).
 

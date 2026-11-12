@@ -23,6 +23,8 @@ import { OutboxService } from '../../outbox/application/outbox.service.js';
 import { identifierDigest } from '../domain/identifier-digest.js';
 import { SECURITY_NOTICE_REQUESTED_EVENT, type SecurityNotice } from '../domain/identity-events.js';
 import { SecondFactorThrottle } from '../infrastructure/second-factor-throttle.js';
+import { AccountClosureRepository } from './account-closure.repository.js';
+import { toAdminClosureView } from './account-closure.views.js';
 import type { ClientContext } from './client-context.js';
 import { effectiveProfileOf } from './effective-profile.js';
 import { MfaRepository } from './mfa.repository.js';
@@ -90,6 +92,7 @@ export class AdminUsersService {
     private readonly pendingLogins: PendingLoginStore,
     private readonly throttle: SecondFactorThrottle,
     private readonly verification: VerificationStatusReader,
+    private readonly closures: AccountClosureRepository,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly unitOfWork: UnitOfWork,
@@ -131,12 +134,26 @@ export class AdminUsersService {
    * recherche par fragment. Chaque recherche est journalisée, qu'elle aboutisse ou non. Le
    * journal retient le critère et le nombre de résultats — de l'identifiant saisi, qui peut
    * être celui d'un tiers, seulement une empreinte.
+   *
+   * Une adresse ou un numéro retrouvent aussi les comptes **clôturés** qui les portaient, tant
+   * que la trace de leur clôture les garde : ils suivent le compte qui les porte aujourd'hui.
    */
   async lookup(request: AdminUserLookupRequest, actor: StaffActor): Promise<AdminUserLookupResult> {
     const found = await this.directory.search(this.prisma, {
       ...request,
       limit: ADMIN_LOOKUP_MAX_RESULTS,
     });
+    const closedIds = await this.closures.findByFormerIdentifier(
+      this.prisma,
+      { email: request.email, phone: request.phone },
+      ADMIN_LOOKUP_MAX_RESULTS - found.length,
+    );
+    for (const closedId of closedIds) {
+      const closed = await this.directory.find(this.prisma, closedId);
+      if (closed !== null && !found.some((entry) => entry.id === closed.id)) {
+        found.push(closed);
+      }
+    }
 
     const typed = request.email ?? request.phone;
     const match = found.length === 1 ? found[0] : undefined;
@@ -160,7 +177,7 @@ export class AdminUsersService {
   /** Fiche d'un compte. La consultation est journalisée. */
   async get(userId: string, actor: StaffActor): Promise<AdminUserDetail> {
     const now = this.clock.now();
-    const [entry, declared, verification, totp, recoveryCodesRemaining, activeSessions] =
+    const [entry, declared, verification, totp, recoveryCodesRemaining, activeSessions, closure] =
       await Promise.all([
         this.directory.find(this.prisma, userId),
         this.profiles.find(this.prisma, userId),
@@ -168,6 +185,7 @@ export class AdminUsersService {
         this.mfa.findTotp(this.prisma, userId),
         this.mfa.countUnusedRecoveryCodes(this.prisma, userId),
         this.sessions.countActive(this.prisma, userId, now),
+        this.closures.find(this.prisma, userId),
       ]);
     if (entry === null) {
       throw notFound();
@@ -198,6 +216,7 @@ export class AdminUsersService {
         recoveryCodesRemaining: enabledAt === null ? 0 : recoveryCodesRemaining,
       },
       activeSessions,
+      closure: closure === null ? null : toAdminClosureView(closure),
     };
   }
 

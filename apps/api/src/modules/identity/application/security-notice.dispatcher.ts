@@ -17,6 +17,8 @@ import {
   SECURITY_NOTICES,
   type SecurityNotice,
 } from '../domain/identity-events.js';
+import type { UserRecord } from '../domain/user.js';
+import { AccountClosureRepository } from './account-closure.repository.js';
 import {
   ACCOUNT_EXISTS_NOTICES_PER_ACCOUNT,
   REGISTRATION_INCOMPLETE_NOTICES_PER_ACCOUNT,
@@ -37,6 +39,10 @@ const payloadSchema = z.object({
       /** Vérification d'identité : niveau concerné et motifs d'un refus. */
       level: kycLevelSchema.optional(),
       reasons: z.array(z.enum(KYC_REJECTION_REASONS)).max(KYC_REJECTION_REASONS_MAX).optional(),
+      /** Clôture du compte : son origine et ce qu'il advient des données. */
+      byStaff: z.boolean().optional(),
+      erasureDueAt: z.iso.datetime().optional(),
+      retainedUntil: z.iso.datetime().optional(),
     })
     .optional(),
 });
@@ -91,6 +97,19 @@ function contentOf(notice: SecurityNotice, details: Details, sentAt: string): No
       };
     case 'IDENTITY_VERIFICATION_REVOKED':
       return { template: 'identity_verification_revoked', level: details.level ?? 1 };
+    case 'ACCOUNT_CLOSED':
+      return {
+        template: 'account_closed',
+        byStaff: details.byStaff ?? false,
+        erasureDueAt: details.erasureDueAt ?? sentAt,
+        retainedUntil: details.retainedUntil ?? null,
+      };
+    case 'DATA_EXPORTED':
+      return {
+        template: 'data_exported',
+        occurredAt: details.occurredAt ?? sentAt,
+        ipAddress: details.ipAddress ?? null,
+      };
   }
 }
 
@@ -103,6 +122,7 @@ export class SecurityNoticeDispatcher implements DomainEventHandler, OnModuleIni
   constructor(
     private readonly registry: DomainEventHandlerRegistry,
     private readonly users: UserRepository,
+    private readonly closures: AccountClosureRepository,
     private readonly notifications: NotificationService,
     private readonly limiter: RedisRateLimiter,
     private readonly prisma: PrismaService,
@@ -117,6 +137,10 @@ export class SecurityNoticeDispatcher implements DomainEventHandler, OnModuleIni
 
     const user = await this.users.findById(this.prisma, userId);
     if (user === null) {
+      return;
+    }
+    const recipient = await this.recipientOf(user, notice);
+    if (recipient === null) {
       return;
     }
     // Ces messages informent, ils ne conditionnent aucun parcours : sans moyen de remise
@@ -135,9 +159,25 @@ export class SecurityNoticeDispatcher implements DomainEventHandler, OnModuleIni
 
     await this.notifications.send({
       channel: 'EMAIL',
-      recipient: user.email,
+      recipient,
       locale: localeSchema.catch('fr').parse(user.locale),
       content: contentOf(notice, details ?? {}, event.occurredAt),
     });
+  }
+
+  /**
+   * Adresse à laquelle écrire. Un compte clôturé n'en porte plus : seul l'avis de clôture lui
+   * est encore adressé, à l'adresse que garde la trace de la clôture — tant qu'elle n'a pas
+   * été effacée. Tout autre message resté en attente est abandonné.
+   */
+  private async recipientOf(user: UserRecord, notice: SecurityNotice): Promise<string | null> {
+    if (user.status !== 'CLOSED') {
+      return user.email;
+    }
+    if (notice !== 'ACCOUNT_CLOSED') {
+      return null;
+    }
+    const closure = await this.closures.find(this.prisma, user.id);
+    return closure?.email ?? null;
   }
 }

@@ -1,13 +1,13 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-12 — phase 2 en cours, lots 1 à 3 livrés._
+_Dernière mise à jour : 2026-11-12 — phase 2 en cours, lots 1 à 4 livrés._
 
 ## Synthèse
 
 | Phase | Périmètre                               | État                             |
 | ----- | --------------------------------------- | -------------------------------- |
 | 1     | Analyse et fondations                   | **Livrée** (réserves ci-dessous) |
-| 2     | Identité et utilisateurs                | **En cours** — lots 1 à 3 livrés |
+| 2     | Identité et utilisateurs                | **En cours** — lots 1 à 4 livrés |
 | 3     | Infrastructure financière (grand livre) | Non commencée                    |
 | 4     | Échange et paiements                    | Non commencée                    |
 | 5     | Blockchain                              | Non commencée                    |
@@ -36,6 +36,12 @@ l'examen de votre équipe de conformité : **rien n'est vérifié automatiquemen
 n'existe pas encore d'écran pour les examinateurs (phase 7) — l'examen se fait aujourd'hui
 par les routes de l'API. Le niveau obtenu **n'ouvre encore aucun droit** : aucun plafond
 n'existe, puisque aucune opération n'existe.
+
+**Clôture et données personnelles.** Un titulaire peut clore son compte et obtenir une copie
+de ses données ; ce que la loi impose de garder est conservé dix ans, le reste est effacé.
+**Les durées et l'étendue de ces droits reposent sur notre lecture des textes, qui n'est pas
+un avis juridique** — et, pour la protection des données, sur un résumé non officiel du Code
+du numérique : à faire confirmer par votre conseil avant toute ouverture au public.
 
 ## Phase 2 — identité et utilisateurs
 
@@ -112,12 +118,41 @@ examinateur portant le rôle `compliance`, attribué à quatre yeux ; puis l'ouv
 fonctionnalité `kyc` par un administrateur. **Avant cela, lire les limites ci-dessous** —
 en particulier l'absence d'analyse antivirus des fichiers et la sauvegarde de la clé.
 
+### Lot 4 — livré : clôture de compte, conservation légale, effacement, copie des données
+
+| Sujet                    | Réalisation                                                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Clôture par le titulaire | immédiate et définitive ; le mot de passe est redemandé, et le second facteur s'il est activé : une session ouverte ne suffit pas                      |
+| Clôture par le personnel | à la demande du titulaire ou par décision de la plateforme ; permission nouvelle, détenue par les administrateurs et la conformité ; justification     |
+| Ce que devient le compte | plus de mot de passe, de second facteur, de session ni de profil ; il n'en reste qu'une ligne sans identifiant ; l'adresse et le numéro sont libres    |
+| Trace de la clôture      | date, origine, auteur ; elle garde l'adresse et le numéro jusqu'à l'échéance d'effacement, pour que le support retrouve un compte clôturé              |
+| Conservation légale      | un dossier de vérification sur lequel une décision a été prise est conservé dix ans après la clôture, avec ses pièces ; un dossier jamais examiné, non |
+| Effacement               | trente jours après la clôture, ou au terme des dix ans : dossiers, fichiers, puis adresse et numéro de la trace — par la purge horaire                 |
+| Copie des données        | un document JSON : compte, profil, sécurité, sessions, historique, dossiers ; ni secret, ni fichier, numéro de pièce masqué ; trois par jour           |
+| Garanties de la base     | rien ne s'écrit sur un compte clôturé ; rien ne s'efface avant le terme légal, lu à l'horloge de la base ; une clôture est entière ou n'est pas        |
+| Information              | le titulaire est prévenu par e-mail de la clôture — à son ancienne adresse — et de chaque copie de ses données ; il n'apprend jamais la justification  |
+| Minimisation             | les événements techniques déjà traités, qui peuvent désigner un compte, sont supprimés après trente jours                                              |
+
+Détail : [`docs/API.md`](docs/API.md), [`docs/SECURITY.md`](docs/SECURITY.md),
+[`docs/DATABASE.md`](docs/DATABASE.md), [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Décision : ADR 0023.
+
+**Ce qui change pour un client écrit contre le lot 3** : l'ancienne adresse d'un compte
+clôturé reçoit `401`, comme une adresse inconnue — `403 ACCOUNT_DISABLED` ne désigne plus
+qu'un compte suspendu ; une requête qui écrit sur un compte clôturé entre-temps reçoit `409` ;
+l'historique et les dossiers connaissent de nouvelles valeurs. Liste complète :
+[`CHANGELOG.md`](CHANGELOG.md).
+
+**L'acceptation versionnée des conditions d'utilisation, annoncée pour ce lot, n'y figure
+pas** : elle dépend d'un texte et d'une règle de version qui restent à décider (décision 9
+ci-dessous). Elle fera l'objet du lot suivant.
+
 ### Reste à faire en phase 2
 
+- **Acceptation versionnée des conditions d'utilisation** : enregistrer la version du texte
+  acceptée, et la redemander quand il change.
 - **Vérification des entreprises (KYB)** et comptes professionnels : à concevoir — pièces de
   la société, représentants, bénéficiaires effectifs.
-- Acceptation versionnée des conditions d'utilisation, clôture de compte, export et
-  effacement des données, conservation légale puis effacement des dossiers de vérification.
 - **Plafonds par niveau de vérification** : à fixer et à appliquer avec les premières
   opérations (phase 3).
 
@@ -133,16 +168,16 @@ Exécution du 2026-11-12 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **1 038 tests réussis, 0 échec** |
+| `pnpm test`                      | **1 169 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 95    | —                                               |
 | `@mgx/contracts`          | 34    | —                                               |
-| API — unitaires           | 406   | —                                               |
-| API — intégration         | 160   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 240   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — unitaires           | 437   | —                                               |
+| API — intégration         | 227   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 273   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
 Ce que ces tests établissent, notamment :
 
@@ -159,7 +194,9 @@ Ce que ces tests établissent, notamment :
   transaction est annulée ;
 - **sécurité HTTP** : aucun détail interne dans une erreur 500, secrets absents des journaux,
   documentation fermée en production, limitation de débit non contournable par `X-Forwarded-For` ;
-- **reverse proxy** : les erreurs que Nginx produit lui-même respectent le contrat d'erreur de l'API ;
+- **reverse proxy** : les erreurs que Nginx produit lui-même respectent le contrat d'erreur de
+  l'API ; sa configuration ne lui fait copier sur son disque ni un fichier envoyé, ni une
+  réponse de l'API ;
 - **accès** : les seules routes accessibles sans authentification sont celles d'une liste
   fermée ; toutes les autres répondent `401` sans jeton ; un utilisateur final n'atteint aucune
   route d'administration ; le retrait d'un rôle est immédiat ;
@@ -199,7 +236,8 @@ Ce que ces tests établissent, notamment :
   ni code ;
 - **purge** : ne supprime ni un compte vérifié, ni une inscription récente, ni la dernière
   session d'un compte, ni un second facteur actif ; chaque inscription supprimée est tracée ;
-  l'échec d'une étape n'empêche pas les suivantes ;
+  l'échec d'une étape n'empêche pas les suivantes ; les événements publiés depuis trente
+  jours sont supprimés, jamais ceux qui sont en attente ou abandonnés ;
 - **pièces de vérification** : le stockage ne contient rien de lisible — ni le fichier, ni sa
   signature, ni le numéro de la pièce ; un fichier ou une clé recopiés à la place d'un autre
   ne se déchiffrent pas ; une pièce altérée, échangée ou disparue n'est jamais rendue, et
@@ -224,9 +262,34 @@ Ce que ces tests établissent, notamment :
 - **accès simultanés à un dossier** : deux enregistrements créent un seul dossier ; trois
   dépôts, un seul aboutit ; de deux décisions contraires, une seule est prise et un seul avis
   part ; la même pièce acceptée au même instant sur deux comptes n'en vérifie qu'un ; aucun
-  fichier orphelin ne reste après des envois concurrents.
+  fichier orphelin ne reste après des envois concurrents ;
+- **clôture** : une session ouverte ne suffit pas — sans le mot de passe, ou sans le second
+  facteur s'il est activé, rien ne change ; clôturé, le compte n'a plus ni session, ni
+  secret, ni profil, et son ancienne adresse répond comme une adresse inconnue ; l'adresse,
+  le numéro et la pièce d'identité resservent aussitôt à un nouveau compte, qui n'hérite de
+  rien ; un membre du personnel ne clôt ni son propre compte, ni sans la permission, ni un
+  compte qui détient un rôle ; le titulaire est prévenu à son ancienne adresse, jamais de la
+  justification ; une clôture acquise répond par un succès même si le nettoyage qui la suit
+  échoue ;
+- **clôture, règles de la base** : des tests s'adressent **directement à PostgreSQL** avec le
+  rôle de l'API. La base refuse alors un compte clôturé sans sa trace, ou qui garde un
+  secret, une session, un profil ou un rôle ; toute écriture sur un compte clôturé ; une
+  clôture antidatée, ou prononcée par un compte non habilité ; l'effacement d'un dossier
+  conservé avant son terme, lu à sa propre horloge. Une session ouverte pendant une clôture
+  attend son issue, puis est refusée ; deux écritures croisées ne s'interbloquent pas ;
+- **conservation et effacement** : un dossier examiné — accepté ou refusé — est conservé dix
+  ans avec ses fichiers ; un dossier jamais examiné est effacé à la clôture. À l'échéance,
+  **la base entière est relue, table par table : plus aucune ne contient l'adresse, le
+  numéro, le nom, le lieu de naissance ni l'adresse postale du compte** ; il reste la ligne
+  sans identifiant, la trace de la clôture et le journal d'audit. Avancer l'horloge de
+  l'application seule n'efface rien de ce que la loi impose de garder ; un compte qui ne peut
+  pas être effacé est signalé, sans bloquer les autres ;
+- **copie des données** : elle contient le compte, le profil, les sessions, l'historique et
+  les dossiers — ni secret, ni fichier, ni numéro complet de pièce ; trois par jour, et un
+  essai refusé n'en consomme pas ; sans stockage chiffré, elle est refusée plutôt que
+  tronquée.
 
-**Efficacité des tests vérifiée par mutation.** 385 défauts ont été introduits volontairement,
+**Efficacité des tests vérifiée par mutation.** 615 défauts ont été introduits volontairement,
 un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -268,6 +331,27 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   requêtes se croisaient réellement — rejoué trois fois, il l'a détecté trois fois.
   L'écriture en cause est maintenant vérifiée directement, sans dépendre de l'instant où les
   requêtes arrivent, et deux défauts voisins ont été ajoutés : 107 au lot 2, tous détectés.
+- Lot 4 : 230 défauts — 90 dans les règles SQL de la clôture, de la conservation et de
+  l'effacement, 140 dans le code (clôture par le titulaire et par le personnel, preuve
+  redemandée au titulaire, effacement à l'échéance, purge des événements publiés, copie des
+  données). **À la première passe, 3 des 221 défauts n'étaient pas détectés**, chacun
+  révélant un manque dans les tests, comblé depuis : l'origine d'une clôture réécrite au
+  moment où son effacement est constaté ; une connexion commencée — mot de passe accepté,
+  second facteur attendu — qui n'était pas annulée par la clôture ; un effacement compté une
+  seconde fois lorsqu'une autre instance l'avait déjà constaté. Neuf défauts ont été ajoutés
+  avec les tests écrits ensuite (mode maintenance, copie et clôture sans stockage chiffré,
+  nettoyage en échec après une clôture acquise, ancien numéro dans la recherche et la fiche
+  du back-office, événements publiés jamais purgés, adresse citée dans le journal d'audit).
+  Les 230 sont détectés lors d'une passe complète sur le code livré.
+- Lots 1 à 3 après le lot 4, qui modifie leur code et plusieurs de leurs tests. Vingt-huit
+  défauts du lot 3 visaient des règles SQL que la migration du lot 4 redéfinit : ils ont été
+  déplacés vers la nouvelle définition. Ont été rejoués : les 31 défauts du lot 1 rejouables
+  par script, et ceux des lots 2 et 3 qui portent sur un fichier modifié par ce lot — 31 sur
+  107 et 74 sur 226. Tous sont détectés. L'un d'eux — la purge au travail non borné, déjà
+  citée au lot 2 — bloquait de nouveau un test au lieu de le faire échouer : cette fois un
+  test écrit pour le lot 4, corrigé depuis. **Les autres défauts des lots 2 et 3 (76 et 152)
+  n'ont pas encore été rejoués depuis le lot 4**, alors que certains de leurs tests ont été
+  remaniés : leur détection n'est établie, à ce stade, que sur le code du lot 3.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -275,17 +359,17 @@ L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accè
 paquets système**. Chaque fichier d'infrastructure a donc été exécuté hors Docker, avec le
 vrai logiciel, y compris après les ajouts de la phase 2 :
 
-| Élément                             | Vérifié ici                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Reste à confirmer                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture. Le répertoire des pièces y est créé comme le prescrit le fichier, réservé à l'utilisateur `node`.                                                                                                                                                                                                                                                                                                                                                                                           | Construction par Docker (images de base, couches, cache) ; instruction `VOLUME`                                                                                                                                                                                                                                                                                |
-| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Exécution par le point d'entrée de l'image officielle                                                                                                                                                                                                                                                                                                          |
-| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose. Les deux variables de la vérification d'identité sont fournies à l'API comme le fichier les déduit, et les pièces écrites dans un répertoire vide monté à l'emplacement du volume.                                                                                                                                                                                                                                                                                                                | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) ; le volume `kyc-documents` et l'expression `${KYC_ENCRYPTION_KEY:+…}`, que seul Compose interprète (cette forme ne figure pas dans le texte de la spécification ; sa prise en charge a été vérifiée dans le code source de Compose, pas par une exécution) |
-| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API. Route d'envoi des pièces : fichiers de 600 Ko, de 5 Mio exactement, de 5 Mio + 1 octet (refusé par l'API) et de 7 Mo (refusé par Nginx) ; quatre envois lents simultanés, le cinquième refusé ; aucun fichier temporaire laissé par le proxy.                                                                                                                                                                                                                                                                                                  | Exécution dans l'image `nginx:1.30-alpine`                                                                                                                                                                                                                                                                                                                     |
-| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. Depuis le lot 3 : vérification d'identité complète (déclaration, pièces, dépôt, examen, téléchargement d'une pièce de 5 Mio identique à l'octet près, acceptation, profil vérifié), puis contrôle du stockage par `check-kyc-storage.sh` sous l'utilisateur `node` — deux fichiers chiffrés, illisibles par un autre utilisateur. | Exécution dans la pile Docker                                                                                                                                                                                                                                                                                                                                  |
-| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` ont été exécutées ici. Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | **Toute exécution par GitHub** (voir ci-dessous)                                                                                                                                                                                                                                                                                                               |
-| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations ont été créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). Son comportement pour le contrôle de cohérence a été établi par lecture de son code source.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Exécution par la CI                                                                                                                                                                                                                                                                                                                                            |
-| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | —                                                                                                                                                                                                                                                                                                                                                              |
-| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | —                                                                                                                                                                                                                                                                                                                                                              |
+| Élément                             | Vérifié ici                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Reste à confirmer                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture. Le répertoire des pièces y est créé comme le prescrit le fichier, réservé à l'utilisateur `node`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Construction par Docker (images de base, couches, cache) ; instruction `VOLUME`                                                                                                                                                                                                                                                                                |
+| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Exécution par le point d'entrée de l'image officielle                                                                                                                                                                                                                                                                                                          |
+| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose. Les deux variables de la vérification d'identité sont fournies à l'API comme le fichier les déduit, et les pièces écrites dans un répertoire vide monté à l'emplacement du volume.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) ; le volume `kyc-documents` et l'expression `${KYC_ENCRYPTION_KEY:+…}`, que seul Compose interprète (cette forme ne figure pas dans le texte de la spécification ; sa prise en charge a été vérifiée dans le code source de Compose, pas par une exécution) |
+| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API. Route d'envoi des pièces : fichiers de 600 Ko, de 5 Mio exactement, de 5 Mio + 1 octet (refusé par l'API) et de 7 Mo (refusé par Nginx) ; quatre envois lents simultanés, le cinquième refusé. Depuis le lot 4 : aucune réponse de l'API n'est copiée sur le disque du proxy — le téléchargement d'une pièce de 5 Mio n'y laisse ni fichier ni avertissement, et la même exécution **sans** la directive ajoutée échoue.                                                                                                                                                                                                                                                                                                                                                                                        | Exécution dans l'image `nginx:1.30-alpine`                                                                                                                                                                                                                                                                                                                     |
+| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. Depuis le lot 3 : vérification d'identité complète (déclaration, pièces, dépôt, examen, téléchargement d'une pièce de 5 Mio identique à l'octet près, acceptation, profil vérifié), puis contrôle du stockage par `check-kyc-storage.sh` sous l'utilisateur `node` — deux fichiers chiffrés, illisibles par un autre utilisateur. Depuis le lot 4 : copie des données (mot de passe redemandé, numéro de la pièce absent), clôture (confirmation exigée), connexion refusée ensuite, avis reçu à l'ancienne adresse, compte retrouvé par le back-office, dossier conservé. 105 contrôles au total. | Exécution dans la pile Docker                                                                                                                                                                                                                                                                                                                                  |
+| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` ont été exécutées ici. L'étape ajoutée au lot 4 lit les journaux du conteneur Nginx : seul son équivalent, sur le journal d'erreurs de Nginx, a été exécuté. Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | **Toute exécution par GitHub** (voir ci-dessous)                                                                                                                                                                                                                                                                                                               |
+| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations ont été créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). Son comportement pour le contrôle de cohérence a été établi par lecture de son code source.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Exécution par la CI                                                                                                                                                                                                                                                                                                                                            |
+| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                                                                                                                                                                                                                                              |
+| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | —                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Intégration continue : à activer
 
@@ -303,6 +387,43 @@ travers Nginx, avec le moteur de migration natif de Prisma : elle lèvera les r�
 ci-dessus ou révélera des défauts.
 
 ## Problèmes identifiés
+
+### Pendant le lot 4 de la phase 2
+
+Tous corrigés avant la livraison du lot. Les deux premiers touchent le produit ; les autres,
+ses tests.
+
+1. **Une pièce d'identité téléchargée par un examinateur passait, en clair, par un fichier
+   temporaire du proxy** — défaut du lot 3. Une réponse plus grande que les tampons de Nginx
+   était copiée sur son disque le temps d'être relayée, puis supprimée. La documentation
+   affirmait qu'une pièce n'y était « jamais écrite en clair » : c'était vrai à l'envoi, pas
+   au téléchargement. Nginx le signalait dans ses journaux depuis le lot 3 ; la vérification
+   ne comptait que les fichiers restés après coup. Plus aucune réponse de l'API n'est écrite
+   sur ce disque ; un test lit la configuration, et le parcours de la pile complète échoue
+   désormais si Nginx signale un tel fichier — ce qui a été constaté en retirant la
+   correction.
+2. **Une clôture acquise pouvait répondre par une erreur.** Si Redis faisait défaut juste
+   après la transaction, le titulaire recevait une erreur pour une clôture déjà définitive.
+   Ce qui suit la transaction est maintenant du nettoyage : un échec y est journalisé, et la
+   clôture répond par un succès.
+3. **Trois défauts volontaires sur 221 n'étaient pas détectés par les tests** (voir
+   « mutation » ci-dessus) : une colonne de la trace réécrite seule, une connexion à
+   mi-chemin non annulée, un effacement compté deux fois entre deux instances.
+4. **Un test écrit pour ce lot bloquait au lieu d'échouer.** Il construisait ses données
+   d'après la borne qu'il vérifiait : une borne relevée par erreur lui faisait créer cinq
+   cent mille lignes. Trouvé en rejouant les défauts volontaires du lot 2 — le même travers
+   y avait déjà été corrigé dans un autre test.
+5. **Les tests sur services réels s'exécutaient avec un délai de 5 secondes au lieu de 30** :
+   le réglage par projet de Jest n'était pas pris en compte. Les résultats publiés jusqu'ici
+   n'en sont pas affectés — tous les tests passaient sous cette limite — mais un test
+   légitime plus long aurait échoué sans raison.
+6. **Un test d'envoi d'e-mail échouait par intermittence** (lot « envoi des e-mails ») : il
+   démarrait une seconde application avant d'avoir arrêté la première, et les deux se
+   disputaient les mêmes files. Le support de test refuse désormais ce cas.
+7. **Quatre tests des lots 1 et 2 attendaient que les événements soient remis à la file, non
+   qu'ils soient traités.** L'un a échoué une fois pendant la vérification finale ; rejoué
+   sous charge, le travers se reproduit 9 fois sur 80. Trois autres pouvaient conclure
+   « aucun message n'est parti » trop tôt. Ils attendent maintenant la fin du traitement.
 
 ### Pendant le lot 3 de la phase 2
 
@@ -445,8 +566,8 @@ Identité :
   accepté, il reprend ce que la pièce établit.
 - **L'identifiant de connexion est l'adresse e-mail.** Le numéro de téléphone se vérifie mais
   ne permet pas de se connecter (décision attendue).
-- **Durées de conservation** (7 jours, 90 jours…) : valeurs de départ, à confirmer avec la
-  conformité. Le journal d'audit n'est jamais purgé.
+- **Durées de conservation** (7 jours, 30 jours, 90 jours, dix ans…) : valeurs de départ, à
+  confirmer avec votre conseil. Le journal d'audit n'est jamais purgé.
 - **Conditions d'utilisation** : seule la date d'acceptation est enregistrée, pas la version du texte.
 - **Mots de passe** : la liste des mots de passe courants refusés est courte ; pas encore de
   vérification contre les fuites connues.
@@ -477,10 +598,10 @@ Vérification d'identité :
 - **Le niveau vérifié n'ouvre aucun droit** : aucun plafond n'est défini ni appliqué.
 - **Une pièce qui expire après l'acceptation ne fait rien retomber** : pas de relance ni de
   suspension automatique ; la conformité retire la vérification à la main.
-- **Conservation** : un dossier déposé n'est jamais effacé par l'application. Notre lecture de
-  la loi n° 22/068 (dix ans après la fin de la relation) **n'est pas un avis juridique** : à
-  faire confirmer par votre conseil. L'effacement à l'échéance et la clôture de compte restent
-  à écrire.
+- **Conservation** : tant que le compte est ouvert, un dossier déposé n'est jamais effacé ;
+  après la clôture, il l'est au terme de dix ans s'il a été examiné, aussitôt sinon. Notre
+  lecture de la loi n° 22/068 (dix ans après la fin de la relation) **n'est pas un avis
+  juridique** : à faire confirmer par votre conseil.
 - **Un examinateur habilité peut télécharger toutes les pièces déposées.** Chaque accès est
   tracé ; rien ne signale un volume anormal de consultations.
 - **Doublons** : une même pièce d'identité ne vérifie qu'un compte, et un même fichier déposé
@@ -489,6 +610,43 @@ Vérification d'identité :
 - **Entreprises** : un compte professionnel ne peut pas être vérifié (KYB à concevoir).
 - **Mémoire** : une pièce est tenue en mémoire le temps d'être reçue et chiffrée — 160 Mio au
   plus par instance, à prévoir dans son dimensionnement.
+
+Clôture, effacement, copie des données :
+
+- **Lecture juridique à confirmer.** Le Code du numérique (ordonnance-loi n° 23/010) n'a pas
+  été lu directement, seulement un résumé non officiel. Restent à établir avec votre
+  conseil : les délais de réponse aux demandes, les exceptions, les formalités auprès de
+  l'autorité de contrôle, et si dix ans de conservation s'appliquent bien à un dossier
+  **refusé**.
+- **La clôture est sans retour** : ni délai de rétractation, ni réouverture. La même personne
+  peut se réinscrire aussitôt, avec la même adresse ; le nouveau compte n'hérite de rien, et
+  doit refaire vérifier son identité.
+- **Le journal d'audit n'est pas effacé**, y compris après l'échéance. Il ne contient ni
+  adresse e-mail ni numéro complet, mais garde l'identifiant technique du compte, des
+  adresses IP et des appareils, et les justifications saisies par le personnel — qui ne
+  doivent donc contenir aucune donnée personnelle. Sa durée de conservation reste à fixer.
+- **Les sauvegardes ne sont pas concernées par l'effacement** : une donnée effacée subsiste
+  dans les sauvegardes antérieures, dont la durée de conservation borne le délai réel
+  d'effacement. À fixer avec la politique de sauvegarde (phase 9).
+- **Les messages déjà envoyés** (chez le prestataire d'e-mail, dans la boîte du titulaire)
+  échappent à l'effacement.
+- **Aucun écran ni procédure pour une demande reçue hors de l'application** (courrier,
+  e-mail) : la clôture par le personnel existe, mais la copie des données n'est remise qu'au
+  titulaire connecté. Une demande d'un titulaire qui ne peut plus se connecter se traite à
+  la main.
+- **La copie ne contient pas les fichiers des pièces** (elle les décrit), ni le numéro complet
+  de la pièce d'identité ; son historique est borné aux 2 000 événements les plus récents, et
+  le dit lorsqu'il en manque.
+- **Pas de rectification outillée** d'une identité vérifiée : elle passe par un nouveau
+  dossier de vérification.
+- **Effacement : 200 comptes par heure au plus**, du terme le plus ancien au plus récent. Un
+  compte qui ne peut pas être effacé est signalé à chaque passage ; si 200 comptes restaient
+  durablement bloqués, les suivants attendraient. L'alerte correspondante n'est pas encore
+  branchée (phase 9).
+- **Horloges** : le terme légal se lit à l'horloge de PostgreSQL ; serveur de base et
+  instances de l'API doivent être synchronisés.
+- **Comptes sans activité** : rien ne clôt ni n'efface un compte que son titulaire a cessé
+  d'utiliser.
 
 Socle :
 
@@ -500,7 +658,8 @@ Socle :
   sérialisation — à traiter avec le grand livre (phase 3), piloté par des tests de concurrence.
 - **Boîte d'envoi** : remise « au moins une fois » (les consommateurs doivent être
   idempotents) ; nouvelle tentative par événement et non par consommateur ; pas encore
-  d'outil pour rejouer un événement abandonné ni de purge des événements publiés.
+  d'outil pour rejouer un événement abandonné. Les événements publiés sont supprimés après
+  trente jours ; les événements abandonnés, jamais.
 - **Limitation de débit** : fenêtre fixe, par adresse IP, complétée par des limites par compte
   sur la connexion et les codes.
 - **Développement** : après modification d'un paquet `packages/*`, il faut le recompiler
@@ -529,15 +688,18 @@ réalisées.
    quel délai de carence.
 5. **Plafonds par niveau de vérification** — à fixer avant les premiers mouvements de
    fonds : rien ne les applique aujourd'hui.
-6. **Durées de conservation** des données d'identité : confirmer ou corriger les valeurs de
-   départ ; faire confirmer par votre conseil la durée légale de conservation des pièces
-   d'identité, et la liste des pièces acceptées.
+6. **Durées de conservation et droits des personnes** — à faire confirmer par votre conseil :
+   la conservation de dix ans après la clôture (et son application aux dossiers refusés), le
+   délai de trente jours avant effacement, la durée de conservation du journal d'audit, les
+   formalités auprès de l'autorité de contrôle, et la liste des pièces acceptées.
 7. **Examen des dossiers** : qui examine, avec quelle consigne écrite (quand accepter, quand
    refuser), et comment les fichiers reçus sont ouverts sans risque (analyse antivirus ou
    poste isolé).
 8. **Vérification des entreprises** : en avez-vous besoin au lancement, et pour quelles
    formes de société ?
-9. **Conditions d'utilisation** : texte et gestion des versions.
+9. **Conditions d'utilisation** : le texte, et la règle de version — un changement doit-il
+   être accepté de nouveau avant de continuer à utiliser le compte, ou seulement signalé ?
+   C'est ce qui manque pour écrire l'acceptation versionnée.
 10. **Hébergement cible** (fournisseur, région) et exigences de localisation des données —
     les pièces d'identité y sont désormais soumises.
 11. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne

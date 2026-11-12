@@ -33,7 +33,7 @@ import { type KycLevel, kycLevelSchema, kycVerifiedLevelSchema } from './kyc-lev
  * `DRAFT` est en préparation, modifiable ; `SUBMITTED` est déposé et attend l'examen ;
  * `APPROVED` est accepté : le niveau est vérifié ; `REJECTED` est refusé, avec ses motifs ;
  * `SUPERSEDED` a été accepté puis remplacé par un dossier plus récent ; `REVOKED` a été accepté
- * puis retiré par la conformité.
+ * puis retiré par la conformité ; `ACCOUNT_CLOSED` a été accepté jusqu'à la clôture du compte.
  */
 export const KYC_CASE_STATUSES = [
   'DRAFT',
@@ -42,6 +42,7 @@ export const KYC_CASE_STATUSES = [
   'REJECTED',
   'SUPERSEDED',
   'REVOKED',
+  'ACCOUNT_CLOSED',
 ] as const;
 export type KycCaseStatus = (typeof KYC_CASE_STATUSES)[number];
 
@@ -372,6 +373,7 @@ export const ADMIN_KYC_CASE_STATUSES = [
   'REJECTED',
   'SUPERSEDED',
   'REVOKED',
+  'ACCOUNT_CLOSED',
 ] as const satisfies readonly KycCaseStatus[];
 export type AdminKycCaseStatus = (typeof ADMIN_KYC_CASE_STATUSES)[number];
 

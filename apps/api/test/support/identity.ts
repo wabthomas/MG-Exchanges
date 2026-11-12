@@ -201,12 +201,18 @@ export async function registerVerifiedUser(
 ): Promise<RegisteredUser> {
   const user = { email: overrides.email ?? newEmail(), password: overrides.password ?? PASSWORD };
   const ip = newClientIp();
+  // L'adresse a pu servir à un compte clôturé depuis : seul un code reçu après compte.
+  const codesBefore = mailbox(testApp)
+    .messagesFor(user.email)
+    .filter(({ template }) => template === 'email_verification_code').length;
   await http
     .post('/api/v1/auth/register')
     .set(from(ip))
     .send({ ...user, countryCode: 'CD', acceptTerms: true })
     .expect(202);
-  const code = await nextCode(testApp, user.email);
+  const code = codeIn(
+    await nextMessageOf(testApp, user.email, 'email_verification_code', codesBefore + 1),
+  );
   await http
     .post('/api/v1/auth/email/verify')
     .set(from(ip))

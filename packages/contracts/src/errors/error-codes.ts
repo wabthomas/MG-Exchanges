@@ -18,7 +18,10 @@ export const ERROR_CODES = {
   FEATURE_DISABLED: { status: 403, title: 'Forbidden' },
   /** Mot de passe correct, mais l'adresse e-mail du compte n'a pas encore été vérifiée. */
   EMAIL_NOT_VERIFIED: { status: 403, title: 'Forbidden' },
-  /** Mot de passe correct, mais le compte est suspendu ou clôturé. */
+  /**
+   * Mot de passe correct, mais le compte est suspendu. Un compte clôturé, lui, n'existe plus
+   * pour la connexion : `INVALID_CREDENTIALS`, comme pour une adresse inconnue.
+   */
   ACCOUNT_DISABLED: { status: 403, title: 'Forbidden' },
   /** Le back-office exige la validation en deux étapes : l'activer, puis réessayer. */
   MFA_ENROLLMENT_REQUIRED: { status: 403, title: 'Forbidden' },

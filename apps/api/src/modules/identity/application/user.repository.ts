@@ -61,6 +61,10 @@ export class PhoneAlreadyVerifiedError extends Error {
 export abstract class UserRepository {
   abstract findById(db: DbClient, userId: string): Promise<UserRecord | null>;
 
+  /**
+   * Compte qui porte cette adresse. Un compte clôturé n'en porte plus : il n'est jamais trouvé
+   * ainsi — ni par son ancienne adresse, ni par l'adresse factice qui la remplace.
+   */
   abstract findByEmail(db: DbClient, email: string): Promise<UserRecord | null>;
 
   abstract findByEmailWithPasswordHash(

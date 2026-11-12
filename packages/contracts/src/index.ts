@@ -96,6 +96,31 @@ export {
   totpEnrollmentSchema,
 } from './identity/mfa.js';
 export {
+  ACCOUNT_CLOSURE_BLOCKERS,
+  ACCOUNT_CLOSURE_GROUNDS,
+  ACCOUNT_CLOSURE_ORIGINS,
+  type AccountClosure,
+  type AccountClosureBlocker,
+  type AccountClosureGround,
+  type AccountClosureOrigin,
+  accountClosureSchema,
+  type AdminAccountClosure,
+  adminAccountClosureSchema,
+  CLOSED_ACCOUNT_IDENTIFIERS_RETENTION_DAYS,
+  type CloseAccountRequest,
+  closeAccountRequestSchema,
+  VERIFICATION_RECORDS_RETENTION_YEARS,
+} from './identity/account-lifecycle.js';
+export {
+  DATA_EXPORT_ACTIVITY_MAX_ENTRIES,
+  DATA_EXPORT_FORMAT_VERSION,
+  type DataExport,
+  type DataExportRequest,
+  dataExportRequestSchema,
+  DATA_EXPORTS_PER_DAY,
+  dataExportSchema,
+} from './identity/data-export.js';
+export {
   ADMIN_ACTION_REASON_MIN_LENGTH,
   ADMIN_LOOKUP_MAX_RESULTS,
   ADMIN_PAGE_MAX_SIZE,
@@ -104,6 +129,8 @@ export {
   adminSessionsRevokedSchema,
   type AdminUserActionRequest,
   adminUserActionRequestSchema,
+  type CloseUserRequest,
+  closeUserRequestSchema,
   type AdminUserDetail,
   adminUserDetailSchema,
   type AdminUserList,
@@ -147,6 +174,7 @@ export {
   permissionKeySchema,
   PERMISSIONS,
   KYC_REVIEW_PERMISSION,
+  ACCOUNT_CLOSURE_PERMISSION,
   KYC_REVOCATION_PERMISSION,
   ROLE_KEY_PATTERN,
   ROLE_MANAGEMENT_PERMISSION,

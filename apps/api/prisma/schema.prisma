@@ -117,6 +117,8 @@ model OutboxEvent {
   publishedAt   DateTime?    @map("published_at") @db.Timestamptz(6)
 
   @@index([aggregateType, aggregateId])
+  // Purge des événements publiés.
+  @@index([publishedAt])
   @@map("outbox_events")
 }
 
@@ -146,6 +148,10 @@ enum UserStatus {
 /// Compte d'un utilisateur — client ou membre du personnel. Un compte n'est jamais supprimé
 /// physiquement : il est clôturé (`CLOSED`). Seule exception : une inscription dont l'adresse
 /// n'a jamais été vérifiée, qui n'est pas encore un compte, est purgée après quelques jours.
+///
+/// La ligne d'un compte clôturé ne porte plus aucun identifiant : son adresse est remplacée par
+/// une adresse factice (`closed-<id>@closed.invalid`), son numéro effacé — la base l'impose. Ce
+/// qui doit en être gardé un temps l'est dans `account_closures`.
 model User {
   id              String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountType     AccountType @default(INDIVIDUAL) @map("account_type")
@@ -183,9 +189,59 @@ model User {
   decidedKycCases KycCase[] @relation("KycCaseDecider")
   revokedKycCases KycCase[] @relation("KycCaseRevoker")
 
+  closure        AccountClosure?  @relation("ClosedAccount")
+  closedAccounts AccountClosure[] @relation("AccountCloser")
+
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
   @@map("users")
+}
+
+enum AccountClosureOrigin {
+  /// Clôture demandée par le titulaire, depuis son compte.
+  HOLDER
+  /// Clôture prononcée par un membre du personnel habilité.
+  STAFF
+
+  @@map("account_closure_origin")
+}
+
+/// Clôture d'un compte : qui l'a faite, quand, et ce qui reste à effacer.
+///
+/// La ligne est écrite dans la transaction qui clôt le compte ; elle garde l'adresse e-mail et
+/// le numéro que le compte portait, retirés au même instant de `users`. À l'échéance
+/// (`erasureDueAt`), ce que les autres modules ont conservé est effacé, puis ces deux
+/// identifiants : il ne reste que la trace de la clôture.
+///
+/// `legalRetentionUntil` est renseignée lorsque la loi impose de conserver des pièces du compte
+/// (dossiers de vérification sur lesquels une décision a été prise) : la base refuse alors tout
+/// effacement avant cette date. Les règles sont dans la migration.
+model AccountClosure {
+  userId              String               @id @map("user_id") @db.Uuid
+  closedAt            DateTime             @map("closed_at") @db.Timestamptz(6)
+  origin              AccountClosureOrigin
+  /// Auteur de la clôture : le titulaire lui-même, ou le membre du personnel.
+  closedBy            String               @map("closed_by") @db.Uuid
+  /// Adresse e-mail du compte à sa clôture ; NULL une fois effacée.
+  email               String?              @db.VarChar(254)
+  /// Numéro de téléphone du compte à sa clôture, s'il en avait un ; NULL une fois effacé.
+  phone               String?              @db.VarChar(16)
+  /// Terme de la conservation imposée par la loi ; NULL si rien n'est conservé à ce titre.
+  legalRetentionUntil DateTime?            @map("legal_retention_until") @db.Timestamptz(6)
+  /// Date à partir de laquelle ce qui reste du compte est effacé.
+  erasureDueAt        DateTime             @map("erasure_due_at") @db.Timestamptz(6)
+  /// Date de l'effacement ; NULL tant qu'il n'a pas eu lieu.
+  erasedAt            DateTime?            @map("erased_at") @db.Timestamptz(6)
+
+  user   User @relation("ClosedAccount", fields: [userId], references: [id], onDelete: Restrict)
+  closer User @relation("AccountCloser", fields: [closedBy], references: [id], onDelete: Restrict)
+
+  // Recherche d'un compte clôturé par l'adresse ou le numéro qu'il portait (back-office).
+  @@index([email])
+  @@index([phone])
+  // Effacements à faire, par échéance.
+  @@index([erasureDueAt])
+  @@map("account_closures")
 }
 
 /// Profil déclaré par l'utilisateur : identité, adresse, préférences. Ces informations sont
@@ -491,11 +547,14 @@ model SessionToken {
 
 /// Parcours d'un dossier de vérification.
 ///
-///   DRAFT ──▶ SUBMITTED ──▶ APPROVED ──▶ SUPERSEDED (remplacé par un dossier plus récent)
-///     │           │             └──────▶ REVOKED    (vérification retirée)
-///  (effacé)       └──▶ REJECTED
+///   DRAFT ──▶ SUBMITTED ──▶ APPROVED ──▶ SUPERSEDED     (remplacé par un dossier plus récent)
+///     │           │             ├──────▶ REVOKED        (vérification retirée)
+///  (effacé)       │             └──────▶ ACCOUNT_CLOSED (compte clôturé)
+///                 └──▶ REJECTED
 ///
-/// Les transitions, et qui peut les faire, sont imposées par la base (voir la migration).
+/// Les transitions, et qui peut les faire, sont imposées par la base (voir les migrations).
+/// À la clôture du compte, un dossier jamais examiné (DRAFT, SUBMITTED) est effacé ; un dossier
+/// sur lequel une décision a été prise est conservé jusqu'au terme de la conservation légale.
 enum KycCaseStatus {
   /// En préparation par le titulaire : modifiable, effaçable.
   DRAFT
@@ -509,6 +568,8 @@ enum KycCaseStatus {
   SUPERSEDED
   /// Accepté puis retiré par la conformité.
   REVOKED
+  /// Accepté, jusqu'à la clôture du compte : la vérification a pris fin avec lui.
+  ACCOUNT_CLOSED
 
   @@map("kyc_case_status")
 }

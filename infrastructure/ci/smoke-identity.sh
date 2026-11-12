@@ -13,7 +13,10 @@
 #      de la taille maximale, à travers le proxy —, dépose son dossier ; l'administrateur le
 #      trouve dans la file, relit une pièce à l'identique et accepte le dossier ; le compte est
 #      vérifié et son profil reprend l'identité de la pièce ;
-#   6. l'administrateur retrouve le compte par son adresse et ferme ses sessions.
+#   6. l'administrateur retrouve le compte par son adresse et ferme ses sessions ;
+#   7. l'utilisateur se reconnecte, obtient la copie de ses données, puis clôt son compte : il
+#      ne peut plus se connecter, il est prévenu à son ancienne adresse, son dossier de
+#      vérification est conservé, et le back-office retrouve le compte clôturé.
 #
 # Prérequis :
 #   - un compte administrateur NEUF, créé avec l'outil en ligne de commande (`admin:create`) :
@@ -304,6 +307,51 @@ request 200 POST "/admin/users/$user_id/sessions/revoke" \
   '{"reason": "Smoke test of the containerised stack"}' "$admin_token"
 check 'the sessions of the account are closed' '.revokedSessions >= 1'
 request 401 GET /me '' "$user_token"
+
+# --- 7. Copie des données, puis clôture du compte ----------------------------------------------
+request 200 POST /auth/login "$credentials"
+user_token="$(jq -r .tokens.accessToken "$BODY")"
+holder_proof="$(jq -n --arg p "$password" '{currentPassword: $p}')"
+# Une session ouverte ne suffit pas : le mot de passe est redemandé.
+request 400 POST /me/data-export '{}' "$user_token"
+request 401 POST /me/data-export '{"currentPassword": "not-the-password-1"}' "$user_token"
+request 200 POST /me/data-export "$holder_proof" "$user_token"
+check 'the copy holds the account, its verified identity and its history' \
+  ".formatVersion == 1 and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0"
+check 'the copy never holds the full number of the identity document' \
+  "tostring | contains(\"$document_number\") | not"
+
+# La clôture est définitive : elle exige la confirmation, en plus du mot de passe.
+request 400 POST /me/close "$holder_proof" "$user_token"
+request 200 POST /me/close "$(jq -n --arg p "$password" '{currentPassword: $p, confirm: true}')" "$user_token"
+check 'the account is closed, and its verification records are retained by law' \
+  '.closedAt != null and .legalRetentionUntil != null and .erasureDueAt == .legalRetentionUntil'
+request 401 GET /me '' "$user_token"
+request 401 POST /auth/login "$credentials"
+check 'a closed account no longer exists for sign-in' '.code == "INVALID_CREDENTIALS"'
+
+# Le titulaire est prévenu à l'adresse que portait le compte.
+notice=""
+for _ in $(seq 1 60); do
+  curl --silent --output "$BODY" "$API/dev/mailbox?recipient=$email"
+  notice="$(jq -r '[.messages[] | select(.template == "account_closed")] | length' "$BODY")"
+  [ "$notice" = "1" ] && break
+  sleep 0.5
+done
+[ "$notice" = "1" ] || { echo "FAIL  no closure notice received" >&2; cat "$BODY" >&2; exit 1; }
+echo "ok    closure notice received at the former address"
+
+# Le back-office retrouve le compte clôturé par son ancienne adresse ; le dossier est conservé.
+request 200 POST /admin/users/search "$(jq -n --arg e "$email" '{email: $e}')" "$admin_token"
+check 'the back office finds the closed account by its former address' \
+  ".users | length == 1 and .[0].id == \"$user_id\" and .[0].status == \"CLOSED\""
+request 200 GET "/admin/users/$user_id" '' "$admin_token"
+check 'the account sheet tells how the account was closed, and carries no identifier' \
+  ".closure.origin == \"HOLDER\" and .closure.formerEmail == \"$email\" and .closure.erasedAt == null and .email == \"closed-$user_id@closed.invalid\" and .activeSessions == 0"
+request 200 GET "/admin/kyc/cases/$case_id" '' "$admin_token"
+check 'the approved case is kept, ended by the closure' '.status == "ACCOUNT_CLOSED"'
+request 409 POST "/admin/users/$user_id/suspend" '{"reason": "Smoke test of the containerised stack"}' "$admin_token"
+
 request 200 GET /admin/roles '' "$admin_token"
 check 'system roles are in place' '[.roles[].key] == ["compliance", "super_admin", "support"]'
 request 204 POST /auth/logout '' "$admin_token"

@@ -143,3 +143,32 @@ describe('Erreurs produites par Nginx', () => {
     }
   });
 });
+
+describe('Ce que Nginx écrit sur son disque', () => {
+  /** Directives en vigueur : lignes de la configuration, hors commentaires. */
+  const directives = NGINX_CONFIGURATION.split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '' && !line.startsWith('#'));
+
+  it('aucune réponse de l’API : ni une pièce téléchargée, ni la copie des données d’un compte', () => {
+    // Sans cette directive, une réponse plus grande que les tampons passe, en clair, par un
+    // fichier temporaire. Elle vaut pour toutes les routes : elle est posée au niveau `http`,
+    // et nulle part redéfinie. Le comportement réel est vérifié sur la pile complète (CI).
+    const settings = directives.filter((line) => line.startsWith('proxy_max_temp_file_size'));
+    expect(settings).toEqual(['proxy_max_temp_file_size 0;']);
+    expect(directives.indexOf('proxy_max_temp_file_size 0;')).toBeLessThan(
+      directives.indexOf('server {'),
+    );
+  });
+
+  it('pas davantage le corps d’une pièce envoyée', () => {
+    // Le bloc de la route d'envoi : de son en-tête à l'accolade qui le referme.
+    const block =
+      /location ~ "\^\/api\/v1\/me\/verification\/cases\/[^\n]*documents\$" \{\n(?<body>.*?)\n {8}\}/s.exec(
+        NGINX_CONFIGURATION,
+      );
+    const body = (block?.groups?.['body'] ?? '').split('\n').map((line) => line.trim());
+    expect(body).toContain('proxy_request_buffering off;');
+    expect(body).toContain('proxy_pass http://mgx_api;');
+  });
+});

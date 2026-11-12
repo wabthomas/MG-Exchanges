@@ -7,6 +7,7 @@ import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
 import {
   type MaintenanceStep,
+  MaintenanceStepIncompleteError,
   MaintenanceStepRegistry,
 } from '../../identity/application/maintenance-step.registry.js';
 import { KycCaseRepository } from './kyc-case.repository.js';
@@ -104,9 +105,7 @@ export class KycDraftPurge implements MaintenanceStep, OnModuleInit {
       }
     }
     if (failed > 0) {
-      throw new Error(
-        `${String(failed)} stale verification draft(s) could not be purged (${String(purged)} purged).`,
-      );
+      throw new MaintenanceStepIncompleteError(purged, failed, 'stale verification draft(s)');
     }
     return purged;
   }

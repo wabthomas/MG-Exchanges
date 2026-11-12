@@ -65,6 +65,24 @@ const SAMPLES: {
     template: 'identity_verification_revoked' as const,
     level,
   })),
+  account_closed: [false, true].flatMap((byStaff) => [
+    {
+      template: 'account_closed' as const,
+      byStaff,
+      erasureDueAt: '2026-12-12T09:30:00.000Z',
+      retainedUntil: null,
+    },
+    {
+      template: 'account_closed' as const,
+      byStaff,
+      erasureDueAt: '2036-11-12T09:30:00.000Z',
+      retainedUntil: '2036-11-12T09:30:00.000Z',
+    },
+  ]),
+  data_exported: [
+    { template: 'data_exported', occurredAt: '2026-11-12T09:30:00.123Z', ipAddress: '203.0.113.7' },
+    { template: 'data_exported', occurredAt: '2026-11-12T09:30:00.123Z', ipAddress: null },
+  ],
 };
 
 const CONTENTS: readonly NotificationContent[] = Object.values(SAMPLES).flat();
@@ -234,4 +252,70 @@ describe('rédaction des messages', () => {
       expect(text.split('\n\n')).toHaveLength(2);
     }
   });
+});
+
+describe('avis de clôture et de copie des données', () => {
+  it.each(SUPPORTED_LOCALES)(
+    '%s : la clôture dit qui l’a faite et ce qu’il advient des données',
+    (locale) => {
+      const fr = locale === 'fr';
+      const own = rendered(
+        {
+          template: 'account_closed',
+          byStaff: false,
+          erasureDueAt: '2026-12-12T09:30:00.000Z',
+          retainedUntil: null,
+        },
+        locale,
+      ).text;
+      expect(own).toMatch(fr ? /à votre demande/ : /at your request/);
+      expect(own).toMatch(fr ? /définitive/ : /permanent/);
+      // Rien n'est conservé : la date est celle de l'effacement de l'adresse et du numéro.
+      expect(own).toContain('2026-12-12');
+      expect(own).not.toMatch(fr ? /réglementation/ : /Regulations/);
+      expect(own).toMatch(fr ? /pas à l'origine de cette clôture/ : /did not close this account/);
+
+      const byStaff = rendered(
+        {
+          template: 'account_closed',
+          byStaff: true,
+          erasureDueAt: '2036-11-12T09:30:00.000Z',
+          retainedUntil: '2036-11-12T09:30:00.000Z',
+        },
+        locale,
+      ).text;
+      expect(byStaff).not.toMatch(fr ? /à votre demande/ : /at your request/);
+      expect(byStaff).toMatch(fr ? /contactez le support/ : /contact support/);
+      // Des dossiers examinés sont conservés : le message dit jusqu'à quand, et pourquoi.
+      expect(byStaff).toMatch(fr ? /réglementation/ : /Regulations/);
+      expect(byStaff).toContain('2036-11-12');
+    },
+  );
+
+  it.each(SUPPORTED_LOCALES)(
+    '%s : la copie des données porte la date et l’adresse de la demande',
+    (locale) => {
+      const { text } = rendered(
+        {
+          template: 'data_exported',
+          occurredAt: '2026-11-12T09:30:00.123Z',
+          ipAddress: '203.0.113.7',
+        },
+        locale,
+      );
+      expect(text).toContain('2026-11-12 09:30 UTC');
+      expect(text).toContain('203.0.113.7');
+      expect(text).toMatch(
+        locale === 'fr'
+          ? /changez immédiatement votre mot de passe/
+          : /change your password immediately/,
+      );
+
+      const unknown = rendered(
+        { template: 'data_exported', occurredAt: '2026-11-12T09:30:00.123Z', ipAddress: null },
+        locale,
+      ).text;
+      expect(unknown).toMatch(locale === 'fr' ? /Adresse IP : inconnue/ : /IP address: unknown/);
+    },
+  );
 });

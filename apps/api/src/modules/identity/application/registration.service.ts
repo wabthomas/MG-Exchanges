@@ -11,6 +11,7 @@ import { type DbClient, PrismaService } from '../../../infrastructure/database/p
 import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
 import { OutboxService } from '../../outbox/application/outbox.service.js';
+import { isReservedEmail } from '../domain/account-closure.js';
 import { SECURITY_NOTICE_REQUESTED_EVENT } from '../domain/identity-events.js';
 import { isRegistrationCountry } from '../domain/registration-policy.js';
 import type { ClientContext } from './client-context.js';
@@ -52,6 +53,13 @@ export class RegistrationService {
       );
     }
     assertAcceptablePassword(request.password, request, 'password');
+    // Le domaine des adresses factices des comptes clôturés n'existe pas : nul ne s'y inscrit.
+    // Ne dépend que de l'adresse saisie : cette erreur ne dit rien de l'existence d'un compte.
+    if (isReservedEmail(request.email)) {
+      throw new AppError('VALIDATION_FAILED', 'Request validation failed.', {
+        errors: [{ path: 'email', message: 'This email address cannot be used.' }],
+      });
+    }
     this.verification.assertDeliveryAvailable();
 
     // Calculée avant toute lecture : le coût est le même que l'adresse soit déjà prise ou non.

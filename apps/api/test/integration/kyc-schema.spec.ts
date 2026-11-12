@@ -5,6 +5,25 @@ import { PERMISSION_KEYS, SYSTEM_ROLES } from '@mgx/contracts';
 import type pg from 'pg';
 
 import {
+  ageClosure,
+  closeAccountInSql,
+  emptyAccount,
+  insertClosureRecord,
+  markAccountClosed,
+} from '../support/account-closure.js';
+import {
+  addDocument,
+  approve,
+  type CaseOverrides,
+  completeDraft,
+  insertCase,
+  type Level,
+  reject,
+  revoke,
+  submit,
+  submitted,
+} from '../support/kyc-sql.js';
+import {
   createTestDatabase,
   sqlState,
   type TestDatabase,
@@ -21,14 +40,6 @@ const INSUFFICIENT_PRIVILEGE = '42501';
 const FORBIDDEN_MUTATION = 'MGX01';
 /** Règle du parcours d'un dossier de vérification enfreinte (migration kyc). */
 const KYC_RULE_VIOLATION = 'MGX03';
-
-type Level = 1 | 2 | 3;
-
-interface CaseOverrides {
-  readonly columns?: Record<string, unknown>;
-  /** Empreinte de la pièce d'identité (niveau 1) : la même pièce a la même empreinte. */
-  readonly digest?: Buffer;
-}
 
 describe('Vérification d’identité — règles portées par la base de données', () => {
   let database: TestDatabase;
@@ -92,156 +103,6 @@ describe('Vérification d’identité — règles portées par la base de donné
     return id;
   }
 
-  /** Colonnes d'une déclaration valide pour chaque niveau. */
-  function declaration(level: Level, digest: Buffer): Record<string, unknown> {
-    switch (level) {
-      case 1:
-        return {
-          given_name: 'Jean',
-          family_name: 'Mukendi',
-          additional_name: 'Kabongo',
-          date_of_birth: '1990-05-17',
-          place_of_birth: 'Lubumbashi',
-          nationality: 'CD',
-          document_type: 'PASSPORT',
-          document_number_encrypted: randomBytes(40),
-          document_number_digest: digest,
-          document_issuing_country: 'CD',
-          document_issued_on: '2024-01-10',
-          document_issued_at: 'Kinshasa',
-          document_expires_on: '2034-01-09',
-        };
-      case 2:
-        return {
-          address_line1: '12 avenue Kasa-Vubu',
-          city: 'Kinshasa',
-          address_country: 'CD',
-          address_proof_type: 'UTILITY_BILL',
-          address_proof_issued_on: '2026-10-20',
-        };
-      case 3:
-        return {
-          funds_sources: '{EMPLOYMENT,SAVINGS}',
-          occupation: 'Ingénieur des mines',
-          funds_explanation: 'Salaire mensuel et épargne constituée depuis 2015.',
-        };
-    }
-  }
-
-  /** Insère un dossier en préparation, valide pour son niveau sauf mention contraire. */
-  async function insertCase(
-    db: pg.Client,
-    user: string,
-    level: Level,
-    overrides: CaseOverrides = {},
-  ): Promise<string> {
-    const columns: Record<string, unknown> = {
-      user_id: user,
-      level,
-      ...declaration(level, overrides.digest ?? randomBytes(32)),
-      ...overrides.columns,
-    };
-    const names = Object.keys(columns);
-    const result = await db.query<{ id: string }>(
-      `INSERT INTO kyc_cases (${names.map((name) => `"${name}"`).join(', ')})
-       VALUES (${names.map((_, index) => `$${String(index + 1)}`).join(', ')})
-       RETURNING id`,
-      Object.values(columns),
-    );
-    return result.rows[0]!.id;
-  }
-
-  async function addDocument(
-    db: pg.Client,
-    caseId: string,
-    kind: string,
-    overrides: Record<string, unknown> = {},
-  ): Promise<string> {
-    const id = randomUUID();
-    const columns: Record<string, unknown> = {
-      id,
-      case_id: caseId,
-      kind,
-      content_type: kind === 'SELFIE' ? 'image/jpeg' : 'application/pdf',
-      byte_size: 20_480,
-      sha256: randomBytes(32),
-      storage_key: `${id.slice(-2)}/${id}`,
-      wrapped_key: randomBytes(61),
-      ...overrides,
-    };
-    const names = Object.keys(columns);
-    await db.query(
-      `INSERT INTO kyc_documents (${names.map((name) => `"${name}"`).join(', ')})
-       VALUES (${names.map((_, index) => `$${String(index + 1)}`).join(', ')})`,
-      Object.values(columns),
-    );
-    return id;
-  }
-
-  const REQUIRED_DOCUMENTS: Record<Level, readonly string[]> = {
-    1: ['IDENTITY_FRONT', 'SELFIE'],
-    2: ['PROOF_OF_ADDRESS'],
-    3: ['SOURCE_OF_FUNDS'],
-  };
-
-  const submit = (db: pg.Client, id: string) =>
-    db.query(
-      `UPDATE kyc_cases SET status = 'SUBMITTED', submitted_at = now(), updated_at = now()
-       WHERE id = $1`,
-      [id],
-    );
-
-  const approve = (db: pg.Client, id: string, by: string, extra = '') =>
-    db.query(
-      `UPDATE kyc_cases
-       SET status = 'APPROVED', decided_by = $2, decided_at = now(), updated_at = now()${extra}
-       WHERE id = $1`,
-      [id, by],
-    );
-
-  const reject = (db: pg.Client, id: string, by: string) =>
-    db.query(
-      `UPDATE kyc_cases
-       SET status = 'REJECTED', decided_by = $2, decided_at = now(), updated_at = now(),
-           rejection_reasons = '{DOCUMENT_UNREADABLE}', decision_note = 'Pièce illisible, ticket 311'
-       WHERE id = $1`,
-      [id, by],
-    );
-
-  const revoke = (db: pg.Client, id: string, by: string) =>
-    db.query(
-      `UPDATE kyc_cases
-       SET status = 'REVOKED', revoked_by = $2, ended_at = now(), updated_at = now(),
-           revocation_reason = 'Pièce reconnue fausse'
-       WHERE id = $1`,
-      [id, by],
-    );
-
-  /** Dossier complet, prêt à être déposé. */
-  async function completeDraft(
-    db: pg.Client,
-    user: string,
-    level: Level,
-    overrides: CaseOverrides = {},
-  ): Promise<string> {
-    const id = await insertCase(db, user, level, overrides);
-    for (const kind of REQUIRED_DOCUMENTS[level]) {
-      await addDocument(db, id, kind);
-    }
-    return id;
-  }
-
-  async function submitted(
-    db: pg.Client,
-    user: string,
-    level: Level,
-    overrides: CaseOverrides = {},
-  ): Promise<string> {
-    const id = await completeDraft(db, user, level, overrides);
-    await submit(db, id);
-    return id;
-  }
-
   async function approved(
     db: pg.Client,
     user: string,
@@ -284,6 +145,7 @@ describe('Vérification d’identité — règles portées par la base de donné
           'kyc.read',
           'kyc.review',
           'kyc.revoke',
+          'users.close',
           'users.read',
         ]);
         expect(byRole['compliance']).toEqual([...SYSTEM_ROLES.compliance].sort());
@@ -632,7 +494,7 @@ describe('Vérification d’identité — règles portées par la base de donné
       });
     });
 
-    it('seul un dossier en préparation s’efface', async () => {
+    it('tant que le compte est ouvert, seul un dossier en préparation s’efface', async () => {
       await asApp(async (db) => {
         const user = await insertUser(db);
         const draft = await completeDraft(db, user, 1);
@@ -963,6 +825,230 @@ describe('Vérification d’identité — règles portées par la base de donné
         // Seule une vérification en vigueur se retire.
         const pending = await submitted(db, user, 1);
         expect(await sqlState(() => revoke(db, pending, david))).toBe(KYC_RULE_VIOLATION);
+      });
+    });
+  });
+
+  describe('clôture du compte', () => {
+    /** Ouvre une transaction où le compte vient d'être clôturé, ses dossiers restant à traiter. */
+    async function closingAccount(db: pg.Client, user: string): Promise<void> {
+      await db.query('BEGIN');
+      await insertClosureRecord(db, user);
+      await emptyAccount(db, user);
+      await markAccountClosed(db, user);
+    }
+
+    /** Code de l'erreur de `action`, sans effet sur la transaction en cours. */
+    async function tried(
+      db: pg.Client,
+      action: () => Promise<unknown>,
+    ): Promise<string | undefined> {
+      await db.query('SAVEPOINT tried');
+      const state = await sqlState(action);
+      await db.query('ROLLBACK TO SAVEPOINT tried');
+      return state;
+    }
+
+    const endWithAccount = (db: pg.Client, id: string, assignments = 'ended_at = now()') =>
+      db.query(
+        `UPDATE kyc_cases SET status = 'ACCOUNT_CLOSED', updated_at = now(), ${assignments}
+         WHERE id = $1`,
+        [id],
+      );
+
+    it('une vérification en vigueur prend fin avec son compte — jamais avant, et sans rien changer d’autre', async () => {
+      await asApp(async (db) => {
+        const user = await insertUser(db);
+        const id = await approved(db, user, 1);
+
+        // Le compte est ouvert : la vérification ne peut pas « prendre fin avec lui ».
+        expect(await sqlState(() => endWithAccount(db, id))).toBe(KYC_RULE_VIOLATION);
+
+        await closingAccount(db, user);
+        try {
+          // Une date de fin, pas d'auteur de retrait, et rien d'autre ne change.
+          expect(await tried(db, () => endWithAccount(db, id, 'ended_at = NULL'))).toBe(
+            CHECK_VIOLATION,
+          );
+          expect(
+            await tried(db, () =>
+              endWithAccount(db, id, `ended_at = now(), revoked_by = '${claire}'`),
+            ),
+          ).toBe(CHECK_VIOLATION);
+          for (const assignment of [
+            `given_name = 'Paul'`,
+            `decided_by = '${david}'`,
+            `decision_note = 'Révisé'`,
+            `submitted_at = now()`,
+          ]) {
+            expect({
+              assignment,
+              state: await tried(db, () =>
+                endWithAccount(db, id, `ended_at = now(), ${assignment}`),
+              ),
+            }).toEqual({ assignment, state: KYC_RULE_VIOLATION });
+          }
+          await endWithAccount(db, id);
+          await db.query('COMMIT');
+        } catch (error) {
+          await db.query('ROLLBACK');
+          throw error;
+        }
+
+        expect(await caseRow(db, id)).toMatchObject({
+          status: 'ACCOUNT_CLOSED',
+          decided_by: claire,
+          revoked_by: null,
+        });
+        expect((await caseRow(db, id)).ended_at).toBeInstanceOf(Date);
+        // Le dossier est clos : il ne redevient pas valide, ne se retire pas, ne change plus.
+        for (const assignment of [
+          `status = 'APPROVED', ended_at = NULL`,
+          `status = 'REVOKED', revoked_by = '${claire}', revocation_reason = 'Après coup'`,
+          `ended_at = now()`,
+          `given_name = 'Paul'`,
+        ]) {
+          expect({
+            assignment,
+            state: await sqlState(() =>
+              db.query(`UPDATE kyc_cases SET ${assignment} WHERE id = $1`, [id]),
+            ),
+          }).toEqual({ assignment, state: KYC_RULE_VIOLATION });
+        }
+      });
+    });
+
+    it('seul un dossier accepté prend fin avec le compte : les autres gardent leur statut, ou s’effacent', async () => {
+      await asApp(async (db) => {
+        const user = await insertUser(db);
+        const rejected = await submitted(db, user, 1);
+        await reject(db, rejected, claire);
+        const revoked = await approved(db, user, 1);
+        await revoke(db, revoked, david);
+        const pending = await submitted(db, user, 1);
+        const other = await insertUser(db);
+        const draft = await completeDraft(db, other, 1);
+
+        await closingAccount(db, user);
+        try {
+          for (const id of [rejected, revoked, pending]) {
+            expect({ id, state: await tried(db, () => endWithAccount(db, id)) }).toEqual({
+              id,
+              state: KYC_RULE_VIOLATION,
+            });
+          }
+        } finally {
+          await db.query('ROLLBACK');
+        }
+        await closingAccount(db, other);
+        try {
+          expect(await tried(db, () => endWithAccount(db, draft))).toBe(KYC_RULE_VIOLATION);
+        } finally {
+          await db.query('ROLLBACK');
+        }
+      });
+    });
+
+    it('un dossier déposé mais jamais examiné ne s’efface qu’à la clôture de son compte', async () => {
+      await asApp(async (db) => {
+        const user = await insertUser(db);
+        const pending = await submitted(db, user, 1);
+        const erase = async () => {
+          await db.query('DELETE FROM kyc_documents WHERE case_id = $1', [pending]);
+          await db.query('DELETE FROM kyc_cases WHERE id = $1', [pending]);
+        };
+
+        // Compte ouvert : ni ses pièces, ni lui.
+        expect(
+          await sqlState(() => db.query('DELETE FROM kyc_documents WHERE case_id = $1', [pending])),
+        ).toBe(KYC_RULE_VIOLATION);
+        expect(
+          await sqlState(() => db.query('DELETE FROM kyc_cases WHERE id = $1', [pending])),
+        ).toBe(KYC_RULE_VIOLATION);
+
+        // La trace de la clôture ne suffit pas : il faut que le compte soit clôturé.
+        await db.query('BEGIN');
+        try {
+          await insertClosureRecord(db, user);
+          expect(await tried(db, erase)).toBe(KYC_RULE_VIOLATION);
+          await emptyAccount(db, user);
+          await markAccountClosed(db, user);
+          await erase();
+          await db.query('COMMIT');
+        } catch (error) {
+          await db.query('ROLLBACK');
+          throw error;
+        }
+        expect((await db.query('SELECT 1 FROM kyc_cases WHERE id = $1', [pending])).rowCount).toBe(
+          0,
+        );
+      });
+    });
+
+    it('un dossier examiné reste une preuve après la clôture : rien ne s’y ajoute, rien ne s’en retire avant le terme', async () => {
+      const { user, cases } = await asApp(async (db) => {
+        const account = await insertUser(db);
+        const rejected = await submitted(db, account, 1);
+        await reject(db, rejected, claire);
+        const revoked = await approved(db, account, 1);
+        await revoke(db, revoked, david);
+        const superseded = await approved(db, account, 1);
+        const current = await approved(db, account, 1);
+        await closeAccountInSql(db, account);
+        expect(await statusOf(db, current)).toBe('ACCOUNT_CLOSED');
+        expect(await statusOf(db, superseded)).toBe('SUPERSEDED');
+        return { user: account, cases: [rejected, revoked, superseded, current] };
+      });
+
+      for (const as of [asApp, asOwner]) {
+        await as(async (db) => {
+          for (const id of cases) {
+            const documents = await db.query<{ id: string }>(
+              'SELECT id FROM kyc_documents WHERE case_id = $1',
+              [id],
+            );
+            expect(documents.rowCount).toBe(2);
+            expect(
+              await sqlState(() =>
+                db.query('DELETE FROM kyc_documents WHERE id = $1', [documents.rows[0]!.id]),
+              ),
+            ).toBe(KYC_RULE_VIOLATION);
+            expect(
+              await sqlState(() => db.query('DELETE FROM kyc_cases WHERE id = $1', [id])),
+            ).toBe(KYC_RULE_VIOLATION);
+            expect(await sqlState(() => addDocument(db, id, 'IDENTITY_BACK'))).toBe(
+              KYC_RULE_VIOLATION,
+            );
+          }
+        });
+      }
+
+      // Dix ans et un jour plus tard : les pièces s'effacent, puis les dossiers.
+      await asOwner((owner) => ageClosure(owner, user, '10 years 1 day'));
+      await asApp(async (db) => {
+        for (const id of cases) {
+          await db.query('DELETE FROM kyc_documents WHERE case_id = $1', [id]);
+          await db.query('DELETE FROM kyc_cases WHERE id = $1', [id]);
+        }
+        expect(
+          (await db.query('SELECT 1 FROM kyc_cases WHERE user_id = $1', [user])).rowCount,
+        ).toBe(0);
+      });
+    });
+
+    it('la pièce d’identité d’un compte clôturé peut de nouveau vérifier un compte', async () => {
+      await asApp(async (db) => {
+        const digest = randomBytes(32);
+        const first = await insertUser(db);
+        await approved(db, first, 1, { digest });
+        const second = await insertUser(db);
+        const id = await submitted(db, second, 1, { digest });
+
+        // Tant que le premier compte est vérifié avec cette pièce, le second ne l'est pas.
+        expect(await sqlState(() => approve(db, id, claire))).toBe(UNIQUE_VIOLATION);
+        await closeAccountInSql(db, first);
+        await approve(db, id, claire);
+        expect(await statusOf(db, id)).toBe('APPROVED');
       });
     });
   });

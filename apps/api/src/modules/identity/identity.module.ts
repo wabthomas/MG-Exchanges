@@ -7,6 +7,11 @@ import { RateLimitModule } from '../../infrastructure/rate-limit/rate-limit.modu
 import { AuditModule } from '../audit/audit.module.js';
 import { NotificationsModule } from '../notifications/notifications.module.js';
 import { OutboxModule } from '../outbox/outbox.module.js';
+import { AccountClosureRepository } from './application/account-closure.repository.js';
+import { AccountClosureService } from './application/account-closure.service.js';
+import { AccountDataReader } from './application/account-data.reader.js';
+import { AccountDataRegistry } from './application/account-data.registry.js';
+import { AccountErasure } from './application/account-erasure.js';
 import { AccountMaintenanceService } from './application/account-maintenance.service.js';
 import { AccountService } from './application/account.service.js';
 import { AdminUsersService } from './application/admin-users.service.js';
@@ -14,6 +19,8 @@ import { ActivityService } from './application/activity.service.js';
 import { AuthenticationService } from './application/authentication.service.js';
 import { AuthorizationService } from './application/authorization.service.js';
 import { ChallengeRepository } from './application/challenge.repository.js';
+import { DataExportService } from './application/data-export.service.js';
+import { HolderProofService } from './application/holder-proof.service.js';
 import { MaintenanceStepRegistry } from './application/maintenance-step.registry.js';
 import { MfaRepository } from './application/mfa.repository.js';
 import { MfaService } from './application/mfa.service.js';
@@ -23,6 +30,7 @@ import { PendingLoginStore } from './application/pending-login.store.js';
 import { PhoneService } from './application/phone.service.js';
 import { ProfileRepository } from './application/profile.repository.js';
 import { ProfileService } from './application/profile.service.js';
+import { PublishedEventsPurge } from './application/published-events-purge.js';
 import { ReauthenticationService } from './application/reauthentication.service.js';
 import { RegistrationService } from './application/registration.service.js';
 import { RoleChangeRepository } from './application/role-change.repository.js';
@@ -38,6 +46,8 @@ import { VerificationService } from './application/verification.service.js';
 import { AccountMaintenanceProcessor } from './infrastructure/account-maintenance.processor.js';
 import { Argon2PasswordHasher } from './infrastructure/argon2-password-hasher.js';
 import { LoginThrottle } from './infrastructure/login-throttle.js';
+import { PrismaAccountClosureRepository } from './infrastructure/prisma-account-closure.repository.js';
+import { PrismaAccountDataReader } from './infrastructure/prisma-account-data.reader.js';
 import { PrismaChallengeRepository } from './infrastructure/prisma-challenge.repository.js';
 import { PrismaMfaRepository } from './infrastructure/prisma-mfa.repository.js';
 import { PrismaProfileRepository } from './infrastructure/prisma-profile.repository.js';
@@ -51,6 +61,7 @@ import { RedisPendingLoginStore } from './infrastructure/redis-pending-login.sto
 import { SecondFactorThrottle } from './infrastructure/second-factor-throttle.js';
 import { SecretCipher } from './infrastructure/secret-cipher.js';
 import { VerificationCodes } from './infrastructure/verification-codes.js';
+import { AccountLifecycleController } from './presentation/account-lifecycle.controller.js';
 import { AdminRolesController } from './presentation/admin-roles.controller.js';
 import { AdminUsersController } from './presentation/admin-users.controller.js';
 import { AuthController } from './presentation/auth.controller.js';
@@ -62,7 +73,8 @@ import { ProfileController } from './presentation/profile.controller.js';
 
 /**
  * Identité : comptes, authentification, second facteur, sessions, profil, autorisations et
- * administration des comptes par le back-office, purge périodique.
+ * administration des comptes par le back-office, copie des données, clôture et effacement,
+ * purge périodique.
  *
  * Ce module installe les deux gardes globales d'accès — authentification (refus par
  * défaut), puis permissions. Elles s'exécutent après la limitation de débit et la garde
@@ -75,6 +87,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     MeController,
     MfaController,
     ProfileController,
+    AccountLifecycleController,
     AdminUsersController,
     AdminRolesController,
   ],
@@ -87,6 +100,8 @@ import { ProfileController } from './presentation/profile.controller.js';
     { provide: UserDirectory, useClass: PrismaUserDirectory },
     { provide: RoleChangeRepository, useClass: PrismaRoleChangeRepository },
     { provide: VerificationStatusReader, useClass: PrismaVerificationStatusReader },
+    { provide: AccountClosureRepository, useClass: PrismaAccountClosureRepository },
+    { provide: AccountDataReader, useClass: PrismaAccountDataReader },
     { provide: PendingLoginStore, useClass: RedisPendingLoginStore },
     { provide: Clock, useClass: SystemClock },
     {
@@ -115,6 +130,12 @@ import { ProfileController } from './presentation/profile.controller.js';
     AdminUsersService,
     RoleChangeService,
     MaintenanceStepRegistry,
+    AccountDataRegistry,
+    HolderProofService,
+    AccountClosureService,
+    DataExportService,
+    AccountErasure,
+    PublishedEventsPurge,
     AccountMaintenanceService,
     AccountMaintenanceProcessor,
     VerificationCodeDispatcher,
@@ -132,6 +153,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     UserDirectory,
     VerificationStatusReader,
     MaintenanceStepRegistry,
+    AccountDataRegistry,
   ],
 })
 export class IdentityModule {}

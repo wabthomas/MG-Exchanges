@@ -62,3 +62,28 @@ export async function sqlState(action: () => Promise<unknown>): Promise<string |
     return (error as { code?: string }).code ?? 'UNKNOWN';
   }
 }
+
+/**
+ * Attend qu'une session de la base soit bloquée sur un verrou de ligne : la preuve qu'une
+ * écriture attend l'issue d'une autre, et non qu'elle a simplement pris du temps.
+ */
+export async function untilBlocked(observer: pg.Client): Promise<void> {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    const { rows } = await observer.query<{ waiting: number }>(
+      `SELECT count(*)::int AS waiting FROM pg_locks
+       WHERE NOT granted AND locktype IN ('transactionid', 'tuple')
+         AND database IS NOT DISTINCT FROM
+           CASE WHEN locktype = 'tuple'
+             THEN (SELECT oid FROM pg_database WHERE datname = current_database())
+           END`,
+    );
+    if ((rows[0]?.waiting ?? 0) > 0) {
+      return;
+    }
+    if (Date.now() > deadline) {
+      throw new Error('The second transaction never waited for the first.');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}

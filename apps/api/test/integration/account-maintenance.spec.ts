@@ -14,8 +14,14 @@ import {
   MAINTENANCE_BATCH_SIZE,
   RETENTION,
 } from '../../src/modules/identity/application/identity-policy.js';
+import { AccountDataRegistry } from '../../src/modules/identity/application/account-data.registry.js';
+import { ACCOUNT_ERASURE_BATCH_SIZE } from '../../src/modules/identity/application/account-erasure.js';
 import { SessionRepository } from '../../src/modules/identity/application/session.repository.js';
+import { closeAccountInSql, moveErasureTerm } from '../support/account-closure.js';
+import { withOwner } from '../support/identity.js';
+import { addDocument, insertCase, reject, submit } from '../support/kyc-sql.js';
 import { createTestApp, type TestApp, testClock } from '../support/test-app.js';
+import { withConnection } from '../support/test-database.js';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -26,7 +32,11 @@ const NOTHING: MaintenanceReport = {
   expiredChallenges: 0,
   unconfirmedTotpEnrollments: 0,
   expiredRoleChanges: 0,
-  otherSteps: { 'purge-stale-kyc-drafts': 0 },
+  otherSteps: {
+    'erase-closed-accounts': 0,
+    'purge-published-events': 0,
+    'purge-stale-kyc-drafts': 0,
+  },
   failures: 0,
 };
 
@@ -331,6 +341,246 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
       (await prisma.roleChangeRequest.findUniqueOrThrow({ where: { id: pending.id } })).status,
     ).toBe('PENDING');
     expect(await prisma.userRole.count({ where: { userId: target } })).toBe(0);
+  });
+
+  it('les événements publiés depuis trente jours sont supprimés ; en attente ou abandonnés, jamais', async () => {
+    const limit = RETENTION.publishedEventMs;
+    expect(limit).toBe(30 * DAY_MS);
+    const farFuture = new Date(testClock.now().getTime() + 365 * DAY_MS);
+    const event = async (
+      status: 'PENDING' | 'PUBLISHED' | 'DEAD',
+      occurredAt: Date,
+      publishedAt: Date | null = null,
+    ): Promise<string> =>
+      (
+        await prisma.outboxEvent.create({
+          data: {
+            aggregateType: 'maintenance-test',
+            aggregateId: 'purge',
+            eventType: 'maintenance.test',
+            payload: { ipAddress: '203.0.113.9' },
+            status,
+            occurredAt,
+            publishedAt,
+            // Jamais relayé pendant le test : l'événement en attente n'est pas encore disponible.
+            availableAt: status === 'PENDING' ? farFuture : occurredAt,
+            ...(status === 'DEAD' ? { attempts: 10, lastError: 'handler failed' } : {}),
+          },
+          select: { id: true },
+        })
+      ).id;
+    const old = await event('PUBLISHED', ago(limit + DAY_MS), ago(limit + MINUTE_MS));
+    // Né il y a longtemps, publié récemment : c'est la publication qui compte.
+    const lately = await event('PUBLISHED', ago(400 * DAY_MS), ago(limit - MINUTE_MS));
+    const pending = await event('PENDING', ago(400 * DAY_MS));
+    const dead = await event('DEAD', ago(400 * DAY_MS));
+    const remaining = async (): Promise<string[]> =>
+      (
+        await prisma.outboxEvent.findMany({
+          where: { eventType: 'maintenance.test' },
+          orderBy: { id: 'asc' },
+          select: { id: true },
+        })
+      ).map(({ id }) => id);
+
+    expect(await maintenance.run()).toEqual({
+      ...NOTHING,
+      otherSteps: { ...NOTHING.otherSteps, 'purge-published-events': 1 },
+    });
+    expect(await remaining()).toEqual([lately, pending, dead].sort());
+    expect(await remaining()).not.toContain(old);
+    expect(await maintenance.run()).toEqual(NOTHING);
+
+    // Le travail est borné, comme celui des autres étapes : le reliquat part au passage suivant.
+    // La borne est écrite ici en toutes lettres, et vérifiée d'abord : des données construites
+    // d'après la constante suivraient une borne relevée par erreur, au lieu de la signaler.
+    const batch = 500;
+    expect(MAINTENANCE_BATCH_SIZE).toBe(batch);
+    await prisma.outboxEvent.createMany({
+      data: Array.from({ length: batch + 2 }, () => ({
+        aggregateType: 'maintenance-test',
+        aggregateId: 'purge',
+        eventType: 'maintenance.test',
+        payload: {},
+        status: 'PUBLISHED' as const,
+        occurredAt: ago(limit + 2 * DAY_MS),
+        availableAt: ago(limit + 2 * DAY_MS),
+        publishedAt: ago(limit + 2 * DAY_MS),
+      })),
+    });
+    expect((await maintenance.run()).otherSteps['purge-published-events']).toBe(batch);
+    expect((await maintenance.run()).otherSteps['purge-published-events']).toBe(2);
+    expect(await remaining()).toEqual([lately, pending, dead].sort());
+
+    await prisma.outboxEvent.deleteMany({ where: { eventType: 'maintenance.test' } });
+    expect(await maintenance.run()).toEqual(NOTHING);
+  });
+
+  it('un compte clôturé est effacé à son échéance ; celui qui ne peut pas l’être est signalé sans bloquer les autres', async () => {
+    expect(ACCOUNT_ERASURE_BATCH_SIZE).toBe(200);
+    const appSql = <T>(work: Parameters<typeof withConnection<T>>[1]): Promise<T> =>
+      withConnection(testApp.database.appUrl, work);
+    const ownerSql = <T>(work: Parameters<typeof withConnection<T>>[1]): Promise<T> =>
+      withConnection(testApp.database.ownerUrl, work);
+    // Un agent de conformité, nommé par le propriétaire : il refuse un dossier de vérification.
+    const officer = await createUser('ACTIVE');
+    await withOwner(testApp, async (owner) => {
+      const role = await owner.role.findUniqueOrThrow({ where: { key: 'compliance' } });
+      await owner.userRole.create({ data: { userId: officer, roleId: role.id } });
+    });
+    /** Compte clôturé ; `retained` : avec un dossier refusé, conservé dix ans, et ses deux pièces. */
+    const closed = async (retained = false): Promise<string> => {
+      const userId = await createUser('ACTIVE');
+      await appSql(async (db) => {
+        if (retained) {
+          const caseId = await insertCase(db, userId, 1);
+          await addDocument(db, caseId, 'IDENTITY_FRONT');
+          await addDocument(db, caseId, 'SELFIE');
+          await submit(db, caseId);
+          await reject(db, caseId, officer);
+        }
+        await closeAccountInSql(db, userId);
+      });
+      return userId;
+    };
+    const due = await closed();
+    const notDue = await closed();
+    const stuck = await closed(true);
+    const retained = await closed(true);
+    await ownerSql(async (owner) => {
+      await moveErasureTerm(owner, due, '-1 day');
+      await moveErasureTerm(owner, notDue, '1 day');
+      await moveErasureTerm(owner, stuck, '-2 days');
+      // Il reste neuf ans : jamais proposé.
+      await moveErasureTerm(owner, retained, '3285 days');
+    });
+    const record = (userId: string) =>
+      prisma.accountClosure.findUniqueOrThrow({ where: { userId } });
+    const erasures = (userId: string) =>
+      prisma.auditLog.count({ where: { action: 'user.data_erased', resourceId: userId } });
+
+    // Le stockage des pièces n'est pas configuré ici : les fichiers du compte « stuck » ne
+    // pourraient pas être effacés, donc rien de ce compte ne l'est. Le compte suivant l'est.
+    const first = await maintenance.run();
+    expect(first).toEqual({
+      ...NOTHING,
+      otherSteps: { ...NOTHING.otherSteps, 'erase-closed-accounts': 1 },
+      failures: 1,
+    });
+    expect(await record(due)).toMatchObject({ email: null, phone: null });
+    expect((await record(due)).erasedAt).toEqual(expect.any(Date));
+    expect(await erasures(due)).toBe(1);
+    expect(await record(stuck)).toMatchObject({ erasedAt: null });
+    expect((await record(stuck)).email).not.toBeNull();
+    expect(await prisma.kycCase.count({ where: { userId: stuck } })).toBe(1);
+    expect(await prisma.kycDocument.count({ where: { case: { userId: stuck } } })).toBe(2);
+    expect(await erasures(stuck)).toBe(0);
+    for (const untouched of [notDue, retained]) {
+      expect(await record(untouched)).toMatchObject({ erasedAt: null });
+    }
+
+    // L'obstacle levé (plus de fichier à effacer), le passage suivant efface le compte.
+    await prisma.kycDocument.deleteMany({ where: { case: { userId: stuck } } });
+    expect(await maintenance.run()).toEqual({
+      ...NOTHING,
+      otherSteps: { ...NOTHING.otherSteps, 'erase-closed-accounts': 1 },
+    });
+    expect(await record(stuck)).toMatchObject({ email: null, phone: null });
+    expect(await prisma.kycCase.count({ where: { userId: stuck } })).toBe(0);
+    expect(await erasures(stuck)).toBe(1);
+    // La trace d'audit de l'effacement ne porte aucun identifiant.
+    const traces = await prisma.auditLog.findMany({ where: { action: 'user.data_erased' } });
+    expect(
+      traces.every(({ actorType, actorId }) => actorType === 'SYSTEM' && actorId === null),
+    ).toBe(true);
+    expect(JSON.stringify(traces)).not.toContain('@example.cd');
+
+    expect(await maintenance.run()).toEqual(NOTHING);
+    expect(await prisma.kycCase.count({ where: { userId: retained } })).toBe(1);
+  });
+
+  it('un compte qu’une autre instance vient d’effacer n’est ni compté ni tracé une seconde fois', async () => {
+    const userId = await createUser('ACTIVE');
+    await withConnection(testApp.database.appUrl, (db) => closeAccountInSql(db, userId));
+    await withConnection(testApp.database.ownerUrl, (owner) =>
+      moveErasureTerm(owner, userId, '-1 day'),
+    );
+    // Deux instances de l'API ont retenu le même compte. L'autre termine pendant que celle-ci
+    // efface ce que détiennent les modules : au moment de constater l'effacement, c'est fait.
+    let overtaken = 0;
+    testApp.app.get(AccountDataRegistry).register({
+      name: 'test-concurrent-erasure',
+      closureBlockers: () => Promise.resolve([]),
+      lockForClosure: () => Promise.resolve(),
+      legalRetentionUntil: () => Promise.resolve(null),
+      closeAccount: () => Promise.resolve(null),
+      exportData: () => Promise.resolve({}),
+      eraseRetained: async (target, now) => {
+        if (target !== userId) {
+          return;
+        }
+        overtaken += 1;
+        await prisma.accountClosure.updateMany({
+          where: { userId: target, erasedAt: null },
+          data: { erasedAt: now, email: null, phone: null },
+        });
+      },
+    });
+
+    expect(await maintenance.run()).toEqual(NOTHING);
+    expect(overtaken).toBe(1);
+    expect((await prisma.accountClosure.findUniqueOrThrow({ where: { userId } })).erasedAt).toEqual(
+      expect.any(Date),
+    );
+    // L'instance qui a effacé a écrit sa trace ; celle-ci n'en ajoute pas.
+    expect(
+      await prisma.auditLog.count({ where: { action: 'user.data_erased', resourceId: userId } }),
+    ).toBe(0);
+    expect(await maintenance.run()).toEqual(NOTHING);
+    expect(overtaken).toBe(1);
+  });
+
+  it('au plus 200 comptes clôturés sont effacés par passage : le reliquat l’est au suivant', async () => {
+    // La borne est écrite ici en toutes lettres : la relever est une décision, pas un réglage.
+    const batch = 200;
+    expect(ACCOUNT_ERASURE_BATCH_SIZE).toBe(batch);
+    const users = await prisma.user.createManyAndReturn({
+      data: Array.from({ length: batch + 2 }, (_, index) => ({
+        email: `erasure-batch-${String(index)}@example.cd`,
+        countryCode: 'CD',
+        status: 'ACTIVE' as const,
+        termsAcceptedAt: testClock.now(),
+        emailVerifiedAt: testClock.now(),
+      })),
+      select: { id: true },
+    });
+    await withConnection(testApp.database.appUrl, async (db) => {
+      for (const { id } of users) {
+        await closeAccountInSql(db, id);
+      }
+    });
+    await withConnection(testApp.database.ownerUrl, async (owner) => {
+      // Toutes échues d'un coup : mêmes dates, déplacées en une instruction.
+      await owner.query('BEGIN');
+      await owner.query('ALTER TABLE account_closures DISABLE TRIGGER account_closures_enforce');
+      await owner.query(
+        `UPDATE account_closures
+         SET closed_at = closed_at - interval '31 days', erasure_due_at = erasure_due_at - interval '31 days'
+         WHERE user_id = ANY($1::uuid[])`,
+        [users.map(({ id }) => id)],
+      );
+      await owner.query('ALTER TABLE account_closures ENABLE TRIGGER account_closures_enforce');
+      await owner.query('COMMIT');
+    });
+
+    expect((await maintenance.run()).otherSteps['erase-closed-accounts']).toBe(batch);
+    expect((await maintenance.run()).otherSteps['erase-closed-accounts']).toBe(2);
+    expect(
+      await prisma.accountClosure.count({
+        where: { userId: { in: users.map(({ id }) => id) }, erasedAt: null },
+      }),
+    ).toBe(0);
+    expect(await maintenance.run()).toEqual(NOTHING);
   });
 
   it('le travail d’une exécution est borné à 500 lignes par catégorie : le reliquat est traité à la suivante', async () => {

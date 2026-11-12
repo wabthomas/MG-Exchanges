@@ -275,6 +275,47 @@ export abstract class KycCaseRepository {
   /** Dossiers en préparation restés sans changement depuis `before`, les plus anciens d'abord. */
   abstract findStaleDrafts(db: DbClient, before: Date, limit: number): Promise<string[]>;
 
+  // --- Clôture du compte et effacement ---------------------------------------------------------
+
+  /**
+   * Verrouille tous les dossiers du compte jusqu'à la fin de la transaction : envois, dépôts et
+   * décisions en cours s'achèvent d'abord ; ceux qui suivent attendent.
+   */
+  abstract lockCasesOf(tx: DbClient, userId: string): Promise<void>;
+
+  /** Vrai si un dossier du compte est déposé et attend l'examen. */
+  abstract hasCaseAwaitingReview(db: DbClient, userId: string): Promise<boolean>;
+
+  /**
+   * Vrai si une décision a été prise sur au moins un dossier du compte (accepté, refusé,
+   * remplacé, retiré) : ces dossiers sont conservés après la clôture.
+   */
+  abstract hasDecidedCase(db: DbClient, userId: string): Promise<boolean>;
+
+  /**
+   * Le compte vient d'être clôturé : ses vérifications en vigueur prennent fin avec lui, et ses
+   * dossiers jamais examinés (en préparation ou déposés) sont effacés avec leurs pièces.
+   *
+   * @returns l'emplacement des fichiers des pièces effacées.
+   * @throws KycRuleViolationError si la base refuse (le compte n'est pas clôturé).
+   */
+  abstract closeForAccount(tx: DbClient, userId: string, closedAt: Date): Promise<string[]>;
+
+  /** Emplacement des fichiers de toutes les pièces encore rattachées au compte. */
+  abstract documentFilesOf(db: DbClient, userId: string): Promise<string[]>;
+
+  /**
+   * Efface tous les dossiers du compte et leurs pièces.
+   *
+   * @returns l'emplacement des fichiers des pièces effacées.
+   * @throws KycRuleViolationError si la base refuse — le compte n'est pas clôturé, ou la
+   *   conservation légale n'est pas écoulée.
+   */
+  abstract eraseAllOf(tx: DbClient, userId: string): Promise<string[]>;
+
+  /** Tous les dossiers du compte, du plus récent au plus ancien. */
+  abstract allCasesOf(db: DbClient, userId: string): Promise<KycCaseRecord[]>;
+
   // --- Examen ---
 
   /** File des dossiers, du dépôt le plus ancien au plus récent. */

@@ -1,4 +1,8 @@
 import {
+  type AdminAccountClosure,
+  adminAccountClosureSchema,
+  type CloseUserRequest,
+  closeUserRequestSchema,
   type AdminSessionsRevoked,
   adminSessionsRevokedSchema,
   type AdminUserActionRequest,
@@ -41,6 +45,7 @@ import {
 } from '../../../common/http/openapi.js';
 import { ReqContext, type RequestContext } from '../../../common/http/request-context.js';
 import { AllowDuringMaintenance } from '../../system-settings/presentation/access.decorators.js';
+import { AccountClosureService } from '../application/account-closure.service.js';
 import { AdminUsersService, type StaffActor } from '../application/admin-users.service.js';
 
 const STAFF_RULES =
@@ -69,7 +74,10 @@ export function staffActorOf(user: AuthenticatedUser, client: RequestContext): S
 @AllowDuringMaintenance()
 @Controller({ path: 'admin/users', version: '1' })
 export class AdminUsersController {
-  constructor(private readonly adminUsers: AdminUsersService) {}
+  constructor(
+    private readonly adminUsers: AdminUsersService,
+    private readonly closures: AccountClosureService,
+  ) {}
 
   @Get()
   @RequirePermissions('users.read')
@@ -240,5 +248,33 @@ export class AdminUsersController {
     @ReqContext() client: RequestContext,
   ): Promise<void> {
     await this.adminUsers.resetSecondFactor(userId, body, staffActorOf(user, client));
+  }
+
+  @Post(':userId/close')
+  @HttpCode(200)
+  @RequirePermissions('users.close')
+  @ApiOperation({
+    summary: 'Close an account',
+    description:
+      '**Permanent.** Closes an active or suspended account, at the request of its holder ' +
+      'received through another channel (`HOLDER_REQUEST`) or by decision of the platform ' +
+      '(`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its ' +
+      'holder had done it (see `POST /me/close`), and the holder is told by e-mail — never ' +
+      'why. Refused (`409`) while the account holds a back-office role, or while one of its ' +
+      'identity verification cases awaits review: decide the case first, so that the decision ' +
+      'is kept. The mandatory `reason` is written to the audit log. You cannot close your own ' +
+      'account from the back office. Requires `users.close`.',
+  })
+  @ApiParam({ name: 'userId', schema: { type: 'string', format: 'uuid' } })
+  @ApiBody({ schema: toOpenApiInputSchema(closeUserRequestSchema) })
+  @ApiOkResponse({ schema: toOpenApiSchema(adminAccountClosureSchema) })
+  @ApiProblemResponses(400, 401, 403, 404, 409, 429)
+  close(
+    @Param('userId', { schema: uuidSchema }) userId: string,
+    @Body({ schema: closeUserRequestSchema }) body: CloseUserRequest,
+    @CurrentUser() user: AuthenticatedUser,
+    @ReqContext() client: RequestContext,
+  ): Promise<AdminAccountClosure> {
+    return this.closures.closeByStaff(userId, body, staffActorOf(user, client));
   }
 }

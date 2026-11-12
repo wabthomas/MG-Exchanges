@@ -86,6 +86,8 @@ export const RETENTION = {
   expiredChallengeMs: 7 * DAY_MS,
   /** Enrôlement d'un second facteur jamais confirmé. */
   unconfirmedTotpMs: DAY_MS,
+  /** Événement de la boîte d'envoi, après sa publication. */
+  publishedEventMs: 30 * DAY_MS,
 } as const;
 
 /** Nombre maximal de lignes supprimées par catégorie à chaque exécution de la purge. */

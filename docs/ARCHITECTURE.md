@@ -65,7 +65,7 @@ apps/api/src/
     notifications/        messages aux utilisateurs (port d'envoi, modèles, envoi SMTP, boîte de développement)
     identity/             comptes, authentification, second facteur, sessions, profil,
                           téléphone, historique, autorisations, back-office des comptes et
-                          des rôles, purge périodique
+                          des rôles, clôture, effacement et copie des données, purge périodique
     kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
                           examen par la conformité
   cli/                    outil d'exploitation (création des premiers administrateurs)
@@ -80,6 +80,14 @@ permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien du module `
 - Pour la purge des dossiers abandonnés, elle expose un registre, `MaintenanceStepRegistry` :
   un module y inscrit une étape, exécutée avec la tâche horaire. Un module ajouté plus tard se
   branche de la même façon, sans que l'identité le connaisse.
+- Pour la clôture d'un compte, elle expose un second registre, `AccountDataRegistry`. Un
+  module qui détient des données rattachées à un compte s'y inscrit (`AccountDataHolder`) et
+  répond de ce qu'il détient : ce qui s'oppose à la clôture, jusqu'à quand la loi impose de
+  conserver, ce qui s'efface à la clôture puis à l'échéance, ce qui figure dans la copie
+  remise au titulaire. **Tout module à venir qui rattache des données à un compte — le grand
+  livre, les ordres — doit s'y inscrire** : sans cela, la clôture ignorerait ce qu'il détient.
+  La base, elle, refuse de toute façon une ligne ajoutée à un compte clôturé, pour les tables
+  qui portent le déclencheur `<table>_account_open` (voir [`DATABASE.md`](DATABASE.md)).
 
 ### Chaîne de traitement d'une requête
 
@@ -107,7 +115,8 @@ borné en taille et en durée ; le nombre de réceptions simultanées est plafon
 | relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
 | traitement des événements    | à la demande   | envoi des codes et des messages de sécurité                       |
 | purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
-|                              |                | dossiers de vérification jamais déposés…                          |
+|                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés |
+|                              |                | à l'échéance d'effacement, événements publiés depuis trente jours |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
@@ -119,6 +128,11 @@ le maîtriser : codes TOTP, décisions du back-office, échéances des demandes 
 vérification d'identité (validité des pièces, ancienneté des justificatifs, décisions).
 Les sessions et les codes à usage unique lisent encore l'horloge du système directement ;
 les faire passer par ce port est une dette connue, sans effet en exécution réelle.
+
+Une échéance fait exception : le **terme de la conservation légale** d'un compte clôturé est
+relu par PostgreSQL à sa propre horloge (`now()`), et la base refuse tout effacement avant
+lui. L'horloge de l'application décide quand tenter l'effacement ; celle de la base, s'il est
+permis.
 
 ### Couches d'un module métier
 

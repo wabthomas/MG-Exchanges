@@ -8,6 +8,7 @@ import {
 } from '@mgx/validation';
 import { z } from 'zod';
 
+import { ACCOUNT_CLOSURE_GROUNDS, adminAccountClosureSchema } from './account-lifecycle.js';
 import { ACCOUNT_TYPES, USER_STATUSES } from './auth.js';
 import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { permissionKeySchema, ROLE_KEY_PATTERN } from './permissions.js';
@@ -125,12 +126,26 @@ export const adminUserDetailSchema = adminUserSummarySchema.extend({
   }),
   /** Sessions ouvertes en ce moment. */
   activeSessions: z.number().int().nonnegative(),
+  /** Clôture du compte ; `null` tant qu'il n'est pas clôturé. */
+  closure: adminAccountClosureSchema.nullable(),
 });
 export type AdminUserDetail = z.infer<typeof adminUserDetailSchema>;
 
 /** Action du back-office sur un compte : toujours justifiée. */
 export const adminUserActionRequestSchema = z.strictObject({ reason: adminActionReasonSchema });
 export type AdminUserActionRequest = z.infer<typeof adminUserActionRequestSchema>;
+
+/**
+ * Clôture d'un compte par un membre du personnel : **définitive**. `confirm` doit valoir
+ * `true` ; la justification est conservée dans le journal d'audit et n'est jamais communiquée
+ * au titulaire.
+ */
+export const closeUserRequestSchema = z.strictObject({
+  ground: z.enum(ACCOUNT_CLOSURE_GROUNDS),
+  reason: adminActionReasonSchema,
+  confirm: z.literal(true, { error: 'Closing an account is permanent: confirm it.' }),
+});
+export type CloseUserRequest = z.infer<typeof closeUserRequestSchema>;
 
 export const suspendUserRequestSchema = z.strictObject({
   reason: adminActionReasonSchema,

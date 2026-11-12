@@ -11,6 +11,7 @@ import request from 'supertest';
 
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
 import {
+  backgroundWorkDone,
   bearer,
   codeIn,
   from,
@@ -25,12 +26,7 @@ import {
   PASSWORD,
   registerVerifiedUser,
 } from '../support/identity.js';
-import {
-  createTestApp,
-  eventually,
-  TEST_CODE_HMAC_SECRET,
-  type TestApp,
-} from '../support/test-app.js';
+import { createTestApp, TEST_CODE_HMAC_SECRET, type TestApp } from '../support/test-app.js';
 
 const registration = (email: string, overrides: Record<string, unknown> = {}) => ({
   email,
@@ -225,9 +221,7 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
 
       await register(registration(owner.email)).expect(202);
       await register(registration(owner.email)).expect(202);
-      await eventually(
-        async () => (await prisma.outboxEvent.count({ where: { status: 'PENDING' } })) === 0,
-      );
+      await backgroundWorkDone(testApp);
       expect(mailbox(testApp).messagesFor(owner.email)).toHaveLength(received + 1);
     });
 
@@ -359,9 +353,7 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
       // Quatrième et cinquième demandes : même réponse, mais rien n'est envoyé.
       await resend();
       await resend();
-      await eventually(
-        async () => (await prisma.outboxEvent.count({ where: { status: 'PENDING' } })) === 0,
-      );
+      await backgroundWorkDone(testApp);
       expect(mailbox(testApp).messagesFor(email)).toHaveLength(3);
       expect(await prisma.verificationChallenge.count({ where: { user: { email } } })).toBe(3);
 
@@ -375,9 +367,7 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
         http.post('/api/v1/auth/email/resend').set(from(newClientIp())).send({ email }),
         http.post('/api/v1/auth/email/resend').set(from(newClientIp())).send({ email }),
       ]);
-      await eventually(
-        async () => (await prisma.outboxEvent.count({ where: { status: 'PENDING' } })) === 0,
-      );
+      await backgroundWorkDone(testApp);
 
       // Un seul défi reste en cours, et chaque message reçu porte un code de ce défi ou d'un
       // défi annulé : seul le dernier code fonctionne.

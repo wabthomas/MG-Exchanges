@@ -89,6 +89,11 @@ function formatUtc(isoDateTime: string): string {
   return `${isoDateTime.slice(0, 10)} ${isoDateTime.slice(11, 16)} UTC`;
 }
 
+/** `2026-11-11T20:15:42.123Z` → `2026-11-11` (jour UTC). */
+function formatUtcDay(isoDateTime: string): string {
+  return isoDateTime.slice(0, 10);
+}
+
 /** `15` → « 15 minutes » ; `1440` → « 24 heures » / "24 hours". */
 function formatDuration(minutes: number, locale: SupportedLocale): string {
   if (minutes >= 120 && minutes % 60 === 0) {
@@ -422,6 +427,65 @@ function render(content: NotificationContent, locale: SupportedLocale): Rendered
             ),
           };
     }
+
+    case 'account_closed': {
+      const erasure = formatUtcDay(content.erasureDueAt);
+      const retained = content.retainedUntil === null ? null : formatUtcDay(content.retainedUntil);
+      return fr
+        ? {
+            subject: `${PRODUCT} — votre compte a été clôturé`,
+            text: paragraphs(
+              content.byStaff
+                ? `Votre compte ${PRODUCT} a été clôturé. Cette clôture est définitive : vous ne pouvez plus vous connecter. Pour en connaître la raison, contactez le support.`
+                : `Votre compte ${PRODUCT} a été clôturé à votre demande. Cette clôture est définitive : vous ne pouvez plus vous connecter.`,
+              retained === null
+                ? `Votre mot de passe, votre profil et vos sessions ont été effacés. Votre adresse e-mail et votre numéro de téléphone le seront à partir du ${erasure}.`
+                : `Votre mot de passe, votre profil et vos sessions ont été effacés. La réglementation nous impose de conserver jusqu'au ${retained} les dossiers de vérification d'identité qui ont été examinés ; ils seront ensuite effacés, avec votre adresse e-mail et votre numéro de téléphone.`,
+              content.byStaff
+                ? 'Pour toute question, contactez le support.'
+                : "Si vous n'êtes pas à l'origine de cette clôture, contactez le support sans attendre.",
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — your account was closed`,
+            text: paragraphs(
+              content.byStaff
+                ? `Your ${PRODUCT} account was closed. This is permanent: you can no longer sign in. To learn why, contact support.`
+                : `Your ${PRODUCT} account was closed at your request. This is permanent: you can no longer sign in.`,
+              retained === null
+                ? `Your password, your profile and your sessions were erased. Your email address and your phone number will be erased from ${erasure}.`
+                : `Your password, your profile and your sessions were erased. Regulations require us to keep the identity verification cases that were reviewed until ${retained}; they will then be erased, together with your email address and your phone number.`,
+              content.byStaff
+                ? 'If you have any question, contact support.'
+                : 'If you did not close this account, contact support without delay.',
+            ),
+          };
+    }
+
+    case 'data_exported':
+      return fr
+        ? {
+            subject: `${PRODUCT} — une copie de vos données a été remise`,
+            text: paragraphs(
+              `Une copie des données de votre compte ${PRODUCT} vient d'être remise, à la demande faite depuis votre compte.`,
+              [
+                `Date : ${formatUtc(content.occurredAt)}`,
+                `Adresse IP : ${content.ipAddress ?? 'inconnue'}`,
+              ].join('\n'),
+              "Si c'était vous, aucune action n'est requise. Sinon, changez immédiatement votre mot de passe, fermez vos autres sessions et contactez le support.",
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — a copy of your data was provided`,
+            text: paragraphs(
+              `A copy of the data of your ${PRODUCT} account was just provided, at the request made from your account.`,
+              [
+                `Date: ${formatUtc(content.occurredAt)}`,
+                `IP address: ${content.ipAddress ?? 'unknown'}`,
+              ].join('\n'),
+              'If this was you, no action is needed. Otherwise, change your password immediately, sign out your other sessions and contact support.',
+            ),
+          };
   }
 }
 

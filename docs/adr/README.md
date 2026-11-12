@@ -24,6 +24,7 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0017](0017-validation-en-deux-etapes-totp.md)                    | Validation en deux étapes : TOTP, secret chiffré, connexion en deux temps      | Acceptée                      |
 | [0018](0018-roles-double-validation-en-base.md)                   | Changements de rôle : double validation imposée par la base                    | Acceptée                      |
 | [0019](0019-back-office-comptes-tracabilite.md)                   | Back-office des comptes : actions justifiées, accès journalisés                | Acceptée                      |
-| [0020](0020-conservation-et-purge-des-donnees-d-identite.md)      | Conservation et purge des données d'identité                                   | Acceptée                      |
+| [0020](0020-conservation-et-purge-des-donnees-d-identite.md)      | Conservation et purge des données d'identité                                   | Acceptée — complétée par 0023 |
 | [0021](0021-envoi-des-e-mails-par-smtp.md)                        | Envoi des e-mails par SMTP                                                     | Acceptée                      |
-| [0022](0022-verification-d-identite-dossiers-pieces-chiffrees.md) | Vérification d'identité : dossiers par niveau, pièces chiffrées, examen humain | Acceptée                      |
+| [0022](0022-verification-d-identite-dossiers-pieces-chiffrees.md) | Vérification d'identité : dossiers par niveau, pièces chiffrées, examen humain | Acceptée — complétée par 0023 |
+| [0023](0023-cloture-conservation-effacement-copie-des-donnees.md) | Clôture d'un compte, conservation légale, effacement et copie des données      | Acceptée                      |

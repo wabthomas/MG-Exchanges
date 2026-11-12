@@ -15,6 +15,8 @@ export const PERMISSIONS = {
   'users.suspend': 'Suspend and reactivate accounts.',
   'users.revoke_sessions': 'Sign an account out of all its devices.',
   'users.reset_mfa': 'Remove the two-step verification of an account that lost its authenticator.',
+  'users.close':
+    'Close an account permanently, at the request of its holder or by decision of the platform.',
   'roles.read': 'View roles, their holders and role change requests.',
   'roles.manage': 'Request, approve or reject role changes, and act on staff accounts.',
   'kyc.read': 'View identity verification cases and the documents attached to them.',
@@ -43,12 +45,13 @@ export const ROLE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
  *    second facteur, n'agit pas sur les comptes du personnel et ne voit aucune pièce
  *    d'identité ;
  *  - `compliance` examine les dossiers de vérification d'identité : il consulte les pièces,
- *    accepte, refuse, et retire une vérification. Il n'a aucune prise sur les comptes.
+ *    accepte, refuse, et retire une vérification. Sur les comptes, il n'a qu'un pouvoir : les
+ *    clôturer.
  */
 export const SYSTEM_ROLES = {
   super_admin: PERMISSION_KEYS,
   support: ['users.read', 'users.suspend', 'users.revoke_sessions'],
-  compliance: ['users.read', 'kyc.read', 'kyc.review', 'kyc.revoke'],
+  compliance: ['users.read', 'users.close', 'kyc.read', 'kyc.review', 'kyc.revoke'],
 } as const satisfies Record<string, readonly PermissionKey[]>;
 
 export type SystemRoleKey = keyof typeof SYSTEM_ROLES;
@@ -69,3 +72,9 @@ export const ROLE_MANAGEMENT_PERMISSION = 'roles.manage' satisfies PermissionKey
  */
 export const KYC_REVIEW_PERMISSION = 'kyc.review' satisfies PermissionKey;
 export const KYC_REVOCATION_PERMISSION = 'kyc.revoke' satisfies PermissionKey;
+
+/**
+ * Permission de clôturer le compte d'autrui. La base de données la vérifie elle-même lorsqu'un
+ * membre du personnel clôt un compte.
+ */
+export const ACCOUNT_CLOSURE_PERMISSION = 'users.close' satisfies PermissionKey;

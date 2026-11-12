@@ -3,6 +3,81 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 2, lot 4 : clôture de compte, conservation légale, effacement, copie des données
+
+### Ajouté
+
+- **Clôture par le titulaire** : `POST /me/close`. Immédiate et définitive ; elle exige de
+  nouveau le mot de passe et, s'il est activé, le second facteur, plus `confirm: true`.
+  Sessions, mot de passe, second facteur, codes et profil sont supprimés dans la même
+  transaction ; l'adresse, le numéro et la pièce d'identité sont libres aussitôt.
+- **Clôture par le personnel** : `POST /admin/users/{userId}/close`, permission nouvelle
+  `users.close` (rôles `super_admin` et `compliance`) ; motif (`HOLDER_REQUEST` ou
+  `PLATFORM_DECISION`), justification et `confirm: true` obligatoires ; titulaire toujours
+  prévenu, jamais de la raison.
+- **Copie des données** : `POST /me/data-export` remet, en un document JSON versionné, ce que
+  la plateforme détient sur le compte — sans secret, sans fichier, numéro de pièce masqué.
+  Même preuve que la clôture ; trois copies au plus par vingt-quatre heures ; chaque copie est
+  inscrite à l'historique et signalée par e-mail.
+- **Conservation légale** : les dossiers de vérification sur lesquels une décision a été prise
+  sont conservés dix ans après la clôture ; un dossier jamais examiné est effacé à la clôture,
+  avec ses fichiers.
+- **Effacement à l'échéance** : la purge horaire efface les dossiers conservés et leurs
+  fichiers, puis l'adresse et le numéro que gardait la trace de la clôture — trente jours
+  après la clôture, ou au terme des dix ans. Elle supprime aussi désormais les événements
+  publiés de la boîte d'envoi après trente jours.
+- **Règles portées par la base** (erreurs `MGX04` et `MGX05`) : un compte ne se clôt qu'avec
+  sa trace et vidé de ses secrets ; rien ne s'écrit plus sur un compte clôturé, y compris par
+  une requête partie avant la clôture ; une clôture par le personnel vient d'un compte actif
+  détenant `users.close` ; rien de ce que la loi impose de conserver ne s'efface avant le
+  terme, lu à l'horloge de la base.
+- Back-office : la fiche d'un compte clôturé porte `closure` ; une recherche par adresse ou
+  par numéro retrouve aussi les comptes clôturés qui les portaient, jusqu'à leur effacement.
+- E-mails : avis de clôture (envoyé à l'ancienne adresse) et avis de copie des données.
+- CI : le parcours à travers Nginx (`infrastructure/ci/smoke-identity.sh`) va jusqu'à la
+  copie des données et à la clôture — connexion refusée ensuite, avis reçu à l'ancienne
+  adresse, dossier conservé, compte retrouvé par le back-office ; une étape vérifie que le
+  proxy n'a copié aucune réponse sur son disque.
+- ADR 0023. Migrations `20261112182333_kyc_case_account_closed_status` et
+  `20261112182356_account_closure`. Aucune dépendance nouvelle.
+
+### Modifié — à prendre en compte par un client du lot 3
+
+- Un compte clôturé **n'existe plus pour la connexion** : son ancienne adresse reçoit
+  `401 INVALID_CREDENTIALS`, comme une adresse inconnue. `403 ACCOUNT_DISABLED` ne désigne
+  plus qu'un compte suspendu.
+- Toute requête qui écrit sur un compte clôturé entre-temps répond `409 CONFLICT`
+  (« This account is closed. »).
+- L'inscription refuse le domaine réservé `closed.invalid` (`400 VALIDATION_FAILED`).
+- Historique : trois types nouveaux — `DATA_EXPORTED`, `DATA_EXPORT_FAILED`,
+  `ACCOUNT_CLOSURE_FAILED`.
+- Dossiers de vérification : statut nouveau `ACCOUNT_CLOSED` (accepté jusqu'à la clôture du
+  compte), visible du back-office (`GET /admin/kyc/cases?status=ACCOUNT_CLOSED`).
+- `GET /admin/roles` : le catalogue compte douze permissions ; `compliance` détient
+  `users.close`.
+- La fiche d'un compte au back-office porte `closure` (`null` tant qu'il est ouvert) ; les
+  actions du back-office sur un compte clôturé répondent `409 CONFLICT`.
+
+### Corrigé
+
+- **Reverse proxy : une pièce téléchargée par un examinateur passait, en clair, par un
+  fichier temporaire de Nginx** (défaut du lot 3). Une réponse plus grande que les tampons du
+  proxy était copiée sur son disque le temps d'être relayée, puis supprimée. Plus aucune
+  réponse de l'API n'y est écrite (`proxy_max_temp_file_size 0`) ; un test lit la
+  configuration, et le parcours de la pile complète échoue si Nginx signale un tel fichier.
+
+### Corrigé — outillage de test
+
+- Les tests d'intégration et de bout en bout s'exécutaient avec le délai par défaut de Jest
+  (5 secondes) et non celui prévu (30) : le réglage par projet n'était pas pris en compte.
+- Un test de bout en bout pouvait démarrer une seconde application avant d'avoir arrêté la
+  première : les deux se disputaient les files Redis, d'où un échec intermittent d'un test
+  d'envoi d'e-mail. Le support de test le refuse désormais.
+- Quatre tests des lots 1 et 2 attendaient que les événements soient remis à la file, non
+  qu'ils soient traités : l'un échouait par intermittence sous charge, et trois autres
+  pouvaient conclure « aucun message n'est parti » avant que le traitement soit terminé. Ils
+  attendent désormais la fin du traitement.
+
 ## [Non publié] — Phase 2, lot 3 : vérification d'identité (KYC) des particuliers
 
 ### Ajouté

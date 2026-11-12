@@ -7,7 +7,10 @@ import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
 import { ChallengeRepository } from './challenge.repository.js';
 import { MAINTENANCE_BATCH_SIZE, RETENTION } from './identity-policy.js';
-import { MaintenanceStepRegistry } from './maintenance-step.registry.js';
+import {
+  MaintenanceStepIncompleteError,
+  MaintenanceStepRegistry,
+} from './maintenance-step.registry.js';
 import { MfaRepository } from './mfa.repository.js';
 import { RoleChangeRepository } from './role-change.repository.js';
 import { SessionRepository } from './session.repository.js';
@@ -62,7 +65,8 @@ export class AccountMaintenanceService {
       } catch (error) {
         failures += 1;
         this.logger.error({ err: error, step: name }, 'Account maintenance step failed');
-        return 0;
+        // Ce qu'une étape a traité avant d'échouer sur le reste figure au compte rendu.
+        return error instanceof MaintenanceStepIncompleteError ? error.done : 0;
       }
     };
 

@@ -154,6 +154,16 @@ jobs:
       - name: Pièces de vérification chiffrées dans leur volume
         run: docker compose --profile app exec -T api sh -s < infrastructure/ci/check-kyc-storage.sh
 
+      # Le parcours télécharge une pièce de 5 Mio et la copie des données d'un compte : le proxy
+      # doit les avoir relayées sans les écrire sur son disque (il le signale, sinon).
+      - name: Aucune réponse de l'API copiée sur le disque du proxy
+        run: |
+          if docker compose --profile app logs --no-color nginx | grep -F 'buffered to a temporary file'; then
+            echo "Nginx wrote a response of the API to a temporary file." >&2
+            exit 1
+          fi
+          test "$(docker compose --profile app exec -T nginx sh -c 'find /tmp/proxy_temp /tmp/client_temp -type f 2>/dev/null | wc -l')" = "0"
+
       # Le parcours documenté pour un poste de développement : rôle propriétaire (sans
       # privilège de superutilisateur) et base fantôme créée par le script d'initialisation.
       - name: Contrôle de dérive avec le rôle propriétaire et la base fantôme locale

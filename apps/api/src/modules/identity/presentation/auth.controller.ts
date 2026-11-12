@@ -160,7 +160,9 @@ export class AuthController {
       'device the account has never used is reported to its holder by e-mail.\n\n' +
       'A wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures ' +
       'in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). ' +
-      '`EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` are only returned when the password is correct.',
+      '`EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` (suspended account) are only returned when ' +
+      'the password is correct. A closed account no longer exists: its former address answers ' +
+      '`INVALID_CREDENTIALS`.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(loginRequestSchema) })
   @ApiOkResponse({ schema: toOpenApiSchema(loginResponseSchema) })

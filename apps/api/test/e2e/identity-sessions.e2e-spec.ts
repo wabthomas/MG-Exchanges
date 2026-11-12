@@ -8,6 +8,7 @@ import { PrismaService } from '../../src/infrastructure/database/prisma.service.
 import { PasswordHasher } from '../../src/modules/identity/application/password-hasher.js';
 import { Argon2PasswordHasher } from '../../src/modules/identity/infrastructure/argon2-password-hasher.js';
 import {
+  backgroundWorkDone,
   bearer,
   from,
   type Http,
@@ -22,7 +23,7 @@ import {
   type RegisteredUser,
   registerVerifiedUser,
 } from '../support/identity.js';
-import { createTestApp, eventually, type TestApp } from '../support/test-app.js';
+import { createTestApp, type TestApp } from '../support/test-app.js';
 
 describe('Connexion, sessions et mot de passe — bout en bout', () => {
   let testApp: TestApp;
@@ -612,9 +613,7 @@ describe('Connexion, sessions et mot de passe — bout en bout', () => {
       await prisma.user.update({ where: { email: user.email }, data: { status: 'SUSPENDED' } });
 
       await forgot(user.email).expect(202);
-      await eventually(
-        async () => (await prisma.outboxEvent.count({ where: { status: 'PENDING' } })) === 0,
-      );
+      await backgroundWorkDone(testApp);
       expect(mailbox(testApp).messagesFor(user.email)).toHaveLength(1);
       expect(
         await prisma.verificationChallenge.count({

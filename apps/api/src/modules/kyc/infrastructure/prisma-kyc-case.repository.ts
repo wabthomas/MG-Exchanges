@@ -31,6 +31,9 @@ import {
 
 /** SQLSTATE levé par les déclencheurs de `kyc_cases` et `kyc_documents` (voir la migration). */
 const KYC_RULE_VIOLATION = 'MGX03';
+
+/** Statuts d'un dossier sur lequel aucune décision n'a été prise : il ne se conserve pas. */
+const UNEXAMINED = ['DRAFT', 'SUBMITTED'] as const;
 /** Violation d'une contrainte CHECK — le parcours d'un dossier en compte plusieurs. */
 const CHECK_VIOLATION = '23514';
 
@@ -379,6 +382,80 @@ export class PrismaKycCaseRepository extends KycCaseRepository {
       select: { id: true },
     });
     return rows.map(({ id }) => id);
+  }
+
+  async lockCasesOf(tx: DbClient, userId: string): Promise<void> {
+    // Dans l'ordre des identifiants : deux clôtures ne peuvent pas s'attendre l'une l'autre.
+    await tx.$queryRaw`
+      SELECT "id" FROM "kyc_cases"
+      WHERE "user_id" = ${userId}::uuid
+      ORDER BY "id"
+      FOR UPDATE`;
+  }
+
+  async hasCaseAwaitingReview(db: DbClient, userId: string): Promise<boolean> {
+    return (await db.kycCase.count({ where: { userId, status: 'SUBMITTED' } })) > 0;
+  }
+
+  async hasDecidedCase(db: DbClient, userId: string): Promise<boolean> {
+    const decided = await db.kycCase.count({
+      where: { userId, status: { notIn: [...UNEXAMINED] } },
+    });
+    return decided > 0;
+  }
+
+  async closeForAccount(tx: DbClient, userId: string, closedAt: Date): Promise<string[]> {
+    // Chaque écriture porte sa condition ; la base vérifie de son côté que le compte est clos.
+    const unexamined = { userId, status: { in: [...UNEXAMINED] } };
+    try {
+      await tx.kycCase.updateMany({
+        where: { userId, status: 'APPROVED' },
+        data: { status: 'ACCOUNT_CLOSED', endedAt: closedAt, updatedAt: closedAt },
+      });
+      const documents = await tx.kycDocument.findMany({
+        where: { case: unexamined },
+        select: { storageKey: true },
+      });
+      await tx.kycDocument.deleteMany({ where: { case: unexamined } });
+      await tx.kycCase.deleteMany({ where: unexamined });
+      return documents.map(({ storageKey }) => storageKey);
+    } catch (error) {
+      if (isRuleViolation(error)) {
+        throw new KycRuleViolationError({ cause: error });
+      }
+      throw error;
+    }
+  }
+
+  async documentFilesOf(db: DbClient, userId: string): Promise<string[]> {
+    const documents = await db.kycDocument.findMany({
+      where: { case: { userId } },
+      select: { storageKey: true },
+    });
+    return documents.map(({ storageKey }) => storageKey);
+  }
+
+  async eraseAllOf(tx: DbClient, userId: string): Promise<string[]> {
+    const files = await this.documentFilesOf(tx, userId);
+    try {
+      await tx.kycDocument.deleteMany({ where: { case: { userId } } });
+      await tx.kycCase.deleteMany({ where: { userId } });
+      return files;
+    } catch (error) {
+      if (isRuleViolation(error)) {
+        throw new KycRuleViolationError({ cause: error });
+      }
+      throw error;
+    }
+  }
+
+  async allCasesOf(db: DbClient, userId: string): Promise<KycCaseRecord[]> {
+    const rows = await db.kycCase.findMany({
+      where: { userId },
+      orderBy: { id: 'desc' },
+      include: INCLUDE_ALL,
+    });
+    return rows.map(toRecord);
   }
 
   async listForReview(db: DbClient, filter: ReviewQueueFilter): Promise<ReviewQueueEntry[]> {

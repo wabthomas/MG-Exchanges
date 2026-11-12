@@ -7,7 +7,28 @@ import { Injectable } from '@nestjs/common';
 export interface MaintenanceStep {
   /** Nom de l'étape, tel qu'il apparaît dans le compte rendu et les journaux. */
   readonly name: string;
+  /**
+   * @returns le nombre d'éléments traités.
+   * @throws MaintenanceStepIncompleteError si certains éléments n'ont pas pu l'être.
+   */
   run(now: Date): Promise<number>;
+}
+
+/**
+ * Une étape a traité une partie de son travail, et échoué sur le reste. L'étape est comptée en
+ * échec ; ce qu'elle a traité figure tout de même au compte rendu.
+ */
+export class MaintenanceStepIncompleteError extends Error {
+  constructor(
+    /** Éléments traités. */
+    readonly done: number,
+    /** Éléments qui n'ont pas pu l'être. */
+    readonly failed: number,
+    what: string,
+  ) {
+    super(`${String(failed)} ${what} could not be processed (${String(done)} processed).`);
+    this.name = 'MaintenanceStepIncompleteError';
+  }
 }
 
 /**

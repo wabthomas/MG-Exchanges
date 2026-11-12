@@ -161,7 +161,14 @@ describe('Envoi réel des e-mails par SMTP — bout en bout', () => {
 
     expect(problemDetailsSchema.parse(response.body).code).toBe('NOT_FOUND');
   });
+});
 
+/**
+ * Dans un bloc à part : l'application de la suite précédente est arrêtée. Deux applications
+ * de test partagent leurs files Redis sans partager leur base — celle qui accepte les
+ * e-mails aurait pu prendre l'événement de celle-ci, n'en rien trouver, et ne rien envoyer.
+ */
+describe('Envoi réel des e-mails par SMTP — adresse refusée par le serveur', () => {
   it('si le serveur refuse l’adresse, l’inscription reste en attente et rien n’est retenté', async () => {
     const refusing = await startSmtpServer({
       account: ACCOUNT,

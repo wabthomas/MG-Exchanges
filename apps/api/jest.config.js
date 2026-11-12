@@ -6,8 +6,12 @@ const { coverageProvider, coverageDirectory, coverageReporters, ...base } = crea
 
 // Les tests d'intégration et de bout en bout utilisent un PostgreSQL et un Redis réels
 // (voir test/support). Ils partagent l'instance Redis de test : les scripts les lancent
-// en série (`--runInBand`).
-const withRealServices = { ...base, testTimeout: 30_000 };
+// en série (`--runInBand`). Leur délai par test (30 s) est fixé par le fichier de préparation :
+// l'option `testTimeout` d'un projet est ignorée par Jest, seule la globale est appliquée.
+const withRealServices = {
+  ...base,
+  setupFilesAfterEnv: ['<rootDir>/test/support/real-services.setup.ts'],
+};
 
 /** @type {import('jest').Config} */
 export default {

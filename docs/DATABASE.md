@@ -102,8 +102,9 @@ Une correction se fait par une nouvelle entrée, jamais par modification.
 
 Contraintes : `attempts >= 0` ; un événement est `PUBLISHED` si et seulement si
 `published_at` est renseignée ; format de `event_type`.
-Index : `(aggregate_type, aggregate_id)` et l'index partiel
-`outbox_events_pending_idx (available_at, id) WHERE status = 'PENDING'`, qui sert la file du relais.
+Index : `(aggregate_type, aggregate_id)`, `(published_at)` — purge des événements publiés — et
+l'index partiel `outbox_events_pending_idx (available_at, id) WHERE status = 'PENDING'`, qui
+sert la file du relais.
 
 ## Tables (phase 2 — identité)
 
@@ -126,6 +127,26 @@ il est clôturé (toutes les clés étrangères vers `users` sont `ON DELETE RES
 exception : une **inscription jamais vérifiée** (`PENDING_VERIFICATION`), qui n'est pas encore
 un compte, est supprimée après 7 jours avec son secret et ses codes.
 
+**Compte clôturé** (ADR 0023) — la ligne reste, sans identifiant, et ne change plus jamais :
+
+- contraintes : un compte `CLOSED` porte l'adresse factice `closed-<id>@closed.invalid`, non
+  vérifiée, et aucun numéro (`users_closed_is_anonymous_check`) ; le domaine `closed.invalid`
+  est réservé aux comptes clôturés (`users_reserved_email_domain_check`) — nul ne peut donc
+  prendre d'avance l'adresse factice d'un compte ;
+- déclencheur `users_enforce_closure` (fonction `mgx_enforce_user_closure()`) : un compte ne
+  naît pas clôturé ; seul un compte actif ou suspendu se clôt, et seulement **avec sa trace**
+  (`account_closures`), **sans rôle**, et une fois supprimés son secret, son second facteur,
+  ses codes, ses sessions et son profil (`MGX04`) ; **clôturé, il ne se modifie plus**
+  (`MGX05`) ;
+- déclencheurs `<table>_account_open` (fonction `mgx_forbid_closed_account_rows()`) sur
+  `user_credentials`, `user_totp_credentials`, `user_recovery_codes`, `user_sessions`,
+  `verification_challenges`, `user_profiles`, `user_roles` et `kyc_cases` : **rien ne s'ajoute
+  à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
+  `FOR KEY SHARE` ; la clôture la verrouille en `FOR UPDATE`. Les deux s'excluent : une ligne
+  est écrite avant la clôture — qui l'efface, ou échoue — ou attend la clôture et est
+  refusée. Le verrou est le plus faible qui convienne : il ne gêne aucune autre écriture du
+  compte.
+
 ### `user_credentials` — secret d'authentification
 
 Table séparée de `users` : aucune lecture d'un compte ne renvoie son secret.
@@ -137,9 +158,9 @@ valeur — un mot de passe en clair ne peut pas y être écrit, même par erreur
 `permissions` est la copie du catalogue du code (`@mgx/contracts`) ; un test vérifie que les
 deux sont identiques, rôle par rôle. `roles` contient les rôles système : `super_admin`
 (toutes les permissions), `support` (`users.read`, `users.suspend`,
-`users.revoke_sessions`) et `compliance` (`users.read`, `kyc.read`, `kyc.review`,
-`kyc.revoke`). `user_roles` attribue un rôle à un compte (`granted_by` : auteur de
-la demande approuvée, `NULL` pour l'amorçage). Tables en lecture seule pour le rôle
+`users.revoke_sessions`) et `compliance` (`users.read`, `users.close`, `kyc.read`,
+`kyc.review`, `kyc.revoke`). `user_roles` attribue un rôle à un compte (`granted_by` : auteur
+de la demande approuvée, `NULL` pour l'amorçage). Tables en lecture seule pour le rôle
 applicatif (voir « Rôles et privilèges »).
 
 ### `role_change_requests` — changements de rôle sous double validation
@@ -213,6 +234,44 @@ jetons émise ; seules les **empreintes SHA-256** des jetons sont stockées (con
 longueur : 32 octets), `consumed_at` marque le renouvellement. Les paires renouvelées depuis
 plus de 24 heures sont supprimées au renouvellement suivant.
 
+### `account_closures` — trace de la clôture d'un compte
+
+Une ligne par compte clôturé, écrite dans la transaction de la clôture.
+
+| Colonne                 | Notes                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `user_id`               | clé primaire : le compte clôturé                                                              |
+| `closed_at`             | date de la clôture                                                                            |
+| `origin`, `closed_by`   | `HOLDER` (le titulaire, `closed_by = user_id`) ou `STAFF` (un membre du personnel)            |
+| `email`, `phone`        | adresse et numéro que portait le compte — **effacés à l'échéance**                            |
+| `legal_retention_until` | terme de la conservation imposée par la loi ; `NULL` si rien n'est conservé à ce titre        |
+| `erasure_due_at`        | échéance d'effacement : jamais avant le terme légal                                           |
+| `erased_at`             | date à laquelle l'adresse, le numéro et les dossiers conservés ont été effacés ; sinon `NULL` |
+
+- contraintes : l'origine s'accorde avec l'auteur (`account_closures_author_check`) ; forme de
+  l'adresse et du numéro ; l'échéance suit la clôture et n'est jamais antérieure au terme
+  légal (`account_closures_schedule_check`) ; **avant l'effacement, la trace garde
+  l'adresse ; après, plus aucun identifiant** (`account_closures_erasure_check`) ;
+- index : `(email)`, `(phone)` — recherche d'un compte clôturé par son ancienne adresse —,
+  `(erasure_due_at)` — file de l'effacement ;
+- déclencheur `account_closures_enforce` (fonction `mgx_enforce_account_closure()`), erreur
+  `MGX04` :
+  - **à l'écriture** : le compte est actif ou suspendu (sa ligne est verrouillée) ; la trace
+    porte exactement son adresse et son numéro ; elle n'est pas déjà effacée ; la clôture
+    n'est **pas antidatée** de plus de vingt-quatre heures ; une clôture `STAFF` vient d'un
+    compte **actif détenant `users.close`** ; si une décision a été prise sur un dossier de
+    vérification du compte, `legal_retention_until` vaut **au moins dix ans** après la
+    clôture (dix années civiles, comptées en UTC) ;
+  - **ensuite**, la trace ne change qu'une fois, pour constater l'effacement — rien d'autre
+    ne se réécrit —, et seulement **une fois le terme légal atteint à l'horloge de la base**
+    et les dossiers de vérification du compte effacés ;
+  - elle ne se supprime pas ; la table ne se vide pas (`account_closures_no_truncate`) ; le
+    rôle applicatif n'a ni `DELETE` ni `TRUNCATE` ;
+- déclencheur de contrainte **différé** `account_closures_applied` (fonction
+  `mgx_check_closure_applied()`), vérifié à la validation de la transaction : **une clôture est
+  entière ou n'est pas** — une trace n'existe que pour un compte clôturé, et un compte
+  clôturé n'a plus de dossier de vérification en préparation, en attente ou en vigueur.
+
 ## Tables (phase 2 — vérification d'identité)
 
 ### `kyc_cases` — dossiers de vérification
@@ -220,19 +279,19 @@ plus de 24 heures sont supprimées au renouvellement suivant.
 Un dossier par compte, par niveau et par tentative. Le **niveau vérifié d'un compte n'est
 stocké nulle part** : il se lit sur ses dossiers acceptés (`status = 'APPROVED'`).
 
-| Colonne                                                                                                        | Notes                                                                 |
-| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `user_id`, `level`                                                                                             | titulaire ; niveau `1` identité, `2` adresse, `3` origine des fonds   |
-| `status`                                                                                                       | `DRAFT`, `SUBMITTED`, `APPROVED`, `REJECTED`, `SUPERSEDED`, `REVOKED` |
-| `submitted_at`                                                                                                 | date du dépôt — ordre de la file d'examen                             |
-| `decided_by`, `decided_at`, `rejection_reasons`, `decision_note`                                               | décision ; motifs communiqués au titulaire, note interne              |
-| `ended_at`, `revoked_by`, `revocation_reason`                                                                  | fin de validité d'un dossier accepté : remplacement ou retrait        |
-| `given_name` … `nationality`                                                                                   | niveau 1 : identité déclarée                                          |
-| `document_type`, `document_issuing_country`, `document_issued_on`, `document_issued_at`, `document_expires_on` | niveau 1 : pièce présentée                                            |
-| `document_number_encrypted`                                                                                    | numéro de la pièce, **chiffré** (AES-256-GCM, lié au compte)          |
-| `document_number_digest`                                                                                       | empreinte à clé (HMAC-SHA-256) de nature + pays + numéro : doublons   |
-| `address_line1` … `address_country`, `address_proof_type`, `address_proof_issued_on`                           | niveau 2 : adresse et justificatif                                    |
-| `funds_sources`, `occupation`, `employer_name`, `funds_explanation`                                            | niveau 3 : origine des fonds                                          |
+| Colonne                                                                                                        | Notes                                                                                   |
+| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `user_id`, `level`                                                                                             | titulaire ; niveau `1` identité, `2` adresse, `3` origine des fonds                     |
+| `status`                                                                                                       | `DRAFT`, `SUBMITTED`, `APPROVED`, `REJECTED`, `SUPERSEDED`, `REVOKED`, `ACCOUNT_CLOSED` |
+| `submitted_at`                                                                                                 | date du dépôt — ordre de la file d'examen                                               |
+| `decided_by`, `decided_at`, `rejection_reasons`, `decision_note`                                               | décision ; motifs communiqués au titulaire, note interne                                |
+| `ended_at`, `revoked_by`, `revocation_reason`                                                                  | fin de validité d'un dossier accepté : remplacement ou retrait                          |
+| `given_name` … `nationality`                                                                                   | niveau 1 : identité déclarée                                                            |
+| `document_type`, `document_issuing_country`, `document_issued_on`, `document_issued_at`, `document_expires_on` | niveau 1 : pièce présentée                                                              |
+| `document_number_encrypted`                                                                                    | numéro de la pièce, **chiffré** (AES-256-GCM, lié au compte)                            |
+| `document_number_digest`                                                                                       | empreinte à clé (HMAC-SHA-256) de nature + pays + numéro : doublons                     |
+| `address_line1` … `address_country`, `address_proof_type`, `address_proof_issued_on`                           | niveau 2 : adresse et justificatif                                                      |
+| `funds_sources`, `occupation`, `employer_name`, `funds_explanation`                                            | niveau 3 : origine des fonds                                                            |
 
 **Le parcours est porté par la base**, quel que soit le code qui écrit :
 
@@ -250,9 +309,15 @@ stocké nulle part** : il se lit sur ses dossiers acceptés (`status = 'APPROVED
   **décision** vient d'un compte actif détenant `kyc.review` ; un niveau ne s'accepte pas si
   le précédent n'est plus vérifié ; l'acceptation fait passer à `SUPERSEDED` le dossier
   accepté précédent du même niveau — transition que rien d'autre ne peut écrire ; un
-  **retrait** vient d'un compte actif détenant `kyc.revoke` ; un dossier refusé, remplacé ou
-  retiré ne change plus ; seul un dossier en préparation s'efface. Toute règle enfreinte
-  lève l'erreur `MGX03`.
+  **retrait** vient d'un compte actif détenant `kyc.revoke` ; un dossier accepté **prend fin
+  avec son compte** (`ACCOUNT_CLOSED`), et seulement si le compte est clôturé ; un dossier
+  refusé, remplacé, retiré ou clos avec son compte ne change plus. Toute règle enfreinte lève
+  l'erreur `MGX03`.
+- **effacement** (fonction `mgx_kyc_case_erasable()`) : un dossier en préparation s'efface
+  toujours ; un dossier déposé mais jamais examiné, seulement si le compte est clôturé ; un
+  dossier sur lequel une décision a été prise, seulement si le compte est clôturé **et** que
+  la conservation légale inscrite à sa clôture est écoulée — **à l'horloge de la base**.
+  Tant que le compte est ouvert, un dossier déposé ne s'efface pas.
 
 À la différence des rôles (ADR 0018), ces fonctions ne sont pas `SECURITY DEFINER` : elles
 n'écrivent dans aucune table interdite au rôle applicatif.
@@ -276,8 +341,9 @@ Supprimer la ligne rend le fichier définitivement illisible.
 - index unique partiel `kyc_documents_single_kind_key` : un recto, un verso et un autoportrait
   au plus par dossier ;
 - déclencheur `kyc_documents_enforce` (fonction `mgx_enforce_kyc_document()`) : une pièce ne
-  s'ajoute et ne se retire que d'un dossier **en préparation**, de son niveau, et **ne se
-  modifie jamais**. La fonction verrouille la ligne du dossier (`FOR SHARE`) : un dépôt
+  s'ajoute qu'à un dossier **en préparation**, de son niveau, **ne se modifie jamais**, et ne
+  se retire que d'un dossier qui peut lui-même être effacé (voir `mgx_kyc_case_erasable()`
+  ci-dessus). La fonction verrouille la ligne du dossier (`FOR SHARE`) : un dépôt
   simultané attend, de sorte qu'une pièce n'entre jamais dans un dossier déjà déposé, et
   qu'un dossier n'est jamais déposé sans une pièce en cours de retrait ;
 - le rôle applicatif n'a pas le privilège `UPDATE` sur cette table.
@@ -324,10 +390,18 @@ Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** 
 | fonction `mgx_enforce_kyc_document()` (`search_path` figé) ; déclencheurs `kyc_documents_enforce`, `kyc_documents_no_truncate`                                                                                                                                                         | `kyc_documents`                                          |
 | retrait de `TRUNCATE` (et de `UPDATE` sur `kyc_documents`) aux rôles non propriétaires                                                                                                                                                                                                 | `kyc_cases`, `kyc_documents`                             |
 | données initiales : permissions `kyc.read`, `kyc.review`, `kyc.revoke`, rôle `compliance`                                                                                                                                                                                              | `permissions`, `roles`, `role_permissions`               |
+| valeur `ACCOUNT_CLOSED` du type `kyc_case_status` (migration séparée : PostgreSQL interdit d'utiliser une valeur dans la transaction qui l'ajoute)                                                                                                                                     | `kyc_cases`                                              |
+| `users_closed_is_anonymous_check`, `users_reserved_email_domain_check` ; fonction `mgx_enforce_user_closure()`, déclencheur `users_enforce_closure`                                                                                                                                    | `users`                                                  |
+| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                      | huit tables rattachées à un compte (voir `users`)        |
+| `account_closures_author_check`, `…_email_check`, `…_phone_check`, `…_schedule_check`, `…_erasure_check`                                                                                                                                                                               | `account_closures`                                       |
+| fonctions `mgx_enforce_account_closure()`, `mgx_check_closure_applied()` ; déclencheurs `account_closures_enforce`, `account_closures_no_truncate`, déclencheur de contrainte différé `account_closures_applied` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires       | `account_closures`                                       |
+| fonction `mgx_kyc_case_erasable()` ; `kyc_cases_lifecycle_check`, `mgx_enforce_kyc_case()` et `mgx_enforce_kyc_document()` **remplacées** (fin d'une vérification à la clôture, effacement)                                                                                            | `kyc_cases`, `kyc_documents`                             |
+| données initiales : permission `users.close`, attribuée à `super_admin` et `compliance`                                                                                                                                                                                                | `permissions`, `role_permissions`, `roles`               |
 
 Leur présence et leur effet sont vérifiés par les tests d'intégration
 `database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
-`back-office-schema.spec.ts` et `kyc-schema.spec.ts` (dans `apps/api/test/integration/`).
+`back-office-schema.spec.ts`, `kyc-schema.spec.ts` et `account-closure-schema.spec.ts` (dans
+`apps/api/test/integration/`).
 
 **Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
 
@@ -336,6 +410,14 @@ Leur présence et leur effet sont vérifiés par les tests d'intégration
 | `MGX01` | modification ou suppression interdite d'une table en ajout seul |
 | `MGX02` | règle de la double validation d'un changement de rôle enfreinte |
 | `MGX03` | règle du parcours d'un dossier de vérification enfreinte        |
+| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte        |
+| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`    |
+
+`MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
+une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
+soucier. Les autres sont interceptés par le dépôt (_repository_) du module concerné : les
+contrôles du service auraient dû écarter le cas, de sorte que la réponse est un `409 CONFLICT`
+et l'incident est journalisé.
 
 ## Migrations
 
@@ -375,29 +457,41 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 
 ## Conservation des données
 
-| Table                        | Règle actuelle                                                                                                                                                                                                            |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `audit_logs`                 | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                                                                                                                                          |
-| `outbox_events`              | les événements publiés pourront être purgés après un délai — purge non implémentée                                                                                                                                        |
-| `system_settings`            | historique complet des changements dans `audit_logs`                                                                                                                                                                      |
-| `users`, `user_credentials`  | conservés ; un compte clôturé n'est pas supprimé. **Inscription jamais vérifiée : supprimée après 7 jours**                                                                                                               |
-| `user_sessions`              | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte                                                                                                                          |
-| `session_tokens`             | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                                                                                                                              |
-| `verification_challenges`    | supprimés **7 jours** après leur expiration                                                                                                                                                                               |
-| `user_totp_credentials`      | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                            |
-| `role_change_requests`       | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                   |
-| `user_profiles`              | conservés avec le compte                                                                                                                                                                                                  |
-| `kyc_cases`, `kyc_documents` | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : **jamais effacé** — la loi demande dix ans après la fin de la relation ; l'effacement à l'échéance reste à écrire |
+| Table                        | Règle actuelle                                                                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audit_logs`                 | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                                                                                                                                                                                |
+| `outbox_events`              | événements **publiés** : supprimés **30 jours** après leur publication. Événements en attente ou abandonnés (`DEAD`) : conservés jusqu'à leur traitement                                                                                                        |
+| `system_settings`            | historique complet des changements dans `audit_logs`                                                                                                                                                                                                            |
+| `users`, `user_credentials`  | conservés tant que le compte est ouvert. **Inscription jamais vérifiée : supprimée après 7 jours.** **Compte clôturé** : secret supprimé à la clôture ; la ligne `users` reste, sans adresse ni numéro                                                          |
+| `account_closures`           | trace conservée indéfiniment ; son adresse et son numéro sont **effacés à l'échéance** : 30 jours après la clôture, ou au terme de la conservation légale (dix ans) si des dossiers de vérification sont conservés                                              |
+| `user_sessions`              | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte                                                                                                                                                                |
+| `session_tokens`             | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                                                                                                                                                                    |
+| `verification_challenges`    | supprimés **7 jours** après leur expiration                                                                                                                                                                                                                     |
+| `user_totp_credentials`      | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                                                                  |
+| `role_change_requests`       | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                                                         |
+| `user_profiles`              | conservés tant que le compte est ouvert ; **supprimés à la clôture**, comme les sessions, les codes et le second facteur                                                                                                                                        |
+| `kyc_cases`, `kyc_documents` | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces |
 
 La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file
-`account-maintenance`), bornée à 500 lignes par catégorie et par exécution. Chaque
+`account-maintenance`), bornée à 500 lignes par catégorie et par exécution — 200 comptes pour
+l'effacement des comptes clôturés, de l'échéance la plus ancienne à la plus récente. Chaque
 suppression d'inscription est écrite au journal d'audit (`user.registration_purged`), chaque
-suppression d'un dossier de vérification abandonné aussi (`kyc_case.draft_purged`). Les
-fichiers des pièces sont effacés après la validation de la transaction ; un fichier resté
-sans ligne est de toute façon indéchiffrable. La
-dernière session de chaque compte est conservée : elle atteste qu'il s'est déjà connecté, ce
-dont dépend l'avertissement de connexion depuis un nouvel appareil. Ces durées sont des
-valeurs de départ, à confirmer avec la conformité (phase 8).
+suppression d'un dossier de vérification abandonné (`kyc_case.draft_purged`) et chaque
+effacement d'un compte clôturé (`user.data_erased`) aussi. Les fichiers des pièces sont
+effacés après la validation de la transaction ; un fichier resté sans ligne est de toute
+façon indéchiffrable. La dernière session de chaque compte ouvert est conservée : elle atteste
+qu'il s'est déjà connecté, ce dont dépend l'avertissement de connexion depuis un nouvel
+appareil.
+
+L'échéance d'effacement est lue à l'horloge de l'application ; la conservation légale, elle,
+est **relue par la base à sa propre horloge**, qui refuse tout effacement prématuré : l'étape
+échoue alors, le signale, et recommence au passage suivant. Un compte qui ne peut pas être
+effacé n'empêche pas les autres de l'être, mais il reste en tête de file : au-delà de 200
+comptes durablement bloqués, les suivants attendraient (voir `DEPLOYMENT.md`).
+
+Ces durées sont des valeurs de départ. Celles qui touchent aux données personnelles
+s'appuient sur une lecture non confirmée de la loi (ADR 0022 et 0023) : elles sont à valider
+par un conseil juridique avant l'ouverture au public.
 
 ## Tables à venir
 

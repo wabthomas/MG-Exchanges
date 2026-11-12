@@ -59,11 +59,24 @@ export interface TestAppOptions {
   readonly imports?: NonNullable<ModuleMetadata['imports']>;
 }
 
+/** Applications de test démarrées par ce fichier de test et pas encore arrêtées. */
+let running = 0;
+
 /**
  * Démarre l'application complète — même module racine, même configuration HTTP qu'en
  * exécution réelle — sur une base PostgreSQL isolée et l'instance Redis de test (vidée).
+ *
+ * Une seule à la fois : voir le message de l'erreur levée sinon.
  */
 export async function createTestApp(options: TestAppOptions = {}): Promise<TestApp> {
+  if (running > 0) {
+    throw new Error(
+      'Another test application is still running. Test applications share one Redis instance ' +
+        '— hence their queues — but each has its own database: either one may take an event ' +
+        'of the other, find nothing about it in its own database, and drop it. Close the ' +
+        'first application before starting another (a separate `describe` block does it).',
+    );
+  }
   const database = await createTestDatabase();
 
   const flush = new Redis(redisUrl());
@@ -101,6 +114,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   const app = moduleRef.createNestApplication<NestExpressApplication>(NEST_APPLICATION_OPTIONS);
   configureApp(app);
   await initializeApp(app);
+  running += 1;
   await startupMaintenanceDone(app);
 
   return {
@@ -109,6 +123,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
     database,
     close: async () => {
       await app.close();
+      running -= 1;
       await database.drop();
     },
   };

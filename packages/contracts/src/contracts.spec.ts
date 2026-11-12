@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  ACCOUNT_CLOSURE_PERMISSION,
   ACTIVITY_TYPES,
   activityQuerySchema,
   ADMIN_KYC_CASE_STATUSES,
@@ -305,13 +306,17 @@ describe('contrats du back-office', () => {
       'users.revoke_sessions',
       'users.suspend',
     ]);
-    // La conformité examine les dossiers ; elle n'a aucune prise sur les comptes ni sur les rôles.
+    // La conformité examine les dossiers et clôt les comptes ; elle ne les suspend pas, ne
+    // touche ni à leurs sessions ni à leur second facteur, et n'a aucune prise sur les rôles.
     expect([...SYSTEM_ROLES.compliance].sort()).toEqual([
       'kyc.read',
       'kyc.review',
       'kyc.revoke',
+      'users.close',
       'users.read',
     ]);
+    // Le support ne clôt pas un compte : la clôture est définitive.
+    expect(SYSTEM_ROLES.support).not.toContain(ACCOUNT_CLOSURE_PERMISSION);
     // Seuls super_admin et la conformité voient des pièces d'identité.
     for (const key of SYSTEM_ROLE_KEYS) {
       const permissions: readonly string[] = SYSTEM_ROLES[key];

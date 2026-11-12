@@ -5,9 +5,10 @@ actifs numériques et des devises depuis une interface unique. Marché de lancem
 République démocratique du Congo ; l'architecture est prévue pour s'étendre à d'autres marchés.
 
 > **État : phase 2 en cours — comptes, authentification, validation en deux étapes, profil,
-> vérification du téléphone, routes d'administration des comptes et vérification d'identité
-> des particuliers (KYC, examen manuel) sont livrés ; la vérification des entreprises, les
-> conditions d'utilisation et la clôture de compte restent à faire.**
+> vérification du téléphone, routes d'administration des comptes, vérification d'identité des
+> particuliers (KYC, examen manuel), clôture de compte, copie et effacement des données sont
+> livrés ; la vérification des entreprises et l'acceptation versionnée des conditions
+> d'utilisation restent à faire.**
 > Aucune fonctionnalité financière n'existe : ni paiement, ni transfert, ni retrait.
 > L'inscription et la vérification d'identité sont fermées par défaut. Les e-mails partent par
 > le serveur SMTP du prestataire configuré au déploiement ; aucun SMS ne part (aucun

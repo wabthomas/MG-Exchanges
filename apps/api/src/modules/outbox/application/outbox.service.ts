@@ -30,4 +30,31 @@ export class OutboxService {
     });
     return created.id;
   }
+
+  /**
+   * Supprime des événements **publiés** avant la date donnée, les plus anciens d'abord. Un
+   * événement en attente ou abandonné n'est jamais supprimé.
+   *
+   * @returns le nombre d'événements supprimés (au plus `limit`).
+   */
+  async deletePublished(db: DbClient, publishedBefore: Date, limit: number): Promise<number> {
+    const stale = await db.outboxEvent.findMany({
+      where: { status: 'PUBLISHED', publishedAt: { lt: publishedBefore } },
+      orderBy: [{ publishedAt: 'asc' }, { id: 'asc' }],
+      take: limit,
+      select: { id: true },
+    });
+    if (stale.length === 0) {
+      return 0;
+    }
+    // La condition est répétée à l'écriture : rien d'autre qu'un événement publié ne part.
+    const { count } = await db.outboxEvent.deleteMany({
+      where: {
+        id: { in: stale.map(({ id }) => id) },
+        status: 'PUBLISHED',
+        publishedAt: { lt: publishedBefore },
+      },
+    });
+    return count;
+  }
 }

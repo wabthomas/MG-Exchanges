@@ -780,7 +780,7 @@
     },
     "/api/v1/auth/login": {
       "post": {
-        "description": "Opens a session and returns its tokens. Send the access token with every request (`Authorization: Bearer <accessToken>`); use the refresh token to obtain a new pair before the access token expires.\n\n**Read `status`.** `AUTHENTICATED`: the session is open. `MFA_REQUIRED`: the account is protected by two-step verification and no session is open yet — send `mfaToken` and a code to `POST /auth/mfa/verify` within 5 minutes.\n\nSend a stable random `deviceId` (created once per installation): a sign-in from a device the account has never used is reported to its holder by e-mail.\n\nA wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). `EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` are only returned when the password is correct.",
+        "description": "Opens a session and returns its tokens. Send the access token with every request (`Authorization: Bearer <accessToken>`); use the refresh token to obtain a new pair before the access token expires.\n\n**Read `status`.** `AUTHENTICATED`: the session is open. `MFA_REQUIRED`: the account is protected by two-step verification and no session is open yet — send `mfaToken` and a code to `POST /auth/mfa/verify` within 5 minutes.\n\nSend a stable random `deviceId` (created once per installation): a sign-in from a device the account has never used is reported to its holder by e-mail.\n\nA wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). `EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` (suspended account) are only returned when the password is correct. A closed account no longer exists: its former address answers `INVALID_CREDENTIALS`.",
         "operationId": "AuthController_login_v1",
         "parameters": [],
         "requestBody": {
@@ -930,6 +930,7 @@
                                   "users.suspend",
                                   "users.revoke_sessions",
                                   "users.reset_mfa",
+                                  "users.close",
                                   "roles.read",
                                   "roles.manage",
                                   "kyc.read",
@@ -1235,6 +1236,7 @@
                               "users.suspend",
                               "users.revoke_sessions",
                               "users.reset_mfa",
+                              "users.close",
                               "roles.read",
                               "roles.manage",
                               "kyc.read",
@@ -1805,6 +1807,7 @@
                           "users.suspend",
                           "users.revoke_sessions",
                           "users.reset_mfa",
+                          "users.close",
                           "roles.read",
                           "roles.manage",
                           "kyc.read",
@@ -3291,7 +3294,10 @@
                               "IDENTITY_VERIFICATION_SUBMITTED",
                               "IDENTITY_VERIFICATION_APPROVED",
                               "IDENTITY_VERIFICATION_REJECTED",
-                              "IDENTITY_VERIFICATION_REVOKED"
+                              "IDENTITY_VERIFICATION_REVOKED",
+                              "DATA_EXPORTED",
+                              "DATA_EXPORT_FAILED",
+                              "ACCOUNT_CLOSURE_FAILED"
                             ]
                           },
                           "occurredAt": {
@@ -3380,6 +3386,997 @@
           }
         ],
         "summary": "My account activity",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/me/data-export": {
+      "post": {
+        "description": "Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. Returns, as one JSON document, what the platform holds about the account: account, declared profile, security settings, sessions, activity history and identity verification cases. It contains no secret; the number of an identity document is masked, and the files attached to verification cases are described, not included. At most 3 copies per 24 hours. Each copy is recorded in the activity history and reported to the holder by e-mail.",
+        "operationId": "AccountLifecycleController_exportData_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "recoveryCode": {
+                    "type": "string",
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "currentPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "formatVersion": {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "account": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "emailVerified": {
+                          "type": "boolean"
+                        },
+                        "phone": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "phoneVerified": {
+                          "type": "boolean"
+                        },
+                        "countryCode": {
+                          "type": "string"
+                        },
+                        "locale": {
+                          "type": "string",
+                          "enum": [
+                            "fr",
+                            "en"
+                          ]
+                        },
+                        "accountType": {
+                          "type": "string",
+                          "enum": [
+                            "INDIVIDUAL",
+                            "BUSINESS"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "PENDING_VERIFICATION",
+                            "ACTIVE",
+                            "SUSPENDED",
+                            "CLOSED"
+                          ]
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "termsAcceptedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "roles": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email",
+                        "emailVerified",
+                        "phone",
+                        "phoneVerified",
+                        "countryCode",
+                        "locale",
+                        "accountType",
+                        "status",
+                        "createdAt",
+                        "termsAcceptedAt",
+                        "roles"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "profile": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "givenName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "familyName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "additionalName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "dateOfBirth": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "addressLine1": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "addressLine2": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "city": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "region": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "postalCode": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "timeZone": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "updatedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "givenName",
+                        "familyName",
+                        "additionalName",
+                        "dateOfBirth",
+                        "addressLine1",
+                        "addressLine2",
+                        "city",
+                        "region",
+                        "postalCode",
+                        "timeZone",
+                        "updatedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "security": {
+                      "type": "object",
+                      "properties": {
+                        "passwordChangedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "secondFactorEnabled": {
+                          "type": "boolean"
+                        },
+                        "secondFactorEnabledAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "recoveryCodesRemaining": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "passwordChangedAt",
+                        "secondFactorEnabled",
+                        "secondFactorEnabledAt",
+                        "recoveryCodesRemaining"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "lastUsedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "revokedAt": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "ipAddress": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "userAgent": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "deviceName": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "createdAt",
+                          "lastUsedAt",
+                          "expiresAt",
+                          "revokedAt",
+                          "ipAddress",
+                          "userAgent",
+                          "deviceName"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "activity": {
+                      "type": "object",
+                      "properties": {
+                        "entries": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "ACCOUNT_CREATED",
+                                  "EMAIL_VERIFIED",
+                                  "SIGN_IN",
+                                  "SIGN_IN_FAILED",
+                                  "SIGN_IN_DENIED",
+                                  "SECOND_FACTOR_FAILED",
+                                  "SIGN_OUT",
+                                  "SESSION_CLOSED",
+                                  "OTHER_SESSIONS_CLOSED",
+                                  "SESSION_REVOKED_TOKEN_REUSE",
+                                  "PASSWORD_CHANGED",
+                                  "PASSWORD_CHANGE_FAILED",
+                                  "PASSWORD_RESET_REQUESTED",
+                                  "PASSWORD_RESET",
+                                  "TWO_FACTOR_ENABLED",
+                                  "TWO_FACTOR_DISABLED",
+                                  "RECOVERY_CODES_REGENERATED",
+                                  "RECOVERY_CODE_USED",
+                                  "PROFILE_UPDATED",
+                                  "PHONE_VERIFIED",
+                                  "ACCOUNT_SUSPENDED",
+                                  "ACCOUNT_REACTIVATED",
+                                  "SESSIONS_CLOSED_BY_SUPPORT",
+                                  "TWO_FACTOR_RESET_BY_SUPPORT",
+                                  "IDENTITY_VERIFICATION_SUBMITTED",
+                                  "IDENTITY_VERIFICATION_APPROVED",
+                                  "IDENTITY_VERIFICATION_REJECTED",
+                                  "IDENTITY_VERIFICATION_REVOKED",
+                                  "DATA_EXPORTED",
+                                  "DATA_EXPORT_FAILED",
+                                  "ACCOUNT_CLOSURE_FAILED"
+                                ]
+                              },
+                              "occurredAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "SUCCESS",
+                                  "FAILURE",
+                                  "DENIED"
+                                ]
+                              },
+                              "ipAddress": {
+                                "nullable": true,
+                                "type": "string"
+                              },
+                              "userAgent": {
+                                "nullable": true,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "occurredAt",
+                              "outcome",
+                              "ipAddress",
+                              "userAgent"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "entries",
+                        "truncated"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "verification": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "enum": [
+                                0
+                              ]
+                            },
+                            {
+                              "type": "number",
+                              "enum": [
+                                1
+                              ]
+                            },
+                            {
+                              "type": "number",
+                              "enum": [
+                                2
+                              ]
+                            },
+                            {
+                              "type": "number",
+                              "enum": [
+                                3
+                              ]
+                            }
+                          ]
+                        },
+                        "cases": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "level": {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "enum": [
+                                      1
+                                    ]
+                                  },
+                                  {
+                                    "type": "number",
+                                    "enum": [
+                                      2
+                                    ]
+                                  },
+                                  {
+                                    "type": "number",
+                                    "enum": [
+                                      3
+                                    ]
+                                  }
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "DRAFT",
+                                  "SUBMITTED",
+                                  "APPROVED",
+                                  "REJECTED",
+                                  "SUPERSEDED",
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
+                                ]
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "updatedAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "submittedAt": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "decidedAt": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "rejectionReasons": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DOCUMENT_UNREADABLE",
+                                    "DOCUMENT_EXPIRED",
+                                    "DOCUMENT_NOT_ACCEPTED",
+                                    "DOCUMENT_INCOMPLETE",
+                                    "INFORMATION_MISMATCH",
+                                    "SELFIE_UNUSABLE",
+                                    "SELFIE_MISMATCH",
+                                    "PROOF_TOO_OLD",
+                                    "INSUFFICIENT_EVIDENCE",
+                                    "OTHER"
+                                  ]
+                                }
+                              },
+                              "endedAt": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              },
+                              "identity": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "givenName": {
+                                    "type": "string"
+                                  },
+                                  "familyName": {
+                                    "type": "string"
+                                  },
+                                  "additionalName": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "dateOfBirth": {
+                                    "type": "string",
+                                    "format": "date",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                  },
+                                  "placeOfBirth": {
+                                    "type": "string"
+                                  },
+                                  "nationality": {
+                                    "type": "string"
+                                  },
+                                  "document": {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "NATIONAL_ID_CARD",
+                                          "VOTER_CARD",
+                                          "PASSPORT",
+                                          "DRIVING_LICENCE"
+                                        ]
+                                      },
+                                      "issuingCountry": {
+                                        "type": "string"
+                                      },
+                                      "issuedOn": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      },
+                                      "issuedAt": {
+                                        "type": "string"
+                                      },
+                                      "expiresOn": {
+                                        "nullable": true,
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      },
+                                      "numberMasked": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "issuingCountry",
+                                      "issuedOn",
+                                      "issuedAt",
+                                      "expiresOn",
+                                      "numberMasked"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "givenName",
+                                  "familyName",
+                                  "additionalName",
+                                  "dateOfBirth",
+                                  "placeOfBirth",
+                                  "nationality",
+                                  "document"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "address": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "addressLine1": {
+                                    "type": "string"
+                                  },
+                                  "addressLine2": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "city": {
+                                    "type": "string"
+                                  },
+                                  "region": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "postalCode": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "country": {
+                                    "type": "string"
+                                  },
+                                  "proof": {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "UTILITY_BILL",
+                                          "BANK_STATEMENT",
+                                          "RESIDENCE_CERTIFICATE",
+                                          "LEASE_AGREEMENT",
+                                          "TAX_DOCUMENT",
+                                          "OTHER"
+                                        ]
+                                      },
+                                      "issuedOn": {
+                                        "type": "string",
+                                        "format": "date",
+                                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "issuedOn"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "required": [
+                                  "addressLine1",
+                                  "addressLine2",
+                                  "city",
+                                  "region",
+                                  "postalCode",
+                                  "country",
+                                  "proof"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "sourceOfFunds": {
+                                "nullable": true,
+                                "type": "object",
+                                "properties": {
+                                  "sources": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "enum": [
+                                        "EMPLOYMENT",
+                                        "BUSINESS",
+                                        "SAVINGS",
+                                        "INVESTMENTS",
+                                        "INHERITANCE",
+                                        "SALE_OF_PROPERTY",
+                                        "FAMILY_SUPPORT",
+                                        "PENSION",
+                                        "OTHER"
+                                      ]
+                                    }
+                                  },
+                                  "occupation": {
+                                    "type": "string"
+                                  },
+                                  "employerName": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  },
+                                  "explanation": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "sources",
+                                  "occupation",
+                                  "employerName",
+                                  "explanation"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "documents": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                    },
+                                    "kind": {
+                                      "type": "string",
+                                      "enum": [
+                                        "IDENTITY_FRONT",
+                                        "IDENTITY_BACK",
+                                        "SELFIE",
+                                        "PROOF_OF_ADDRESS",
+                                        "SOURCE_OF_FUNDS"
+                                      ]
+                                    },
+                                    "contentType": {
+                                      "type": "string",
+                                      "enum": [
+                                        "image/jpeg",
+                                        "image/png",
+                                        "application/pdf"
+                                      ]
+                                    },
+                                    "byteSize": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "exclusiveMinimum": true,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "uploadedAt": {
+                                      "type": "string",
+                                      "format": "date-time",
+                                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "kind",
+                                    "contentType",
+                                    "byteSize",
+                                    "uploadedAt"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "missingDocuments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "enum": [
+                                    "IDENTITY_FRONT",
+                                    "IDENTITY_BACK",
+                                    "SELFIE",
+                                    "PROOF_OF_ADDRESS",
+                                    "SOURCE_OF_FUNDS"
+                                  ]
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "level",
+                              "status",
+                              "createdAt",
+                              "updatedAt",
+                              "submittedAt",
+                              "decidedAt",
+                              "rejectionReasons",
+                              "endedAt",
+                              "identity",
+                              "address",
+                              "sourceOfFunds",
+                              "documents",
+                              "missingDocuments"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "cases"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "formatVersion",
+                    "generatedAt",
+                    "account",
+                    "profile",
+                    "security",
+                    "sessions",
+                    "activity",
+                    "verification"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get a copy of my data",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/me/close": {
+      "post": {
+        "description": "**Immediate and permanent.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. `confirm` must be `true`.\n\nThe account can no longer sign in: its password, two-step verification, sessions and profile are erased at once, and its e-mail address and phone number are free for a new registration. Verification cases that were never reviewed are erased with their documents; those on which a decision was taken are kept until `legalRetentionUntil`, as the law requires. What remains is erased from `erasureDueAt`. The holder is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role.",
+        "operationId": "AccountLifecycleController_close_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "recoveryCode": {
+                    "type": "string",
+                    "maxLength": 32
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "currentPassword",
+                  "confirm"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "closedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "legalRetentionUntil": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "erasureDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "closedAt",
+                    "legalRetentionUntil",
+                    "erasureDueAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Close my account",
         "tags": [
           "Account"
         ]
@@ -3982,6 +4979,65 @@
                       "type": "integer",
                       "minimum": 0,
                       "maximum": 9007199254740991
+                    },
+                    "closure": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "closedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "legalRetentionUntil": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "erasureDueAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "origin": {
+                          "type": "string",
+                          "enum": [
+                            "HOLDER",
+                            "STAFF"
+                          ]
+                        },
+                        "closedBy": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "formerEmail": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "formerPhone": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "erasedAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "closedAt",
+                        "legalRetentionUntil",
+                        "erasureDueAt",
+                        "origin",
+                        "closedBy",
+                        "formerEmail",
+                        "formerPhone",
+                        "erasedAt"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -4002,7 +5058,8 @@
                     "profile",
                     "secondFactor",
                     "verification",
-                    "activeSessions"
+                    "activeSessions",
+                    "closure"
                   ],
                   "additionalProperties": false
                 }
@@ -4683,6 +5740,196 @@
         ]
       }
     },
+    "/api/v1/admin/users/{userId}/close": {
+      "post": {
+        "description": "**Permanent.** Closes an active or suspended account, at the request of its holder received through another channel (`HOLDER_REQUEST`) or by decision of the platform (`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its holder had done it (see `POST /me/close`), and the holder is told by e-mail — never why. Refused (`409`) while the account holds a back-office role, or while one of its identity verification cases awaits review: decide the case first, so that the decision is kept. The mandatory `reason` is written to the audit log. You cannot close your own account from the back office. Requires `users.close`.",
+        "operationId": "AdminUsersController_close_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ground": {
+                    "type": "string",
+                    "enum": [
+                      "HOLDER_REQUEST",
+                      "PLATFORM_DECISION"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  },
+                  "confirm": {
+                    "type": "boolean",
+                    "enum": [
+                      true
+                    ]
+                  }
+                },
+                "required": [
+                  "ground",
+                  "reason",
+                  "confirm"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "closedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "legalRetentionUntil": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "erasureDueAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "HOLDER",
+                        "STAFF"
+                      ]
+                    },
+                    "closedBy": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "formerEmail": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "formerPhone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "erasedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "closedAt",
+                    "legalRetentionUntil",
+                    "erasureDueAt",
+                    "origin",
+                    "closedBy",
+                    "formerEmail",
+                    "formerPhone",
+                    "erasedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Close an account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
     "/api/v1/admin/roles": {
       "get": {
         "description": "Back-office roles with their permissions and number of holders. Roles are defined by the platform. Requires `roles.read`.",
@@ -4724,6 +5971,7 @@
                                 "users.suspend",
                                 "users.revoke_sessions",
                                 "users.reset_mfa",
+                                "users.close",
                                 "roles.read",
                                 "roles.manage",
                                 "kyc.read",
@@ -6371,7 +7619,8 @@
                                   "APPROVED",
                                   "REJECTED",
                                   "SUPERSEDED",
-                                  "REVOKED"
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
                                 ]
                               },
                               "submittedAt": {
@@ -6629,7 +7878,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -7161,7 +8411,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -7655,7 +8906,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -8103,7 +9355,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -8689,7 +9942,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -9197,7 +10451,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -9655,7 +10910,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -10080,7 +11336,8 @@
                 "APPROVED",
                 "REJECTED",
                 "SUPERSEDED",
-                "REVOKED"
+                "REVOKED",
+                "ACCOUNT_CLOSED"
               ],
               "default": "SUBMITTED"
             }
@@ -10174,7 +11431,8 @@
                               "APPROVED",
                               "REJECTED",
                               "SUPERSEDED",
-                              "REVOKED"
+                              "REVOKED",
+                              "ACCOUNT_CLOSED"
                             ]
                           },
                           "user": {
@@ -10342,7 +11600,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -10803,7 +12062,8 @@
                                   "APPROVED",
                                   "REJECTED",
                                   "SUPERSEDED",
-                                  "REVOKED"
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
                                 ]
                               }
                             },
@@ -10861,7 +12121,8 @@
                               "APPROVED",
                               "REJECTED",
                               "SUPERSEDED",
-                              "REVOKED"
+                              "REVOKED",
+                              "ACCOUNT_CLOSED"
                             ]
                           },
                           "submittedAt": {
@@ -11190,7 +12451,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -11651,7 +12913,8 @@
                                   "APPROVED",
                                   "REJECTED",
                                   "SUPERSEDED",
-                                  "REVOKED"
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
                                 ]
                               }
                             },
@@ -11709,7 +12972,8 @@
                               "APPROVED",
                               "REJECTED",
                               "SUPERSEDED",
-                              "REVOKED"
+                              "REVOKED",
+                              "ACCOUNT_CLOSED"
                             ]
                           },
                           "submittedAt": {
@@ -11939,7 +13203,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -12400,7 +13665,8 @@
                                   "APPROVED",
                                   "REJECTED",
                                   "SUPERSEDED",
-                                  "REVOKED"
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
                                 ]
                               }
                             },
@@ -12458,7 +13724,8 @@
                               "APPROVED",
                               "REJECTED",
                               "SUPERSEDED",
-                              "REVOKED"
+                              "REVOKED",
+                              "ACCOUNT_CLOSED"
                             ]
                           },
                           "submittedAt": {
@@ -12667,7 +13934,8 @@
                         "APPROVED",
                         "REJECTED",
                         "SUPERSEDED",
-                        "REVOKED"
+                        "REVOKED",
+                        "ACCOUNT_CLOSED"
                       ]
                     },
                     "createdAt": {
@@ -13128,7 +14396,8 @@
                                   "APPROVED",
                                   "REJECTED",
                                   "SUPERSEDED",
-                                  "REVOKED"
+                                  "REVOKED",
+                                  "ACCOUNT_CLOSED"
                                 ]
                               }
                             },
@@ -13186,7 +14455,8 @@
                               "APPROVED",
                               "REJECTED",
                               "SUPERSEDED",
-                              "REVOKED"
+                              "REVOKED",
+                              "ACCOUNT_CLOSED"
                             ]
                           },
                           "submittedAt": {

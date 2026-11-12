@@ -8,8 +8,15 @@ import {
   type KycDeclaration,
   KycRuleViolationError,
 } from '../../src/modules/kyc/application/kyc-case.repository.js';
+import { PrismaAccountClosureRepository } from '../../src/modules/identity/infrastructure/prisma-account-closure.repository.js';
 import { PrismaKycCaseRepository } from '../../src/modules/kyc/infrastructure/prisma-kyc-case.repository.js';
-import { createTestDatabase, type TestDatabase } from '../support/test-database.js';
+import { moveErasureTerm } from '../support/account-closure.js';
+import {
+  createTestDatabase,
+  type TestDatabase,
+  untilBlocked,
+  withConnection,
+} from '../support/test-database.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -87,8 +94,13 @@ describe('Dossiers de vérification — écritures conditionnelles (PostgreSQL r
   }
 
   /** Dossier de niveau 1 en préparation, avec ses deux pièces obligatoires. */
-  async function draft(createdAt: Date = now): Promise<string> {
-    const caseId = await repository.createDraft(app, await createUser(), identity(), createdAt);
+  async function draft(createdAt: Date = now, userId?: string): Promise<string> {
+    const caseId = await repository.createDraft(
+      app,
+      userId ?? (await createUser()),
+      identity(),
+      createdAt,
+    );
     for (const kind of ['IDENTITY_FRONT', 'SELFIE'] as const) {
       const id = randomUUID();
       await repository.insertDocument(
@@ -109,8 +121,8 @@ describe('Dossiers de vérification — écritures conditionnelles (PostgreSQL r
     return caseId;
   }
 
-  async function submitted(): Promise<string> {
-    const caseId = await draft();
+  async function submitted(userId?: string): Promise<string> {
+    const caseId = await draft(now, userId);
     expect(await repository.submit(app, caseId, now)).toBe(true);
     return caseId;
   }
@@ -250,5 +262,206 @@ describe('Dossiers de vérification — écritures conditionnelles (PostgreSQL r
       repository.decide(app, caseId, { ...approval(now), decidedBy: stranger }),
     ).rejects.toBeInstanceOf(KycRuleViolationError);
     expect((await stored(caseId)).status).toBe('SUBMITTED');
+  });
+  describe('clôture du compte et effacement', () => {
+    const closures = new PrismaAccountClosureRepository();
+
+    const filesOf = async (caseId: string): Promise<string[]> =>
+      (await app.kycDocument.findMany({ where: { caseId }, select: { storageKey: true } }))
+        .map(({ storageKey }) => storageKey)
+        .sort();
+
+    /** Compte portant un dossier dans chacun des états demandés ; rend leurs identifiants. */
+    async function accountWith(kinds: readonly string[]): Promise<Record<string, string>> {
+      const userId = await createUser();
+      const cases: Record<string, string> = { userId };
+      // Les dossiers clos d'abord : un seul dossier ouvert par compte et par niveau.
+      if (kinds.includes('REJECTED')) {
+        cases['REJECTED'] = await submitted(userId);
+        expect(await repository.decide(app, cases['REJECTED'], rejection(now))).toBe(true);
+      }
+      if (kinds.includes('REVOKED')) {
+        cases['REVOKED'] = await submitted(userId);
+        expect(await repository.decide(app, cases['REVOKED'], approval(now))).toBe(true);
+        expect(await repository.revoke(app, cases['REVOKED'], revocation(later))).toBe(true);
+      }
+      if (kinds.includes('APPROVED')) {
+        cases['APPROVED'] = await submitted(userId);
+        expect(await repository.decide(app, cases['APPROVED'], approval(now))).toBe(true);
+      }
+      if (kinds.includes('SUBMITTED')) {
+        cases['SUBMITTED'] = await submitted(userId);
+      } else if (kinds.includes('DRAFT')) {
+        cases['DRAFT'] = await draft(now, userId);
+      }
+      return cases;
+    }
+
+    /**
+     * Clôt le compte comme le fait le service — la trace et le compte, puis ses dossiers — dans
+     * une seule transaction. @returns l'emplacement des fichiers effacés.
+     */
+    async function closeAccount(userId: string, retained: boolean): Promise<string[]> {
+      const closedAt = new Date();
+      const term = new Date(closedAt);
+      term.setUTCFullYear(term.getUTCFullYear() + 10);
+      return app.$transaction(async (tx) => {
+        await repository.lockCasesOf(tx, userId);
+        const account = await closures.lockAccount(tx, userId);
+        await closures.close(tx, {
+          userId,
+          closedAt,
+          origin: 'HOLDER',
+          closedBy: userId,
+          email: account!.email,
+          phone: account!.phone,
+          legalRetentionUntil: retained ? term : null,
+          erasureDueAt: retained ? term : new Date(closedAt.getTime() + 30 * DAY_MS),
+        });
+        return repository.closeForAccount(tx, userId, closedAt);
+      });
+    }
+
+    it('dit si un dossier attend l’examen, et si une décision a été prise — pour ce compte seulement', async () => {
+      const expectations: readonly (readonly [readonly string[], boolean, boolean])[] = [
+        [[], false, false],
+        [['DRAFT'], false, false],
+        [['SUBMITTED'], true, false],
+        [['APPROVED'], false, true],
+        [['REJECTED'], false, true],
+        [['REVOKED'], false, true],
+        [['REJECTED', 'SUBMITTED'], true, true],
+        [['APPROVED', 'DRAFT'], false, true],
+      ];
+      for (const [kinds, awaiting, decided] of expectations) {
+        const { userId } = await accountWith(kinds);
+        expect({
+          kinds,
+          awaiting: await repository.hasCaseAwaitingReview(app, userId!),
+          decided: await repository.hasDecidedCase(app, userId!),
+        }).toEqual({ kinds, awaiting, decided });
+      }
+    });
+
+    it('verrouiller tient tous les dossiers du compte : un dépôt en cours attend', async () => {
+      const { userId, DRAFT: caseId } = await accountWith(['DRAFT']);
+      const stranger = await draft();
+
+      await withConnection(database.appUrl, async (writer) => {
+        await withConnection(database.appUrl, async (observer) => {
+          let submission: Promise<unknown> | undefined;
+          await app.$transaction(async (tx) => {
+            await repository.lockCasesOf(tx, userId!);
+            // Le dossier d'un autre compte n'est pas tenu.
+            await writer.query(`UPDATE kyc_cases SET updated_at = now() WHERE id = $1`, [stranger]);
+            submission = writer.query(
+              `UPDATE kyc_cases SET status = 'SUBMITTED', submitted_at = now(), updated_at = now()
+               WHERE id = $1`,
+              [caseId],
+            );
+            await untilBlocked(observer);
+          });
+          await submission;
+        });
+      });
+      expect((await stored(caseId!)).status).toBe('SUBMITTED');
+    });
+
+    it('la clôture met fin à la vérification en vigueur, efface ce qui n’a jamais été examiné et rend ses fichiers', async () => {
+      const cases = await accountWith(['REJECTED', 'REVOKED', 'APPROVED', 'SUBMITTED']);
+      const pendingFiles = await filesOf(cases['SUBMITTED']!);
+      const other = await accountWith(['APPROVED', 'DRAFT']);
+      const draftFiles = await filesOf(other['DRAFT']!);
+
+      const removed = await closeAccount(cases['userId']!, true);
+
+      expect([...removed].sort()).toEqual(pendingFiles);
+      expect(await app.kycCase.findUnique({ where: { id: cases['SUBMITTED']! } })).toBeNull();
+      expect(await documentsOf(cases['SUBMITTED']!)).toBe(0);
+      const ended = await stored(cases['APPROVED']!);
+      expect(ended).toMatchObject({
+        status: 'ACCOUNT_CLOSED',
+        revokedBy: null,
+        decidedBy: reviewer,
+      });
+      expect(ended.endedAt).toEqual(ended.updatedAt);
+      expect(ended.endedAt).not.toBeNull();
+      // Les dossiers déjà clos gardent leur statut, leurs dates et leurs pièces.
+      expect(await stored(cases['REJECTED']!)).toMatchObject({ status: 'REJECTED', endedAt: null });
+      expect(await stored(cases['REVOKED']!)).toMatchObject({ status: 'REVOKED', endedAt: later });
+      for (const kind of ['APPROVED', 'REJECTED', 'REVOKED']) {
+        expect(await documentsOf(cases[kind]!)).toBe(2);
+      }
+      expect(await repository.hasCaseAwaitingReview(app, cases['userId']!)).toBe(false);
+
+      // Un dossier en préparation s'efface de même, avec ses pièces.
+      expect([...(await closeAccount(other['userId']!, true))].sort()).toEqual(draftFiles);
+      expect((await stored(other['APPROVED']!)).status).toBe('ACCOUNT_CLOSED');
+      // Les dossiers des autres comptes n'ont pas bougé.
+      expect((await stored(await submitted())).status).toBe('SUBMITTED');
+    });
+
+    it('sur un compte ouvert, la base refuse : erreur nommée, et rien n’est écrit', async () => {
+      const cases = await accountWith(['APPROVED', 'SUBMITTED']);
+      const userId = cases['userId']!;
+
+      await expect(
+        app.$transaction((tx) => repository.closeForAccount(tx, userId, later)),
+      ).rejects.toBeInstanceOf(KycRuleViolationError);
+      await expect(
+        app.$transaction((tx) => repository.eraseAllOf(tx, userId)),
+      ).rejects.toBeInstanceOf(KycRuleViolationError);
+
+      expect((await stored(cases['APPROVED']!)).status).toBe('APPROVED');
+      expect((await stored(cases['SUBMITTED']!)).status).toBe('SUBMITTED');
+      expect(await documentsOf(cases['APPROVED']!)).toBe(2);
+      expect(await documentsOf(cases['SUBMITTED']!)).toBe(2);
+    });
+
+    it('tout effacer : refusé avant le terme de la conservation ; au terme, rend l’emplacement de tous les fichiers', async () => {
+      const cases = await accountWith(['REJECTED', 'APPROVED']);
+      const userId = cases['userId']!;
+      const files = [
+        ...(await filesOf(cases['REJECTED']!)),
+        ...(await filesOf(cases['APPROVED']!)),
+      ];
+      expect(await closeAccount(userId, true)).toEqual([]);
+      expect([...(await repository.documentFilesOf(app, userId))].sort()).toEqual(
+        [...files].sort(),
+      );
+
+      // Avant le terme, lu à l'horloge de la base : rien ne s'efface, pas même une pièce.
+      await expect(
+        app.$transaction((tx) => repository.eraseAllOf(tx, userId)),
+      ).rejects.toBeInstanceOf(KycRuleViolationError);
+      expect(await app.kycCase.count({ where: { userId } })).toBe(2);
+      expect(await app.kycDocument.count({ where: { case: { userId } } })).toBe(4);
+
+      await withConnection(database.ownerUrl, (owner) => moveErasureTerm(owner, userId, '-1 day'));
+      const erased = await app.$transaction((tx) => repository.eraseAllOf(tx, userId));
+      expect([...erased].sort()).toEqual([...files].sort());
+      expect(await app.kycCase.count({ where: { userId } })).toBe(0);
+      expect(await app.kycDocument.count({ where: { case: { userId } } })).toBe(0);
+      expect(await repository.documentFilesOf(app, userId)).toEqual([]);
+      // Effacé, il n'y a plus rien à effacer.
+      expect(await app.$transaction((tx) => repository.eraseAllOf(tx, userId))).toEqual([]);
+    });
+
+    it('rend tous les dossiers d’un compte, du plus récent au plus ancien — et eux seuls', async () => {
+      const cases = await accountWith(['REJECTED', 'APPROVED', 'DRAFT']);
+      await accountWith(['SUBMITTED']);
+
+      const all = await repository.allCasesOf(app, cases['userId']!);
+
+      expect(all.map(({ id }) => id)).toEqual([
+        cases['DRAFT'],
+        cases['APPROVED'],
+        cases['REJECTED'],
+      ]);
+      expect(all.map(({ status }) => status)).toEqual(['DRAFT', 'APPROVED', 'REJECTED']);
+      expect(all.every(({ userId }) => userId === cases['userId'])).toBe(true);
+      expect(all[0]?.documents).toHaveLength(2);
+      expect(await repository.allCasesOf(app, await createUser())).toEqual([]);
+    });
   });
 });

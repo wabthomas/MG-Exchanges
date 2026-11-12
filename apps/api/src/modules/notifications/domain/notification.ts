@@ -46,7 +46,22 @@ export type NotificationContent =
       /** Motifs du refus, dans l'ordre où la conformité les a donnés. */
       readonly reasons: readonly KycRejectionReason[];
     }
-  | { readonly template: 'identity_verification_revoked'; readonly level: KycLevel };
+  | { readonly template: 'identity_verification_revoked'; readonly level: KycLevel }
+  | {
+      readonly template: 'account_closed';
+      /** Vrai si la clôture a été prononcée par la plateforme, et non demandée depuis le compte. */
+      readonly byStaff: boolean;
+      /** Date à partir de laquelle ce qui reste du compte est effacé (ISO 8601, UTC). */
+      readonly erasureDueAt: string;
+      /** Terme de la conservation légale des dossiers de vérification, s'il y en a une. */
+      readonly retainedUntil: string | null;
+    }
+  | {
+      readonly template: 'data_exported';
+      /** Date de la remise de la copie (ISO 8601, UTC). */
+      readonly occurredAt: string;
+      readonly ipAddress: string | null;
+    };
 
 export type NotificationTemplate = NotificationContent['template'];
 

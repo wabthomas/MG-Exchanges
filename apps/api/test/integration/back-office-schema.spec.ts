@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import { ROLE_MANAGEMENT_PERMISSION, SYSTEM_ROLES } from '@mgx/contracts';
 import type pg from 'pg';
 
+import { closeAccountInSql } from '../support/account-closure.js';
 import {
   createTestDatabase,
   sqlState,
@@ -57,13 +58,19 @@ describe('Back-office — double validation des rôles portée par la base de do
   /** Compte actif (adresse vérifiée), sauf mention contraire. */
   async function insertUser(db: pg.Client, status = 'ACTIVE'): Promise<string> {
     sequence += 1;
+    // Un compte ne naît pas clôturé : il est créé actif, puis clôturé.
+    const created = status === 'CLOSED' ? 'ACTIVE' : status;
     const result = await db.query<{ id: string }>(
       `INSERT INTO users (email, country_code, terms_accepted_at, status, email_verified_at)
        VALUES ($1, 'CD', now(), $2::user_status, CASE WHEN $2 = 'PENDING_VERIFICATION' THEN NULL ELSE now() END)
        RETURNING id`,
-      [`backoffice${String(sequence)}@example.cd`, status],
+      [`backoffice${String(sequence)}@example.cd`, created],
     );
-    return result.rows[0]!.id;
+    const { id } = result.rows[0]!;
+    if (status === 'CLOSED') {
+      await closeAccountInSql(db, id);
+    }
+    return id;
   }
 
   /** Membre du personnel, créé comme le fait l'outil d'amorçage : avec le rôle propriétaire. */

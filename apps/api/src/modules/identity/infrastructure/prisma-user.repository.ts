@@ -39,8 +39,9 @@ export class PrismaUserRepository extends UserRepository {
     return db.user.findUnique({ where: { id: userId }, select: USER_FIELDS });
   }
 
-  findByEmail(db: DbClient, email: string): Promise<UserRecord | null> {
-    return db.user.findUnique({ where: { email }, select: USER_FIELDS });
+  async findByEmail(db: DbClient, email: string): Promise<UserRecord | null> {
+    const found = await db.user.findUnique({ where: { email }, select: USER_FIELDS });
+    return found === null || found.status === 'CLOSED' ? null : found;
   }
 
   async findByEmailWithPasswordHash(
@@ -51,7 +52,7 @@ export class PrismaUserRepository extends UserRepository {
       where: { email },
       select: { ...USER_FIELDS, credential: { select: { passwordHash: true } } },
     });
-    if (found === null) {
+    if (found === null || found.status === 'CLOSED') {
       return null;
     }
     const { credential, ...user } = found;
