@@ -41,7 +41,10 @@ Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env
 | `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder** |
 | `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                             |
 | `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                           |
-| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests) ou `none` ; `memory` interdit en staging et en production                        |
+| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests), `smtp` ou `none` ; `memory` interdit en staging et en production                |
+| `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                             |
+| `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                          |
+| `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                              |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
@@ -145,22 +148,47 @@ rôle `support` aux agents (`POST /api/v1/admin/role-changes`).
 
 ## Notifications
 
-Aucun prestataire d'e-mail ou de SMS n'est encore branché (décision en attente). En
-conséquence :
+**E-mails : par le serveur SMTP du prestataire de votre choix** (ADR 0021). Tous en proposent
+un ; l'API n'en connaît aucun en particulier.
+
+```bash
+SMTP_HOST=smtp.prestataire.example
+SMTP_USER=…            # identifiants du compte d'envoi (gestionnaire de secrets)
+SMTP_PASSWORD=…
+EMAIL_FROM="MG-Exchange <no-reply@votre-domaine.example>"
+# SMTP_SECURITY=starttls (port 587, défaut) ou tls (port 465)
+```
+
+Définir `SMTP_HOST` suffit à activer l'envoi. La connexion est toujours chiffrée en
+pré-production et en production, et le certificat du serveur toujours vérifié (un relais
+interne signé par une autorité privée se déclare à Node.js par `NODE_EXTRA_CA_CERTS`).
+
+Avant d'ouvrir l'inscription :
+
+1. **Autoriser le domaine expéditeur** chez le prestataire (enregistrements SPF et DKIM, puis
+   DMARC). Sans cela, les messages partent mais finissent en indésirables.
+2. Démarrer l'API et lire son journal : la ligne `SMTP server is reachable…` confirme que le
+   serveur répond et accepte les identifiants ; `SMTP server verification failed` donne la
+   réponse du serveur. L'API démarre dans les deux cas.
+3. Créer un compte de test avec une vraie adresse et vérifier la réception du code.
+
+Chaque message accepté par le serveur laisse une ligne `Email accepted by the SMTP server`
+(modèle et identifiant du message, jamais l'adresse). Un échec est retenté cinq fois, puis
+abandonné et journalisé (`Domain event handling failed`). Les retours de non-remise signalés
+après coup se consultent chez le prestataire : l'API ne les reçoit pas.
+
+**SMS : aucun prestataire n'est branché.** La vérification du numéro de téléphone répond
+`503` ; rien d'autre n'en dépend. Les deux canaux sont indépendants.
+
+**Sans `SMTP_HOST`** :
 
 - en local, en développement et en test, les messages — e-mails et SMS — restent en mémoire
   et se lisent sur `GET /api/v1/dev/mailbox?recipient=<adresse ou numéro>` ;
 - en pré-production et en production, rien ne part : l'inscription, la réinitialisation du
-  mot de passe et la vérification du téléphone répondent `503` — **l'inscription ne peut donc
-  pas être ouverte au public avant le choix d'un prestataire**. Un administrateur créé en
-  ligne de commande peut, lui, se connecter et activer sa validation en deux étapes (qui ne
-  dépend d'aucun envoi) ;
-- les **messages de sécurité** (nouvelle connexion, second facteur modifié, compte suspendu…)
-  ne partent pas davantage : sans prestataire, les titulaires ne sont pas prévenus. C'est une
-  raison de plus de ne pas ouvrir au public avant ce choix.
-
-Les deux canaux sont distincts : un prestataire d'e-mail seul laisse la vérification du
-téléphone indisponible (`503`), sans autre effet.
+  mot de passe et la vérification du téléphone répondent `503`, et les messages de sécurité
+  (nouvelle connexion, second facteur modifié, compte suspendu…) ne sont pas envoyés. Un
+  administrateur créé en ligne de commande peut, lui, se connecter et activer sa validation
+  en deux étapes, qui ne dépend d'aucun envoi.
 
 ## Environnement local avec Docker Compose
 

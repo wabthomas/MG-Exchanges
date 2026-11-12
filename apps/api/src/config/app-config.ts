@@ -3,13 +3,26 @@ import { fileURLToPath } from 'node:url';
 
 import {
   type AppEnvironment,
+  type EmailSender,
   envSchema,
   type LogLevel,
   type NotificationDelivery,
+  resolveNotificationDelivery,
+  type SmtpSecurity,
   type ValidatedEnv,
 } from './env.schema.js';
 
 export const SERVICE_NAME = 'mg-exchange-api';
+
+/** Connexion au serveur SMTP du prestataire d'e-mail. */
+export interface SmtpConfig {
+  readonly host: string;
+  readonly port: number;
+  readonly security: SmtpSecurity;
+  /** Identifiants du compte d'envoi. Ne jamais journaliser. */
+  readonly auth: { readonly user: string; readonly password: string } | null;
+  readonly from: EmailSender;
+}
 
 /** Levée au démarrage lorsque la configuration est invalide. Ne contient jamais de valeur. */
 export class ConfigValidationError extends Error {
@@ -83,7 +96,11 @@ export class AppConfig {
     readonly passwordHash: { readonly memoryKib: number; readonly passes: number };
   };
 
-  readonly notifications: { readonly delivery: NotificationDelivery };
+  readonly notifications: {
+    readonly delivery: NotificationDelivery;
+    /** Serveur SMTP du prestataire d'e-mail ; `null` si la remise ne passe pas par SMTP. */
+    readonly smtp: SmtpConfig | null;
+  };
 
   constructor(env: ValidatedEnv, version: string) {
     this.app = {
@@ -140,12 +157,23 @@ export class AppConfig {
         passes: env.AUTH_PASSWORD_HASH_PASSES,
       },
     };
+    const delivery = resolveNotificationDelivery(env);
     this.notifications = {
-      // Par défaut : boîte en mémoire sur les environnements de développement, rien ailleurs
-      // tant qu'aucun prestataire d'envoi n'est configuré.
-      delivery:
-        env.NOTIFICATION_DELIVERY ??
-        (['local', 'development', 'test'].includes(env.APP_ENV) ? 'memory' : 'none'),
+      delivery,
+      // Le schéma garantit la présence du serveur et de l'expéditeur lorsque la remise est SMTP.
+      smtp:
+        delivery === 'smtp' && env.SMTP_HOST !== undefined && env.EMAIL_FROM !== undefined
+          ? {
+              host: env.SMTP_HOST,
+              port: env.SMTP_PORT ?? (env.SMTP_SECURITY === 'tls' ? 465 : 587),
+              security: env.SMTP_SECURITY,
+              auth:
+                env.SMTP_USER !== undefined && env.SMTP_PASSWORD !== undefined
+                  ? { user: env.SMTP_USER, password: env.SMTP_PASSWORD }
+                  : null,
+              from: env.EMAIL_FROM,
+            }
+          : null,
     };
     Object.freeze(this);
   }

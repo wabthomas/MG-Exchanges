@@ -95,6 +95,13 @@ services:
       # Exigées par l'API, qui refuse de démarrer sans elles (voir .env.example).
       AUTH_CODE_HMAC_SECRET: ${AUTH_CODE_HMAC_SECRET:-}
       AUTH_SECRETS_ENCRYPTION_KEY: ${AUTH_SECRETS_ENCRYPTION_KEY:-}
+      # Envoi réel des e-mails : facultatif (une variable vide est ignorée par l'API).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_SECURITY: ${SMTP_SECURITY:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
     depends_on:
       migrate:
         condition: service_completed_successfully

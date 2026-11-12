@@ -40,6 +40,8 @@ catalog:
   bullmq: 6.7.2
   ioredis: 6.0.0
   pg: 8.23.1
+  # --- Envoi des e-mails (SMTP) ---
+  nodemailer: 10.3.1
   # --- HTTP, sécurité, journalisation ---
   nestjs-pino: 5.3.1
   pino: 10.4.0
@@ -59,7 +61,10 @@ catalog:
   fast-check: 4.10.2
   globals: 17.14.0
   jest: 30.5.2
+  # Tests de l'envoi SMTP : serveur SMTP en mémoire et lecture des messages reçus.
+  mailparser: 3.14.1
   prettier: 3.9.10
+  smtp-server: 3.21.3
   supertest: 7.3.2
   ts-jest: 29.4.15
   typescript: 6.0.3

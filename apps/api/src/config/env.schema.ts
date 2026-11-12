@@ -1,3 +1,4 @@
+import { emailSchema } from '@mgx/validation';
 import { z } from 'zod';
 
 export const APP_ENVIRONMENTS = ['local', 'development', 'staging', 'production', 'test'] as const;
@@ -9,9 +10,26 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 /** Environnements exposés à des utilisateurs ou à des données réelles : règles durcies. */
 const HARDENED_ENVIRONMENTS: readonly AppEnvironment[] = ['staging', 'production'];
 
-/** Modes de remise des notifications : boîte en mémoire (développement, tests) ou aucun. */
-export const NOTIFICATION_DELIVERY_MODES = ['memory', 'none'] as const;
+/**
+ * Modes de remise des notifications : boîte en mémoire (développement, tests), serveur SMTP
+ * d'un prestataire d'e-mail, ou aucun.
+ */
+export const NOTIFICATION_DELIVERY_MODES = ['memory', 'smtp', 'none'] as const;
 export type NotificationDelivery = (typeof NOTIFICATION_DELIVERY_MODES)[number];
+
+/**
+ * Chiffrement de la connexion SMTP : `starttls` (port 587, chiffrement exigé avant tout
+ * échange), `tls` (port 465, chiffrée dès l'ouverture) ou `none` (aucune exigence — outils
+ * locaux uniquement).
+ */
+export const SMTP_SECURITY_MODES = ['starttls', 'tls', 'none'] as const;
+export type SmtpSecurity = (typeof SMTP_SECURITY_MODES)[number];
+
+/** Expéditeur des e-mails : adresse, et nom affiché facultatif. */
+export interface EmailSender {
+  readonly name: string | null;
+  readonly address: string;
+}
 
 /**
  * Coût minimal d'Argon2id hors développement (recommandation OWASP : 19 Mio, 2 passes).
@@ -40,6 +58,26 @@ const urlWithProtocol = (protocols: readonly string[]) =>
     },
     { error: `Must be a URL using one of: ${protocols.join(', ')}` },
   );
+
+const SENDER_PATTERN = /^(?:(?<name>[^<>"]*)<(?<bracketed>[^<>\s]+)>|(?<bare>[^<>\s]+))$/u;
+const SENDER_NAME_MAX_LENGTH = 64;
+
+/** Expéditeur au format `adresse` ou `Nom affiché <adresse>`. */
+const emailSender = z.string().transform((value, context): EmailSender => {
+  const groups = SENDER_PATTERN.exec(value.trim())?.groups;
+  const address = emailSchema.safeParse(groups?.['bracketed'] ?? groups?.['bare'] ?? '');
+  const name = groups?.['name']?.trim() ?? '';
+  // Un nom affiché ne contient ni caractère de contrôle ni saut de ligne : il devient un en-tête.
+  const nameIsSafe = name.length <= SENDER_NAME_MAX_LENGTH && !/\p{Cc}/u.test(name);
+  if (!address.success || !nameIsSafe) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Must look like "no-reply@example.com" or "Display name <no-reply@example.com>".',
+    });
+    return z.NEVER;
+  }
+  return { name: name === '' ? null : name, address: address.data };
+});
 
 /** Vrai si `value` est l'encodage base64 canonique d'exactement 32 octets (clé AES-256). */
 function isBase64Key32(value: string): boolean {
@@ -149,8 +187,23 @@ export const envSchema = z
     AUTH_PASSWORD_HASH_PASSES: integer(1, 10).default(MIN_PASSWORD_HASH_PASSES),
 
     // --- Notifications ---
-    /** Par défaut : `memory` en local, development et test ; `none` ailleurs. */
+    /**
+     * Par défaut : `smtp` dès que SMTP_HOST est défini ; sinon `memory` en local, development
+     * et test, et `none` ailleurs.
+     */
     NOTIFICATION_DELIVERY: z.enum(NOTIFICATION_DELIVERY_MODES).optional(),
+    /** Serveur SMTP du prestataire d'e-mail. Le définir active l'envoi réel des e-mails. */
+    SMTP_HOST: z
+      .string()
+      .regex(/^[A-Za-z0-9.:-]+$/, { error: 'Must be a host name or an IP address.' })
+      .optional(),
+    /** Par défaut : 465 si SMTP_SECURITY vaut `tls`, 587 sinon. */
+    SMTP_PORT: integer(1, 65_535).optional(),
+    SMTP_SECURITY: z.enum(SMTP_SECURITY_MODES).default('starttls'),
+    SMTP_USER: z.string().min(1).optional(),
+    SMTP_PASSWORD: z.string().min(1).optional(),
+    /** Expéditeur des e-mails : `adresse` ou `Nom affiché <adresse>`. */
+    EMAIL_FROM: emailSender.optional(),
   })
   .superRefine((env, context) => {
     const hardened = HARDENED_ENVIRONMENTS.includes(env.APP_ENV);
@@ -213,6 +266,44 @@ export const envSchema = z
         `"memory" is a development tool and is forbidden when APP_ENV is "${env.APP_ENV}".`,
       );
     }
+
+    // Envoi des e-mails par SMTP : configuration complète, et chiffrée hors développement.
+    if ((env.SMTP_USER === undefined) !== (env.SMTP_PASSWORD === undefined)) {
+      issue('SMTP_USER', 'SMTP_USER and SMTP_PASSWORD must be set together.');
+    }
+    if (resolveNotificationDelivery(env) === 'smtp') {
+      if (env.SMTP_HOST === undefined) {
+        issue('SMTP_HOST', 'Is required when NOTIFICATION_DELIVERY is "smtp".');
+      }
+      if (env.EMAIL_FROM === undefined) {
+        issue('EMAIL_FROM', 'Is required to send emails (sender address).');
+      }
+      // Les e-mails portent des codes à usage unique, et la connexion un mot de passe.
+      if (hardened && env.SMTP_SECURITY === 'none') {
+        issue(
+          'SMTP_SECURITY',
+          `Must be "starttls" or "tls" when APP_ENV is "${env.APP_ENV}" (encrypted connection).`,
+        );
+      }
+    }
   });
+
+/**
+ * Mode de remise effectif : celui qui est demandé ; à défaut, SMTP dès qu'un serveur est
+ * configuré, sinon la boîte en mémoire sur les environnements de développement, et rien ailleurs.
+ */
+export function resolveNotificationDelivery(env: {
+  readonly APP_ENV: AppEnvironment;
+  readonly NOTIFICATION_DELIVERY?: NotificationDelivery | undefined;
+  readonly SMTP_HOST?: string | undefined;
+}): NotificationDelivery {
+  if (env.NOTIFICATION_DELIVERY !== undefined) {
+    return env.NOTIFICATION_DELIVERY;
+  }
+  if (env.SMTP_HOST !== undefined) {
+    return 'smtp';
+  }
+  return ['local', 'development', 'test'].includes(env.APP_ENV) ? 'memory' : 'none';
+}
 
 export type ValidatedEnv = z.infer<typeof envSchema>;

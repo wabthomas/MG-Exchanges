@@ -125,6 +125,21 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - Le titulaire consulte l'**historique des événements de sécurité** de son compte, y compris
   les interventions du support — sans l'adresse ni l'appareil du membre du personnel.
 
+### Envoi des e-mails
+
+- Les e-mails partent par SMTP, sur une **connexion chiffrée** et un **certificat vérifié** :
+  la configuration refuse tout autre réglage en pré-production et en production. Avec
+  `starttls`, ni les identifiants du compte d'envoi ni un message ne partent tant que la
+  connexion n'est pas chiffrée (ADR 0021).
+- L'expéditeur n'adresse un message qu'à **une adresse nue** : tout ce qui pourrait désigner
+  un second destinataire ou en substituer un autre est refusé avant tout échange, sans
+  dépendre de la validation faite à l'inscription.
+- Le journal ne contient ni adresse ni contenu : une ligne par message accepté (modèle,
+  identifiant), et les réponses du serveur adresses masquées.
+- Les messages sont en texte seul, sans lien ni pièce jointe, et marqués comme automatiques.
+- **Limites** : pas de plafond global d'envoi (seules les limites par adresse IP et par
+  compte s'appliquent) ; les retours de non-remise et les plaintes ne sont pas exploités.
+
 ### Téléphone
 
 - Le numéro ne devient celui du compte qu'après confirmation d'un code reçu par SMS ; un
@@ -227,6 +242,7 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 | Rotation de la clé de chiffrement des secrets (aujourd'hui : une seule version de clé)     | 2     |
 | Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage          | 2+    |
 | Vérification des mots de passe contre les fuites connues                                   | 2     |
+| E-mails : exploitation des non-remises et des plaintes, plafond global d'envoi             | 2     |
 | Acceptation versionnée des conditions, clôture de compte, effacement et export des données | 2     |
 | Chiffrement applicatif des données personnelles sensibles (KYC)                            | 2     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |

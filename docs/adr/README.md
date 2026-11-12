@@ -25,3 +25,4 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0018](0018-roles-double-validation-en-base.md)              | Changements de rôle : double validation imposée par la base               | Acceptée                      |
 | [0019](0019-back-office-comptes-tracabilite.md)              | Back-office des comptes : actions justifiées, accès journalisés           | Acceptée                      |
 | [0020](0020-conservation-et-purge-des-donnees-d-identite.md) | Conservation et purge des données d'identité                              | Acceptée                      |
+| [0021](0021-envoi-des-e-mails-par-smtp.md)                   | Envoi des e-mails par SMTP                                                | Acceptée                      |

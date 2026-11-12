@@ -195,7 +195,7 @@ describe('configuration de l’identité et des notifications', () => {
       refreshReuseGraceMs: 10_000,
       passwordHash: { memoryKib: 19_456, passes: 2 },
     });
-    expect(notifications).toEqual({ delivery: 'memory' });
+    expect(notifications).toEqual({ delivery: 'memory', smtp: null });
   });
 
   it('exige une clé de HMAC d’au moins 32 caractères, sans jamais l’afficher', () => {
@@ -286,5 +286,126 @@ describe('configuration de l’identité et des notifications', () => {
       AUTH_PASSWORD_HASH_PASSES: '1',
     });
     expect(config.auth.passwordHash).toEqual({ memoryKib: 64, passes: 1 });
+  });
+});
+
+describe('configuration de l’envoi des e-mails par SMTP', () => {
+  const SMTP_PASSWORD = 'smtp-acc0unt-p4ssword';
+  const smtp = {
+    ...minimal,
+    SMTP_HOST: 'smtp.mail-provider.example',
+    EMAIL_FROM: 'MG-Exchange <no-reply@mg-exchange.example>',
+  };
+
+  it('déclarer un serveur SMTP suffit à activer l’envoi : port 587 et chiffrement exigé par défaut', () => {
+    expect(loadAppConfig(smtp).notifications).toEqual({
+      delivery: 'smtp',
+      smtp: {
+        host: 'smtp.mail-provider.example',
+        port: 587,
+        security: 'starttls',
+        auth: null,
+        from: { name: 'MG-Exchange', address: 'no-reply@mg-exchange.example' },
+      },
+    });
+  });
+
+  it('le port suit le mode de chiffrement, sauf s’il est précisé ; les identifiants vont par deux', () => {
+    expect(loadAppConfig({ ...smtp, SMTP_SECURITY: 'tls' }).notifications.smtp).toMatchObject({
+      port: 465,
+      security: 'tls',
+    });
+    expect(
+      loadAppConfig({
+        ...smtp,
+        SMTP_PORT: '2525',
+        SMTP_USER: 'apikey',
+        SMTP_PASSWORD,
+      }).notifications.smtp,
+    ).toMatchObject({ port: 2525, auth: { user: 'apikey', password: SMTP_PASSWORD } });
+
+    const problems = problemsOf({ ...smtp, SMTP_PASSWORD });
+    expect(problems).toEqual(['SMTP_USER: SMTP_USER and SMTP_PASSWORD must be set together.']);
+    expect(problems.join(' ')).not.toContain(SMTP_PASSWORD);
+  });
+
+  it('un mode de remise demandé explicitement l’emporte sur la présence d’un serveur', () => {
+    expect(loadAppConfig({ ...smtp, NOTIFICATION_DELIVERY: 'memory' }).notifications).toEqual({
+      delivery: 'memory',
+      smtp: null,
+    });
+    expect(loadAppConfig({ ...smtp, NOTIFICATION_DELIVERY: 'none' }).notifications).toEqual({
+      delivery: 'none',
+      smtp: null,
+    });
+  });
+
+  it('l’envoi par SMTP exige un serveur et un expéditeur', () => {
+    expect(problemsOf({ ...minimal, NOTIFICATION_DELIVERY: 'smtp' })).toEqual([
+      'SMTP_HOST: Is required when NOTIFICATION_DELIVERY is "smtp".',
+      'EMAIL_FROM: Is required to send emails (sender address).',
+    ]);
+    expect(problemsOf({ ...minimal, SMTP_HOST: 'smtp.mail-provider.example' })).toEqual([
+      'EMAIL_FROM: Is required to send emails (sender address).',
+    ]);
+    expect(problemsOf({ ...smtp, SMTP_HOST: 'smtp://mail-provider.example' })).toEqual([
+      'SMTP_HOST: Must be a host name or an IP address.',
+    ]);
+  });
+
+  it('l’expéditeur est une adresse, éventuellement précédée d’un nom affiché — et rien d’autre', () => {
+    const fromOf = (value: string) =>
+      loadAppConfig({ ...smtp, EMAIL_FROM: value }).notifications.smtp?.from;
+
+    expect(fromOf('No-Reply@MG-Exchange.example')).toEqual({
+      name: null,
+      address: 'no-reply@mg-exchange.example',
+    });
+    expect(fromOf('  Équipe MG-Exchange   <no-reply@mg-exchange.example> ')).toEqual({
+      name: 'Équipe MG-Exchange',
+      address: 'no-reply@mg-exchange.example',
+    });
+    expect(fromOf('<no-reply@mg-exchange.example>')).toEqual({
+      name: null,
+      address: 'no-reply@mg-exchange.example',
+    });
+
+    for (const malformed of [
+      'MG-Exchange',
+      'MG-Exchange <not-an-address>',
+      'a@mg-exchange.example, b@mg-exchange.example',
+      'MG-Exchange <a@mg-exchange.example> <b@mg-exchange.example>',
+      'MG-Exchange\r\nBcc: attacker@evil.example <a@mg-exchange.example>',
+      '"MG" <a@mg-exchange.example>',
+      `${'x'.repeat(65)} <a@mg-exchange.example>`,
+    ]) {
+      expect(problemsOf({ ...smtp, EMAIL_FROM: malformed })).toEqual([
+        'EMAIL_FROM: Must look like "no-reply@example.com" or "Display name <no-reply@example.com>".',
+      ]);
+    }
+  });
+
+  it.each(['staging', 'production'])(
+    'en %s, la connexion SMTP est obligatoirement chiffrée',
+    (environment) => {
+      const hardened = { ...smtp, NODE_ENV: 'production', APP_ENV: environment };
+
+      expect(problemsOf({ ...hardened, SMTP_SECURITY: 'none' })).toEqual([
+        `SMTP_SECURITY: Must be "starttls" or "tls" when APP_ENV is "${environment}" (encrypted connection).`,
+      ]);
+      expect(loadAppConfig(hardened).notifications).toMatchObject({
+        delivery: 'smtp',
+        smtp: { security: 'starttls', port: 587 },
+      });
+      expect(
+        loadAppConfig({ ...hardened, SMTP_SECURITY: 'tls' }).notifications.smtp?.security,
+      ).toBe('tls');
+    },
+  );
+
+  it('hors environnements exposés, une connexion sans chiffrement reste possible (outils locaux)', () => {
+    expect(
+      loadAppConfig({ ...smtp, SMTP_SECURITY: 'none', SMTP_PORT: '1025' }).notifications.smtp,
+    ).toMatchObject({ security: 'none', port: 1025 });
   });
 });

@@ -399,15 +399,20 @@ les rôles puissent évoluer par l'API.
 
 ## Boîte de réception de développement
 
-Tant qu'aucun prestataire d'envoi n'est branché, les messages — e-mails et SMS, dont les
-codes — restent en mémoire en local, en développement et en test :
+Lorsqu'aucun serveur d'envoi n'est configuré, les messages — e-mails et SMS, dont les codes —
+restent en mémoire en local, en développement et en test :
 
 ```
 GET /api/v1/dev/mailbox?recipient=<adresse e-mail ou numéro de téléphone>
 ```
 
-Cette route n'existe pas en pré-production ni en production (`404`), où l'inscription et la
-réinitialisation répondent `503 SERVICE_UNAVAILABLE` tant qu'aucun moyen d'envoi n'est configuré.
+Cette route n'existe pas en pré-production ni en production, ni dès que les e-mails partent
+réellement (`404`).
+
+**Disponibilité des envois.** Une route qui dépend d'un message répond
+`503 SERVICE_UNAVAILABLE` lorsque le canal correspondant n'est pas configuré : inscription,
+renvoi du code et mot de passe oublié sans serveur d'e-mail ; vérification du numéro de
+téléphone sans prestataire SMS — ce qui est le cas partout hors développement à ce jour.
 
 ## À venir
 

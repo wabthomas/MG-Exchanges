@@ -24,11 +24,12 @@ décision explicite d'un administrateur.
 back-office relèvent de la phase 7. Ce qui est visible aujourd'hui est l'API (documentation
 interactive `/api/docs`).
 
-**L'inscription ne peut pas être ouverte au public en l'état** : aucun prestataire d'envoi
-d'e-mails ni de SMS n'est branché (décision attendue, voir plus bas). Hors développement,
-l'API refuse alors l'inscription, la réinitialisation du mot de passe et la vérification du
-téléphone plutôt que de promettre un code qui n'arriverait jamais ; et les messages de
-sécurité (nouvel appareil, second facteur modifié, suspension…) ne partent pas.
+**Envoi des messages.** Les e-mails partent par le serveur SMTP du prestataire de votre choix
+— à configurer au déploiement : sans lui, hors développement, l'API refuse l'inscription et
+la réinitialisation du mot de passe plutôt que de promettre un code qui n'arriverait jamais,
+et les messages de sécurité ne partent pas. Cet envoi a été vérifié contre un serveur SMTP
+réel exécuté par les tests, **jamais contre le service d'un prestataire**. Aucun SMS ne
+part : la vérification du numéro de téléphone reste indisponible hors développement.
 
 ## Phase 2 — identité et utilisateurs
 
@@ -91,16 +92,16 @@ Exécution du 2026-11-12 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                       |
 | `pnpm db:check-drift`            | aucune différence              |
 | `pnpm audit --prod`              | aucune vulnérabilité connue    |
-| `pnpm test`                      | **762 tests réussis, 0 échec** |
+| `pnpm test`                      | **805 tests réussis, 0 échec** |
 
-| Suite                     | Tests | Services réels            |
-| ------------------------- | ----- | ------------------------- |
-| `@mgx/shared` (montants)  | 103   | —                         |
-| `@mgx/validation`         | 93    | —                         |
-| `@mgx/contracts`          | 21    | —                         |
-| API — unitaires           | 253   | —                         |
-| API — intégration         | 109   | PostgreSQL, Redis, BullMQ |
-| API — bout en bout (HTTP) | 183   | PostgreSQL, Redis, BullMQ |
+| Suite                     | Tests | Services réels                                  |
+| ------------------------- | ----- | ----------------------------------------------- |
+| `@mgx/shared` (montants)  | 103   | —                                               |
+| `@mgx/validation`         | 93    | —                                               |
+| `@mgx/contracts`          | 21    | —                                               |
+| API — unitaires           | 271   | —                                               |
+| API — intégration         | 126   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 191   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
 Ce que ces tests établissent, notamment :
 
@@ -149,6 +150,12 @@ Ce que ces tests établissent, notamment :
   approbations simultanées qui se retirent mutuellement un intervenant sont appliquées l'une
   après l'autre, et la seconde est refusée ;
 - **téléphone** : deux comptes qui confirment le même numéro au même instant — un seul l'obtient ;
+- **e-mails** : face à un vrai serveur SMTP, une inscription se termine avec le code reçu, y
+  compris en configuration de production (connexion chiffrée, compte d'envoi authentifié) ;
+  ni identifiants ni message ne partent vers un serveur qui ne chiffre pas ou dont le
+  certificat n'est pas reconnu ; une adresse piégée ne peut ni ajouter ni substituer un
+  destinataire ; une boîte inexistante n'est pas relancée ; le journal ne contient ni adresse
+  ni code ;
 - **purge** : ne supprime ni un compte vérifié, ni une inscription récente, ni la dernière
   session d'un compte, ni un second facteur actif ; chaque inscription supprimée est tracée ;
   l'échec d'une étape n'empêche pas les suivantes.
@@ -275,10 +282,17 @@ ce que les validations statiques faites jusque-là ne permettaient pas de voir.
 
 Identité :
 
-- **Aucun prestataire d'envoi** (e-mail, SMS) : en pré-production et en production,
-  inscription, réinitialisation du mot de passe et vérification du téléphone répondent `503`,
-  et les messages de sécurité ne partent pas. Seuls des administrateurs créés en ligne de
-  commande peuvent se connecter.
+- **E-mails : le compte d'envoi reste à ouvrir.** L'API envoie par SMTP, mais aucun
+  prestataire n'est choisi ni configuré : tant que ce n'est pas fait, hors développement,
+  inscription et réinitialisation du mot de passe répondent `503` et les messages de sécurité
+  ne partent pas. L'envoi n'a été vérifié que contre un serveur SMTP de test ; la
+  délivrabilité réelle (SPF, DKIM, réputation, messageries utilisées en RDC) reste à
+  constater avec le prestataire retenu.
+- **E-mails : non-remises et plaintes non exploitées.** L'API ne sait pas qu'un message
+  accepté a ensuite été retourné ; il n'y a pas de plafond global d'envoi. Les messages sont
+  en texte seul.
+- **SMS : aucun prestataire.** La vérification du numéro de téléphone répond `503` hors
+  développement.
 - **Retrait d'un second facteur par le support : la procédure n'est pas écrite.** L'API borne
   le risque (permission réservée, justification, sessions fermées, titulaire prévenu) mais ne
   vérifie pas l'identité de la personne qui dit avoir perdu son téléphone. À écrire avant
@@ -341,18 +355,23 @@ Socle :
 
 ## Décisions attendues
 
-1. **Prestataire d'envoi d'e-mails, puis de SMS, pour la RDC** — c'est la seule chose qui
-   empêche d'ouvrir l'inscription hors développement. L'intégration se fera derrière
-   l'interface existante.
-2. **Identifiant de connexion** : l'adresse e-mail suffit-elle, ou le numéro de téléphone
+Prises le 2026-11-12 : vérification d'identité **manuelle**, par votre équipe ; grille à
+**trois niveaux** ; envoi des **e-mails par SMTP**, les SMS plus tard.
+
+1. **Compte d'envoi d'e-mails** : ouvrir un compte chez le prestataire de votre choix, y
+   autoriser le domaine expéditeur, puis fournir ses paramètres SMTP. C'est ce qui reste
+   pour ouvrir l'inscription hors développement.
+2. **Prestataire SMS pour la RDC** — nécessaire pour la vérification du téléphone. Chacun a
+   son API : l'intégration se fera une fois le prestataire retenu.
+3. **Identifiant de connexion** : l'adresse e-mail suffit-elle, ou le numéro de téléphone
    doit-il aussi permettre de se connecter (usage courant sur le marché visé) ? Sans réponse,
-   le lot 2 a conservé l'adresse e-mail ; le numéro est seulement vérifié.
-3. **Procédure du support pour le retrait d'un second facteur** : quelles preuves d'identité,
+   l'adresse e-mail est conservée ; le numéro est seulement vérifié.
+4. **Procédure du support pour le retrait d'un second facteur** : quelles preuves d'identité,
    quel délai de carence.
-4. **Niveaux de vérification KYC et plafonds associés** ; vérification manuelle seule ou
-   prestataire de vérification d'identité — nécessaire pour commencer le lot 3.
-5. **Durées de conservation** des données d'identité : confirmer ou corriger les valeurs de départ.
-6. **Conditions d'utilisation** : texte et gestion des versions.
-7. **Hébergement cible** (fournisseur, région) et exigences de localisation des données.
-8. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne
+5. **Plafonds par niveau de vérification** — à fixer avant les premiers mouvements de
+   fonds : rien ne les applique aujourd'hui.
+6. **Durées de conservation** des données d'identité : confirmer ou corriger les valeurs de départ.
+7. **Conditions d'utilisation** : texte et gestion des versions.
+8. **Hébergement cible** (fournisseur, région) et exigences de localisation des données.
+9. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne
    l'ordre d'ouverture des fonctionnalités.

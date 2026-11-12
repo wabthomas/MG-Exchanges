@@ -57,7 +57,7 @@ apps/api/src/
     system-settings/      mode maintenance, activation des fonctionnalités, leur administration
     audit/                journal d'audit en ajout seul
     outbox/               boîte d'envoi transactionnelle et distribution des événements
-    notifications/        messages aux utilisateurs (port d'envoi, modèles, boîte de développement)
+    notifications/        messages aux utilisateurs (port d'envoi, modèles, envoi SMTP, boîte de développement)
     identity/             comptes, authentification, second facteur, sessions, profil,
                           téléphone, historique, autorisations, back-office des comptes et
                           des rôles, purge périodique

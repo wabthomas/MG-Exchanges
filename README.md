@@ -8,8 +8,8 @@ République démocratique du Congo ; l'architecture est prévue pour s'étendre 
 > vérification du téléphone et routes d'administration des comptes sont livrés ; le KYC reste
 > à faire.**
 > Aucune fonctionnalité financière n'existe : ni paiement, ni transfert, ni retrait.
-> L'inscription est fermée par défaut, et aucun e-mail ni SMS ne part réellement (aucun
-> prestataire d'envoi n'est encore choisi).
+> L'inscription est fermée par défaut. Les e-mails partent par le serveur SMTP du prestataire
+> configuré au déploiement ; aucun SMS ne part (aucun prestataire SMS n'est branché).
 > Ce dépôt contient une **API** : l'application web, les applications mobiles et l'interface
 > du back-office n'existent pas encore (phase 7). L'avancement détaillé, les résultats de
 > tests et les limites connues sont dans [PROJECT_STATUS.md](PROJECT_STATUS.md).

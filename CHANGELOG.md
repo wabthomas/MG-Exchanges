@@ -3,6 +3,26 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 2 : envoi réel des e-mails
+
+### Ajouté
+
+- **Envoi des e-mails par SMTP** : le prestataire se choisit au déploiement (`SMTP_HOST`,
+  `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, et au besoin `SMTP_SECURITY`, `SMTP_PORT`).
+  Définir `SMTP_HOST` active l'envoi ; `NOTIFICATION_DELIVERY` accepte désormais `smtp`.
+- Connexion chiffrée et certificat vérifié, obligatoires en pré-production et en production ;
+  vérification du serveur et des identifiants au démarrage, sans bloquer celui-ci.
+- Une boîte inexistante (refus définitif du destinataire) n'est pas relancée.
+- ADR 0021. Dépendance : `nodemailer`.
+
+### Modifié
+
+- Avec un serveur SMTP configuré, l'inscription, le renvoi du code et le mot de passe oublié
+  ne répondent plus `503` en pré-production et en production ; la boîte de réception de
+  développement n'existe plus dès que les e-mails partent réellement.
+- Les SMS restent indisponibles : la vérification du numéro de téléphone répond toujours
+  `503` hors développement.
+
 ## [Non publié] — Phase 2, lot 2 : sécurité du compte, profil, back-office des comptes
 
 ### Ajouté
