@@ -32,8 +32,11 @@ export const PROBLEM_OPENAPI_SCHEMA = toOpenApiSchema(problemDetailsSchema);
 const STATUS_DESCRIPTIONS: Readonly<Record<number, string>> = {
   400: 'Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).',
   401: 'Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).',
-  403: 'Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).',
+  403:
+    'Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, ' +
+    '`MFA_ENROLLMENT_REQUIRED`).',
   404: 'Not found (`NOT_FOUND`).',
+  409: 'The request conflicts with the current state of the resource (`CONFLICT`).',
   422: 'Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).',
   429: 'Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.',
   500: 'Unexpected error (`INTERNAL_ERROR`).',

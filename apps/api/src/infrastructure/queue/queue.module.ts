@@ -3,7 +3,11 @@ import { Global, Module } from '@nestjs/common';
 
 import { AppConfig } from '../../config/app-config.js';
 import { parseRedisUrl } from '../redis/redis-url.js';
-import { DOMAIN_EVENTS_QUEUE, OUTBOX_RELAY_QUEUE } from './queue.constants.js';
+import {
+  ACCOUNT_MAINTENANCE_QUEUE,
+  DOMAIN_EVENTS_QUEUE,
+  OUTBOX_RELAY_QUEUE,
+} from './queue.constants.js';
 
 /**
  * Files de traitement asynchrone (BullMQ sur Redis).
@@ -28,7 +32,11 @@ import { DOMAIN_EVENTS_QUEUE, OUTBOX_RELAY_QUEUE } from './queue.constants.js';
         },
       }),
     }),
-    BullModule.registerQueue({ name: DOMAIN_EVENTS_QUEUE }, { name: OUTBOX_RELAY_QUEUE }),
+    BullModule.registerQueue(
+      { name: DOMAIN_EVENTS_QUEUE },
+      { name: OUTBOX_RELAY_QUEUE },
+      { name: ACCOUNT_MAINTENANCE_QUEUE },
+    ),
   ],
   exports: [BullModule],
 })

@@ -91,4 +91,11 @@ export class PrismaChallengeRepository extends ChallengeRepository {
     });
     return count === 1;
   }
+
+  async deleteExpired(db: DbClient, expiredBefore: Date): Promise<number> {
+    const { count } = await db.verificationChallenge.deleteMany({
+      where: { expiresAt: { lt: expiredBefore } },
+    });
+    return count;
+  }
 }

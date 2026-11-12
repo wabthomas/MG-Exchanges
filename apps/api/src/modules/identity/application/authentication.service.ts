@@ -1,11 +1,13 @@
-import { createHash } from 'node:crypto';
-
-import type {
-  LoginRequest,
-  LoginResponse,
-  RefreshRequest,
-  RefreshResponse,
-  TokenPair,
+import {
+  type AuthenticatedLogin,
+  type LoginRequest,
+  type LoginResponse,
+  type MfaLoginRequest,
+  type RefreshRequest,
+  type RefreshResponse,
+  SECOND_FACTOR_METHODS,
+  type SecondFactorMethod,
+  type TokenPair,
 } from '@mgx/contracts';
 import { Injectable } from '@nestjs/common';
 
@@ -15,14 +17,27 @@ import { AppConfig } from '../../../config/app-config.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
+import { OutboxService } from '../../outbox/application/outbox.service.js';
+import { describeUserAgent } from '../domain/device-description.js';
+import { identifierDigest } from '../domain/identifier-digest.js';
+import { SECURITY_NOTICE_REQUESTED_EVENT } from '../domain/identity-events.js';
+import {
+  MFA_LOGIN_MAX_ATTEMPTS,
+  MFA_LOGIN_TTL_SECONDS,
+  toSecondFactorProof,
+} from '../domain/mfa-policy.js';
 import { decideRefresh, isSessionUsable, nextIdleExpiry } from '../domain/session-policy.js';
 import { canUseSessions, type UserRecord } from '../domain/user.js';
+import { deviceFingerprint } from '../infrastructure/device-fingerprint.js';
 import { LoginThrottle } from '../infrastructure/login-throttle.js';
 import { hashPresentedToken, issueSessionToken } from '../infrastructure/session-tokens.js';
 import { AccountService } from './account.service.js';
 import type { ClientContext } from './client-context.js';
+import type { Digest } from './digest.js';
 import { CONSUMED_TOKEN_RETENTION_MS } from './identity-policy.js';
+import { MfaService } from './mfa.service.js';
 import { PasswordHasher } from './password-hasher.js';
+import { PendingLoginStore } from './pending-login.store.js';
 import { type NewTokenPair, SessionRepository } from './session.repository.js';
 import { UserRepository } from './user.repository.js';
 
@@ -32,13 +47,18 @@ interface IssuedPair {
   readonly record: NewTokenPair;
 }
 
-function unauthenticated(): AppError {
-  return new AppError('UNAUTHENTICATED', 'Authentication is required.');
+/** L'appareil qui se connecte : son nom d'affichage et l'empreinte qui permet de le reconnaître. */
+interface LoginDevice {
+  readonly name: string | null;
+  readonly fingerprint: Digest | null;
 }
 
-/** Empreinte courte d'un identifiant de connexion : corrélation dans l'audit, sans donnée personnelle. */
-function identifierDigest(identifier: string): string {
-  return createHash('sha256').update(identifier, 'utf8').digest('hex').slice(0, 16);
+function signInExpired(): AppError {
+  return new AppError('UNAUTHENTICATED', 'This sign-in attempt has expired. Please sign in again.');
+}
+
+function unauthenticated(): AppError {
+  return new AppError('UNAUTHENTICATED', 'Authentication is required.');
 }
 
 /**
@@ -56,9 +76,12 @@ export class AuthenticationService {
     private readonly hasher: PasswordHasher,
     private readonly throttle: LoginThrottle,
     private readonly accounts: AccountService,
+    private readonly mfa: MfaService,
+    private readonly pendingLogins: PendingLoginStore,
     private readonly unitOfWork: UnitOfWork,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly outbox: OutboxService,
     private readonly config: AppConfig,
   ) {}
 
@@ -132,7 +155,60 @@ export class AuthenticationService {
       );
     }
 
-    return this.openSession(user, request.deviceName ?? null, client, now);
+    const device: LoginDevice = {
+      name: request.deviceName ?? null,
+      fingerprint: deviceFingerprint(request.deviceId, client.userAgent),
+    };
+    if (await this.mfa.isEnabled(user.id)) {
+      return this.requireSecondFactor(user, device, client);
+    }
+    return this.openSession(user, device, client, now, null);
+  }
+
+  /**
+   * Seconde étape de la connexion d'un compte protégé par un second facteur : le jeton reçu à
+   * la première étape, et un code de l'application d'authentification ou un code de secours.
+   */
+  async completeMfaLogin(
+    request: MfaLoginRequest,
+    client: ClientContext,
+  ): Promise<AuthenticatedLogin> {
+    const proof = toSecondFactorProof(request);
+    // Chaque présentation du jeton compte pour un essai, avant tout examen du code.
+    const pending = await this.pendingLogins.registerAttempt(
+      request.mfaToken,
+      MFA_LOGIN_MAX_ATTEMPTS,
+    );
+    if (pending === null || proof === null) {
+      throw signInExpired();
+    }
+
+    const user = await this.users.findById(this.prisma, pending.userId);
+    if (user === null || !canUseSessions(user.status)) {
+      // Compte suspendu depuis la première étape : la connexion en attente ne vaut plus rien.
+      await this.pendingLogins.consume(request.mfaToken);
+      throw signInExpired();
+    }
+
+    const method = await this.mfa.assertSecondFactor(
+      user.id,
+      proof,
+      client,
+      'session.second_factor_failed',
+    );
+    // Le jeton ne sert qu'une fois : de deux requêtes simultanées, une seule ouvre une session.
+    if (!(await this.pendingLogins.consume(request.mfaToken))) {
+      throw signInExpired();
+    }
+
+    const device: LoginDevice = {
+      name: pending.deviceName,
+      fingerprint:
+        pending.deviceFingerprint === null
+          ? null
+          : new Uint8Array(Buffer.from(pending.deviceFingerprint, 'hex')),
+    };
+    return this.openSession(user, device, client, new Date(), method);
   }
 
   async refresh(request: RefreshRequest, client: ClientContext): Promise<RefreshResponse> {
@@ -218,24 +294,61 @@ export class AuthenticationService {
     return usable ? { userId: owner.userId, sessionId: owner.sessionId } : null;
   }
 
+  /** Mot de passe correct, second facteur exigé : aucune session n'est ouverte à ce stade. */
+  private async requireSecondFactor(
+    user: UserRecord,
+    device: LoginDevice,
+    client: ClientContext,
+  ): Promise<LoginResponse> {
+    const pending = await this.pendingLogins.create(
+      {
+        userId: user.id,
+        deviceName: device.name,
+        deviceFingerprint:
+          device.fingerprint === null ? null : Buffer.from(device.fingerprint).toString('hex'),
+      },
+      MFA_LOGIN_TTL_SECONDS,
+    );
+    await this.audit.record(this.prisma, {
+      actor: { type: 'USER', id: user.id },
+      action: 'session.second_factor_required',
+      resource: { type: 'user', id: user.id },
+      outcome: 'SUCCESS',
+      ...client,
+    });
+    return {
+      status: 'MFA_REQUIRED',
+      mfaToken: pending.token,
+      mfaTokenExpiresAt: pending.expiresAt.toISOString(),
+      methods: [...SECOND_FACTOR_METHODS],
+    };
+  }
+
   private async openSession(
     user: UserRecord,
-    deviceName: string | null,
+    device: LoginDevice,
     client: ClientContext,
     now: Date,
-  ): Promise<LoginResponse> {
+    secondFactor: SecondFactorMethod | null,
+  ): Promise<AuthenticatedLogin> {
     const expiresAt = new Date(now.getTime() + this.config.auth.sessionAbsoluteTtlMs);
     const idleExpiresAt = nextIdleExpiry(now, expiresAt, this.config.auth.sessionIdleTtlMs);
     const issued = this.issueTokens(now, expiresAt);
 
     const sessionId = await this.unitOfWork.run(async (tx) => {
+      const history = await this.sessions.deviceHistory(tx, user.id, device.fingerprint);
+      // La toute première connexion d'un compte n'a rien d'inhabituel ; ensuite, un appareil
+      // jamais vu est signalé au titulaire.
+      const newDevice = history.hasSessions && !history.knownDevice;
+
       const id = await this.sessions.create(tx, {
         userId: user.id,
         idleExpiresAt,
         expiresAt,
         ipAddress: client.ipAddress ?? null,
         userAgent: client.userAgent ?? null,
-        deviceName,
+        deviceName: device.name,
+        deviceFingerprint: device.fingerprint,
         tokens: issued.record,
       });
       await this.audit.record(tx, {
@@ -244,8 +357,25 @@ export class AuthenticationService {
         resource: { type: 'session', id },
         outcome: 'SUCCESS',
         ...client,
-        metadata: { deviceName },
+        metadata: { deviceName: device.name, secondFactor, newDevice },
       });
+      if (newDevice) {
+        await this.outbox.append(tx, {
+          aggregateType: 'user',
+          aggregateId: user.id,
+          eventType: SECURITY_NOTICE_REQUESTED_EVENT,
+          payload: {
+            userId: user.id,
+            notice: 'NEW_SIGN_IN',
+            details: {
+              occurredAt: now.toISOString(),
+              ipAddress: client.ipAddress ?? null,
+              device: describeUserAgent(client.userAgent),
+            },
+          },
+          metadata: { requestId: client.requestId },
+        });
+      }
       return id;
     });
 

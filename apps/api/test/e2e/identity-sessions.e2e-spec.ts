@@ -553,33 +553,58 @@ describe('Connexion, sessions et mot de passe — bout en bout', () => {
       await login(http, user);
     });
 
-    it('réinitialiser débloque le compte et vérifie l’adresse d’une inscription inachevée', async () => {
+    it('réinitialiser débloque le compte verrouillé par des essais erronés', async () => {
+      const user = await registerVerifiedUser(http, testApp);
+      const ip = newClientIp();
+      for (let failure = 0; failure < 5; failure += 1) {
+        await attempt(user.email, 'not-the-password-1', ip).expect(401);
+      }
+      await attempt(user.email, user.password, ip).expect(429);
+
+      await forgot(user.email).expect(202);
+      const code = await nextCode(testApp, user.email, 1);
+      await http
+        .post('/api/v1/auth/password/reset')
+        .set(from(ip))
+        .send({ email: user.email, code, newPassword: 'a-brand-new-password-9' })
+        .expect(204);
+
+      const response = await attempt(user.email, 'a-brand-new-password-9', ip).expect(200);
+      expect(response.body.user).toMatchObject({ status: 'ACTIVE', emailVerified: true });
+    });
+
+    it('une inscription inachevée ne s’achève pas par une réinitialisation : son auteur est invité à la reprendre', async () => {
       const email = newEmail('unfinished');
       await http
         .post('/api/v1/auth/register')
         .set(from(newClientIp()))
         .send({ email, password: PASSWORD, countryCode: 'CD', acceptTerms: true })
         .expect(202);
-      await nextCode(testApp, email);
+      const verificationCode = await nextCode(testApp, email);
 
-      // Le compte est bloqué par des essais erronés…
-      const ip = newClientIp();
-      for (let failure = 0; failure < 5; failure += 1) {
-        await attempt(email, 'not-the-password-1', ip).expect(401);
-      }
-      await attempt(email, PASSWORD, ip).expect(429);
+      // Même réponse que pour un compte actif : rien ne distingue les deux cas.
+      const pending = await forgot(email).expect(202);
+      expect(pending.body).toEqual({ nextStep: 'RESET_PASSWORD', codeTtlSeconds: 900 });
+      const notice = await nextMessage(testApp, email, 1);
+      expect(notice.template).toBe('registration_incomplete');
+      expect(
+        await prisma.verificationChallenge.count({
+          where: { user: { email }, purpose: 'PASSWORD_RESET' },
+        }),
+      ).toBe(0);
 
-      // …la réinitialisation, depuis ce même client, le débloque et prouve la maîtrise de l'adresse.
-      await forgot(email).expect(202);
-      const code = await nextCode(testApp, email, 1);
-      await http
-        .post('/api/v1/auth/password/reset')
-        .set(from(ip))
-        .send({ email, code, newPassword: 'a-brand-new-password-9' })
-        .expect(204);
+      // Aucun code — pas même celui de l'inscription — ne réinitialise ce compte.
+      await reset(email, verificationCode, 'a-brand-new-password-9').expect(400);
+      const account = await prisma.user.findUniqueOrThrow({ where: { email } });
+      expect(account).toMatchObject({ status: 'PENDING_VERIFICATION', emailVerifiedAt: null });
 
-      const response = await attempt(email, 'a-brand-new-password-9', ip).expect(200);
-      expect(response.body.user).toMatchObject({ status: 'ACTIVE', emailVerified: true });
+      const denied = await prisma.auditLog.findFirstOrThrow({
+        where: { resourceId: account.id, action: 'user.password_reset_requested' },
+      });
+      expect(denied).toMatchObject({
+        outcome: 'DENIED',
+        metadata: { reason: 'REGISTRATION_INCOMPLETE' },
+      });
     });
 
     it('un compte suspendu ne reçoit aucun code', async () => {

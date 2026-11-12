@@ -1,12 +1,12 @@
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
 import type { Digest } from './digest.js';
 
-export type ChallengePurpose = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET';
+export type ChallengePurpose = 'EMAIL_VERIFICATION' | 'PASSWORD_RESET' | 'PHONE_VERIFICATION';
 
 export interface NewChallenge {
   readonly userId: string;
   readonly purpose: ChallengePurpose;
-  /** Adresse à laquelle le code sera envoyé. */
+  /** Adresse e-mail ou numéro de téléphone auquel le code sera envoyé. */
   readonly target: string;
   readonly maxAttempts: number;
   readonly expiresAt: Date;
@@ -54,4 +54,7 @@ export abstract class ChallengeRepository {
 
   /** Marque le défi comme utilisé. @returns faux s'il ne l'était plus (utilisation concurrente). */
   abstract consume(tx: DbClient, challengeId: string, now: Date): Promise<boolean>;
+
+  /** Supprime les défis échus avant `expiredBefore`, quel que soit leur sort. @returns leur nombre. */
+  abstract deleteExpired(db: DbClient, expiredBefore: Date): Promise<number>;
 }

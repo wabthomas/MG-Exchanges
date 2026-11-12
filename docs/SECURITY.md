@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phase 1)
+## En place (phases 1 et 2, lots 1 et 2)
 
 ### Configuration et secrets
 
@@ -76,13 +76,110 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - **Changement de mot de passe** : exige le mot de passe actuel (une session volée ne suffit
   pas), ferme les autres sessions, prévient le titulaire. La réinitialisation ferme toutes
   les sessions.
+- **Vérification de l'adresse** : exige le code _et_ le mot de passe de l'inscription. Sans
+  cela, un tiers pourrait créer un compte à l'adresse d'une victime avec son propre mot de
+  passe, puis attendre qu'elle l'active elle-même. Une nouvelle inscription sur une adresse
+  non vérifiée remplace entièrement la précédente ; une inscription jamais vérifiée ne se
+  réinitialise pas et disparaît au bout de 7 jours.
 - **Autorisations** : permissions relues en base à chaque requête d'administration — le
   retrait d'un rôle est immédiat. Tout refus est inscrit au journal d'audit.
-- **Aucune élévation de privilège par l'API** : le rôle PostgreSQL de l'API ne peut pas
-  écrire dans les tables de rôles et de permissions. Le premier administrateur est créé en
-  ligne de commande, avec le rôle propriétaire de la base, et l'opération est tracée.
 - **Boîte de réception de développement** : interdite en pré-production et en production par
   la validation de la configuration.
+
+### Validation en deux étapes
+
+- **TOTP** (RFC 6238 : SHA-1, 6 chiffres, 30 s, ± 1 pas), vérifié contre les vecteurs des
+  RFC 4226 et 6238. **Un code n'est accepté qu'une fois** : rejouer un code intercepté
+  échoue, même dans sa fenêtre de validité (contrôle atomique en base).
+- **Secret chiffré au repos** : AES-256-GCM, clé hors de la base
+  (`AUTH_SECRETS_ENCRYPTION_KEY`), lié au compte par les données authentifiées — un contenu
+  chiffré recopié sur un autre compte ne se déchiffre pas. La base refuse tout secret qui
+  n'a pas la forme d'un secret chiffré. La lecture de la base seule ne livre aucun secret.
+- **Codes de secours** : 10 codes de 50 bits, à usage unique, dont seule l'empreinte HMAC
+  est stockée ; remis une seule fois. Leur usage est signalé au titulaire.
+- **Connexion en deux temps** : après le mot de passe, **aucune session n'existe** ; un jeton
+  de courte durée (5 minutes, 5 présentations, une seule connexion), dont seule l'empreinte
+  est conservée, donne accès à la seconde étape et à rien d'autre. Changement de mot de passe,
+  suspension, fermeture des sessions par le support : toute connexion en attente est annulée.
+- **Essais bornés par compte**, d'où qu'ils viennent : 5 codes erronés en 15 minutes
+  (blocage 15 minutes), 20 en 24 heures (blocage 24 heures, non effacé par une connexion
+  réussie) — sans cela, un code à six chiffres ne résisterait pas à qui connaît le mot de
+  passe. Le blocage est signalé au titulaire : quelqu'un connaît son mot de passe.
+- **Ré-authentification** : activer, désactiver le second facteur ou régénérer les codes de
+  secours exige de présenter à nouveau le mot de passe (une session volée ne suffit pas) ;
+  désactiver et régénérer exigent en plus une preuve du second facteur. Ces essais-là sont
+  bornés eux aussi (5 en 15 minutes).
+- **Toute modification du second facteur ferme les autres sessions** et prévient le titulaire.
+- **Réinitialiser le mot de passe ne retire pas le second facteur** : l'accès à la boîte aux
+  lettres ne suffit pas à entrer dans un compte protégé.
+- **Le back-office l'exige** : aucune route d'administration ne répond à un compte qui ne l'a
+  pas activé, quelles que soient ses permissions.
+
+### Connexions inhabituelles et historique
+
+- Une connexion depuis un **appareil inconnu** du compte est signalée au titulaire par e-mail
+  (date, adresse IP, type d'appareil). Le message ne recopie aucun texte libre fourni par
+  celui qui se connecte (nom d'appareil, agent utilisateur brut) : dans le cas signalé, ce
+  serait un tiers. Seule l'empreinte de l'identifiant d'appareil est conservée.
+- **Aucun message ne contient de lien** : on ne clique pas dans un e-mail de sécurité.
+- Le titulaire consulte l'**historique des événements de sécurité** de son compte, y compris
+  les interventions du support — sans l'adresse ni l'appareil du membre du personnel.
+
+### Téléphone
+
+- Le numéro ne devient celui du compte qu'après confirmation d'un code reçu par SMS ; un
+  numéro vérifié n'appartient qu'à un compte (contrainte en base), et seul le détenteur du
+  numéro peut apprendre qu'il est déjà utilisé.
+- Les SMS ne partent que vers les mobiles des pays desservis (pas de numéro surtaxé à
+  l'étranger), et sont bornés par compte et par numéro.
+
+### Back-office
+
+- **Aucune élévation de privilège par l'API** : le rôle PostgreSQL de l'API ne peut pas
+  écrire dans les tables de rôles, de permissions ni d'attributions. Les premiers
+  administrateurs sont créés en ligne de commande, avec le rôle propriétaire de la base, et
+  l'opération est tracée.
+- **Double validation des rôles, imposée par la base de données.** Un rôle n'est attribué ou
+  retiré que par l'approbation d'une demande ; c'est un déclencheur PostgreSQL qui applique
+  le changement, après avoir vérifié lui-même que l'approbateur n'est ni l'auteur de la
+  demande ni l'intéressé, que tous deux sont actifs et détiennent `roles.manage`, que la
+  demande n'est ni échue ni modifiée, et qu'un rôle ne va qu'à un compte actif. Les
+  approbations sont appliquées une à une : deux approbations simultanées ne peuvent pas se
+  retirer mutuellement un intervenant. Une demande décidée ne se modifie ni ne s'efface. Un
+  défaut du code de l'API ne permet donc pas à une personne seule de s'attribuer un rôle.
+  **Limite** : la base vérifie la qualité des deux intervenants que l'API lui désigne, pas
+  leur présence. Elle ne protège pas d'un attaquant qui exécuterait du SQL arbitraire sous le
+  rôle de l'API ; elle garantit seulement qu'il laisserait une trace ineffaçable (ADR 0018).
+- **Séparation du support et de l'administration** : le rôle `support` trouve les comptes,
+  les suspend et ferme leurs sessions ; il ne retire pas un second facteur, ne gère pas les
+  rôles et **n'agit pas sur les comptes du personnel**. Nul n'agit sur son propre compte.
+- **Toute action est justifiée et tracée** dans la transaction qui l'applique ; **tout accès
+  aux données d'un compte l'est aussi** (recherches, pages de la liste, consultations). Le
+  journal ne retient qu'une empreinte de l'identifiant recherché.
+- **Recherche par identifiant complet uniquement** : pas d'exploration par fragment.
+- **Aucun identifiant personnel dans une URL.** L'adresse ou le numéro recherché voyage dans
+  le corps d'une requête `POST`. Les journaux de l'API et du Nginx fourni écartent la chaîne
+  de requête, mais une URL est aussi conservée par ce que le projet ne maîtrise pas :
+  équipements de l'hébergeur, proxy d'entreprise, historique du navigateur. La liste des
+  comptes n'accepte en paramètre que le statut et la pagination.
+- **Suspension** : sessions fermées, connexion refusée, connexions en attente annulées ; une
+  réactivation ne ranime aucune session. Le message au titulaire ne donne jamais la raison,
+  et peut être omis (`notifyUser: false`) lorsqu'une obligation de confidentialité l'impose.
+
+> **Retrait du second facteur par le support — procédure à définir avant toute mise en
+> service.** C'est le chemin d'attaque classique (se faire passer pour un titulaire qui a
+> « perdu son téléphone »). L'API borne le risque — permission réservée, justification,
+> fermeture des sessions, message au titulaire — mais **ne vérifie pas l'identité du
+> demandeur** : cela relève d'une procédure du support (pièce d'identité, délai de
+> carence, rappel sur le numéro vérifié…) qui n'est pas encore écrite.
+
+### Conservation et purge
+
+- Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
+  terminées (90 jours après leur échéance — la plus récente de chaque compte est conservée),
+  les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), et
+  clôt les demandes de rôle échues. Chaque suppression d'inscription est tracée.
+- **Le journal d'audit n'est jamais purgé.**
 
 ### Base de données
 
@@ -124,21 +221,22 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 
 ## Prévu — non réalisé à ce jour
 
-| Sujet                                                                                    | Phase |
-| ---------------------------------------------------------------------------------------- | ----- |
-| Second facteur (TOTP, codes de secours), ré-authentification pour les actions sensibles  | 2     |
-| Vérification du téléphone ; détection de connexion inhabituelle et alerte au titulaire   | 2     |
-| Attribution des rôles et suspension des comptes depuis le back-office, double validation | 2     |
-| Vérification des mots de passe contre les fuites connues                                 | 2     |
-| Purge des inscriptions jamais vérifiées, des sessions et des codes expirés               | 2     |
-| Chiffrement applicatif des données personnelles sensibles (KYC), rotation des clés       | 2     |
-| Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)      | 7     |
-| Idempotence des opérations financières, contrôle de concurrence du grand livre           | 3     |
-| Webhooks signés, protection contre le rejeu                                              | 4     |
-| Gestion des clés blockchain hors de l'application (HSM / KMS), politiques de signature   | 5     |
-| Surveillance des transactions, plafonds, filtrage, dossiers de conformité                | 8     |
-| TLS de bout en bout, sauvegardes chiffrées, restauration testée, alertes                 | 9     |
-| Analyse de vulnérabilités des images, tests d'intrusion                                  | 9     |
+| Sujet                                                                                      | Phase |
+| ------------------------------------------------------------------------------------------ | ----- |
+| Procédure du support pour le retrait d'un second facteur (vérification d'identité)         | 2     |
+| Rotation de la clé de chiffrement des secrets (aujourd'hui : une seule version de clé)     | 2     |
+| Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage          | 2+    |
+| Vérification des mots de passe contre les fuites connues                                   | 2     |
+| Acceptation versionnée des conditions, clôture de compte, effacement et export des données | 2     |
+| Chiffrement applicatif des données personnelles sensibles (KYC)                            | 2     |
+| Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |
+| Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)        | 7     |
+| Idempotence des opérations financières, contrôle de concurrence du grand livre             | 3     |
+| Webhooks signés, protection contre le rejeu                                                | 4     |
+| Gestion des clés blockchain hors de l'application (HSM / KMS), politiques de signature     | 5     |
+| Surveillance des transactions, plafonds, filtrage, dossiers de conformité                  | 8     |
+| TLS de bout en bout, sauvegardes chiffrées, restauration testée, alertes                   | 9     |
+| Analyse de vulnérabilités des images, tests d'intrusion                                    | 9     |
 
 ## Signaler une vulnérabilité
 

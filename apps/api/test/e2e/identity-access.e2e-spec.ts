@@ -34,6 +34,7 @@ const PUBLIC_OPERATIONS = [
   'POST /api/v1/auth/email/verify',
   'POST /api/v1/auth/email/resend',
   'POST /api/v1/auth/login',
+  'POST /api/v1/auth/mfa/verify',
   'POST /api/v1/auth/refresh',
   'POST /api/v1/auth/password/forgot',
   'POST /api/v1/auth/password/reset',

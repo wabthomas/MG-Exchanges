@@ -41,6 +41,11 @@ const urlWithProtocol = (protocols: readonly string[]) =>
     { error: `Must be a URL using one of: ${protocols.join(', ')}` },
   );
 
+/** Vrai si `value` est l'encodage base64 canonique d'exactement 32 octets (clé AES-256). */
+function isBase64Key32(value: string): boolean {
+  return /^[A-Za-z0-9+/]{43}=$/.test(value) && Buffer.from(value, 'base64').length === 32;
+}
+
 function isOrigin(value: string): boolean {
   try {
     const url = new URL(value);
@@ -121,6 +126,14 @@ export const envSchema = z
      */
     AUTH_CODE_HMAC_SECRET: z.string().min(32, { error: 'Must be at least 32 characters.' }),
     AUTH_CODE_TTL_SECONDS: integer(60, 3600).default(900),
+    /**
+     * Clé AES-256 des secrets que l'application doit pouvoir relire (secret TOTP du second
+     * facteur) : ils sont chiffrés en base, et inexploitables sans cette clé. 32 octets
+     * aléatoires encodés en base64 (`openssl rand -base64 32`).
+     */
+    AUTH_SECRETS_ENCRYPTION_KEY: z.string().refine(isBase64Key32, {
+      error: 'Must be 32 random bytes encoded in base64 (openssl rand -base64 32).',
+    }),
     AUTH_ACCESS_TOKEN_TTL_SECONDS: integer(60, 3600).default(600),
     /** Durée d'inactivité au-delà de laquelle une session expire (14 jours). */
     AUTH_SESSION_IDLE_TTL_SECONDS: integer(300, 7_776_000).default(1_209_600),

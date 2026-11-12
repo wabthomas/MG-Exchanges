@@ -20,6 +20,8 @@ export const ERROR_CODES = {
   EMAIL_NOT_VERIFIED: { status: 403, title: 'Forbidden' },
   /** Mot de passe correct, mais le compte est suspendu ou clôturé. */
   ACCOUNT_DISABLED: { status: 403, title: 'Forbidden' },
+  /** Le back-office exige la validation en deux étapes : l'activer, puis réessayer. */
+  MFA_ENROLLMENT_REQUIRED: { status: 403, title: 'Forbidden' },
   NOT_FOUND: { status: 404, title: 'Not Found' },
   METHOD_NOT_ALLOWED: { status: 405, title: 'Method Not Allowed' },
   NOT_ACCEPTABLE: { status: 406, title: 'Not Acceptable' },

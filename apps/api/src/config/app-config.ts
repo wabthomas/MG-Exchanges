@@ -74,6 +74,8 @@ export class AppConfig {
     /** Clé du HMAC des codes à usage unique. Ne jamais journaliser. */
     readonly codeHmacSecret: string;
     readonly codeTtlSeconds: number;
+    /** Clé AES-256 (base64) des secrets chiffrés en base. Ne jamais journaliser. */
+    readonly secretsEncryptionKey: string;
     readonly accessTokenTtlMs: number;
     readonly sessionIdleTtlMs: number;
     readonly sessionAbsoluteTtlMs: number;
@@ -128,6 +130,7 @@ export class AppConfig {
     this.auth = {
       codeHmacSecret: env.AUTH_CODE_HMAC_SECRET,
       codeTtlSeconds: env.AUTH_CODE_TTL_SECONDS,
+      secretsEncryptionKey: env.AUTH_SECRETS_ENCRYPTION_KEY,
       accessTokenTtlMs: env.AUTH_ACCESS_TOKEN_TTL_SECONDS * 1000,
       sessionIdleTtlMs: env.AUTH_SESSION_IDLE_TTL_SECONDS * 1000,
       sessionAbsoluteTtlMs: env.AUTH_SESSION_ABSOLUTE_TTL_SECONDS * 1000,

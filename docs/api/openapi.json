@@ -220,7 +220,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -400,7 +400,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -453,7 +453,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
-        "description": "Creates an individual account and e-mails a 6-digit verification code. The account cannot sign in until the address is verified. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account. Requires the `registration` feature to be open.",
+        "description": "Creates an individual account and e-mails a 6-digit verification code. The account cannot sign in until the address is verified. Signing up again with an address whose sign-up was never completed replaces it entirely. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account. Requires the `registration` feature to be open.",
         "operationId": "AuthController_register_v1",
         "parameters": [],
         "requestBody": {
@@ -545,7 +545,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -593,7 +593,7 @@
     },
     "/api/v1/auth/email/verify": {
       "post": {
-        "description": "Confirms the address with the code received by e-mail and activates the account. A code can be tried 5 times; every failure answers `INVALID_OR_EXPIRED_CODE`, whatever its cause.",
+        "description": "Confirms the address with the code received by e-mail **and the password chosen at sign-up**, and activates the account: only the person who both receives the code and chose the password can activate it. A code can be tried 5 times; a wrong code answers `INVALID_OR_EXPIRED_CODE`, whatever its cause. A right code with another password answers `INVALID_CREDENTIALS`: sign up again to replace the unfinished sign-up.",
         "operationId": "AuthController_verifyEmail_v1",
         "parameters": [],
         "requestBody": {
@@ -609,11 +609,17 @@
                   "code": {
                     "type": "string",
                     "pattern": "^\\d{6}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
                   }
                 },
                 "required": [
                   "email",
-                  "code"
+                  "code",
+                  "password"
                 ],
                 "additionalProperties": false
               }
@@ -634,8 +640,18 @@
               }
             }
           },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -726,7 +742,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -764,7 +780,7 @@
     },
     "/api/v1/auth/login": {
       "post": {
-        "description": "Opens a session and returns its tokens. Send the access token with every request (`Authorization: Bearer <accessToken>`); use the refresh token to obtain a new pair before the access token expires.\n\nA wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). `EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` are only returned when the password is correct.",
+        "description": "Opens a session and returns its tokens. Send the access token with every request (`Authorization: Bearer <accessToken>`); use the refresh token to obtain a new pair before the access token expires.\n\n**Read `status`.** `AUTHENTICATED`: the session is open. `MFA_REQUIRED`: the account is protected by two-step verification and no session is open yet — send `mfaToken` and a code to `POST /auth/mfa/verify` within 5 minutes.\n\nSend a stable random `deviceId` (created once per installation): a sign-in from a device the account has never used is reported to its holder by e-mail.\n\nA wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). `EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` are only returned when the password is correct.",
         "operationId": "AuthController_login_v1",
         "parameters": [],
         "requestBody": {
@@ -786,11 +802,290 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64
+                  },
+                  "deviceId": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]{16,128}$"
                   }
                 },
                 "required": [
                   "email",
                   "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "AUTHENTICATED"
+                          ]
+                        },
+                        "tokens": {
+                          "type": "object",
+                          "properties": {
+                            "accessToken": {
+                              "type": "string"
+                            },
+                            "accessTokenExpiresAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            },
+                            "refreshToken": {
+                              "type": "string"
+                            },
+                            "refreshTokenExpiresAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            }
+                          },
+                          "required": [
+                            "accessToken",
+                            "accessTokenExpiresAt",
+                            "refreshToken",
+                            "refreshTokenExpiresAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "sessionId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "user": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            "email": {
+                              "type": "string"
+                            },
+                            "emailVerified": {
+                              "type": "boolean"
+                            },
+                            "phone": {
+                              "nullable": true,
+                              "type": "string"
+                            },
+                            "phoneVerified": {
+                              "type": "boolean"
+                            },
+                            "countryCode": {
+                              "type": "string"
+                            },
+                            "locale": {
+                              "type": "string",
+                              "enum": [
+                                "fr",
+                                "en"
+                              ]
+                            },
+                            "accountType": {
+                              "type": "string",
+                              "enum": [
+                                "INDIVIDUAL",
+                                "BUSINESS"
+                              ]
+                            },
+                            "status": {
+                              "type": "string",
+                              "enum": [
+                                "PENDING_VERIFICATION",
+                                "ACTIVE",
+                                "SUSPENDED",
+                                "CLOSED"
+                              ]
+                            },
+                            "roles": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "permissions": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "enum": [
+                                  "system_settings.read",
+                                  "system_settings.write",
+                                  "users.read",
+                                  "users.suspend",
+                                  "users.revoke_sessions",
+                                  "users.reset_mfa",
+                                  "roles.read",
+                                  "roles.manage"
+                                ]
+                              }
+                            },
+                            "secondFactorEnabled": {
+                              "type": "boolean"
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "email",
+                            "emailVerified",
+                            "phone",
+                            "phoneVerified",
+                            "countryCode",
+                            "locale",
+                            "accountType",
+                            "status",
+                            "roles",
+                            "permissions",
+                            "secondFactorEnabled",
+                            "createdAt"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "tokens",
+                        "sessionId",
+                        "user"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "MFA_REQUIRED"
+                          ]
+                        },
+                        "mfaToken": {
+                          "type": "string"
+                        },
+                        "mfaTokenExpiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "methods": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": [
+                              "TOTP",
+                              "RECOVERY_CODE"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "mfaToken",
+                        "mfaTokenExpiresAt",
+                        "methods"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Sign in",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/mfa/verify": {
+      "post": {
+        "description": "Second step of a sign-in that answered `MFA_REQUIRED`: the `mfaToken`, and either the 6-digit `code` of the authenticator app or a `recoveryCode` (single use). Opens the session.\n\nA code is accepted once. A wrong code answers `INVALID_OR_EXPIRED_CODE`; after 5 wrong codes the token is void (`UNAUTHENTICATED`: sign in again) and the second step of the account is blocked for 15 minutes (`RATE_LIMITED`).",
+        "operationId": "AuthController_verifySecondFactor_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mfaToken": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "recoveryCode": {
+                    "type": "string",
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "mfaToken"
                 ],
                 "additionalProperties": false
               }
@@ -903,9 +1198,18 @@
                             "type": "string",
                             "enum": [
                               "system_settings.read",
-                              "system_settings.write"
+                              "system_settings.write",
+                              "users.read",
+                              "users.suspend",
+                              "users.revoke_sessions",
+                              "users.reset_mfa",
+                              "roles.read",
+                              "roles.manage"
                             ]
                           }
+                        },
+                        "secondFactorEnabled": {
+                          "type": "boolean"
                         },
                         "createdAt": {
                           "type": "string",
@@ -925,6 +1229,7 @@
                         "status",
                         "roles",
                         "permissions",
+                        "secondFactorEnabled",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -961,16 +1266,6 @@
               }
             }
           },
-          "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`).",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProblemDetails"
-                }
-              }
-            }
-          },
           "429": {
             "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
             "content": {
@@ -982,7 +1277,7 @@
             }
           }
         },
-        "summary": "Sign in",
+        "summary": "Complete a sign-in with the second step",
         "tags": [
           "Authentication"
         ]
@@ -1139,7 +1434,7 @@
     },
     "/api/v1/auth/password/forgot": {
       "post": {
-        "description": "E-mails a 6-digit reset code. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account.",
+        "description": "E-mails a 6-digit reset code. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account. An address whose sign-up was never completed receives an invitation to sign up again instead.",
         "operationId": "AuthController_forgotPassword_v1",
         "parameters": [],
         "requestBody": {
@@ -1230,7 +1525,7 @@
     },
     "/api/v1/auth/password/reset": {
       "post": {
-        "description": "Replaces the password and **closes every session** of the account. A code can be tried 5 times; every failure answers `INVALID_OR_EXPIRED_CODE`.",
+        "description": "Replaces the password and **closes every session** of the account. Two-step verification, if enabled, stays in place. A code can be tried 5 times; every failure answers `INVALID_OR_EXPIRED_CODE`.",
         "operationId": "AuthController_resetPassword_v1",
         "parameters": [],
         "requestBody": {
@@ -1441,9 +1736,18 @@
                         "type": "string",
                         "enum": [
                           "system_settings.read",
-                          "system_settings.write"
+                          "system_settings.write",
+                          "users.read",
+                          "users.suspend",
+                          "users.revoke_sessions",
+                          "users.reset_mfa",
+                          "roles.read",
+                          "roles.manage"
                         ]
                       }
+                    },
+                    "secondFactorEnabled": {
+                      "type": "boolean"
                     },
                     "createdAt": {
                       "type": "string",
@@ -1463,6 +1767,7 @@
                     "status",
                     "roles",
                     "permissions",
+                    "secondFactorEnabled",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -1736,6 +2041,4041 @@
         "summary": "Close one of my sessions",
         "tags": [
           "Account"
+        ]
+      }
+    },
+    "/api/v1/me/mfa": {
+      "get": {
+        "description": "Whether an authenticator app is set up, and how many recovery codes are left.",
+        "operationId": "MfaController_status_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "totp": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "enabledAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "enabledAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "recoveryCodesRemaining": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "totp",
+                    "recoveryCodesRemaining"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Two-step verification status",
+        "tags": [
+          "Two-step verification"
+        ]
+      }
+    },
+    "/api/v1/me/mfa/totp/enroll": {
+      "post": {
+        "description": "Requires the current password. Returns the secret to add to an authenticator app (Google Authenticator, Authy, 1Password…): show `otpauthUri` as a QR code, or let the user type `secret`. **The secret is only shown here.** Nothing changes at sign-in until the setup is confirmed with a first code; calling this again replaces an unfinished setup.",
+        "operationId": "MfaController_enroll_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                },
+                "required": [
+                  "currentPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    },
+                    "otpauthUri": {
+                      "type": "string"
+                    },
+                    "algorithm": {
+                      "type": "string",
+                      "enum": [
+                        "SHA1"
+                      ]
+                    },
+                    "digits": {
+                      "type": "number",
+                      "enum": [
+                        6
+                      ]
+                    },
+                    "periodSeconds": {
+                      "type": "number",
+                      "enum": [
+                        30
+                      ]
+                    }
+                  },
+                  "required": [
+                    "secret",
+                    "otpauthUri",
+                    "algorithm",
+                    "digits",
+                    "periodSeconds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start setting up an authenticator app",
+        "tags": [
+          "Two-step verification"
+        ]
+      }
+    },
+    "/api/v1/me/mfa/totp/confirm": {
+      "post": {
+        "description": "A valid code proves the app holds the secret. From then on every sign-in requires a second step, and **all other sessions are closed**. Returns 10 recovery codes, **shown only once**: each replaces the authenticator code a single time.",
+        "operationId": "MfaController_confirm_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recoveryCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "recoveryCodes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Confirm the authenticator app and enable two-step verification",
+        "tags": [
+          "Two-step verification"
+        ]
+      }
+    },
+    "/api/v1/me/mfa/totp/disable": {
+      "post": {
+        "description": "Requires the current password **and** a second-factor proof: an authenticator code (`code`) or a recovery code (`recoveryCode`). Closes all other sessions. An account holding a back-office role loses access to the back office until it is enabled again.",
+        "operationId": "MfaController_disable_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "recoveryCode": {
+                    "type": "string",
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "currentPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Two-step verification disabled."
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Disable two-step verification",
+        "tags": [
+          "Two-step verification"
+        ]
+      }
+    },
+    "/api/v1/me/mfa/recovery-codes": {
+      "post": {
+        "description": "Requires the current password and an authenticator code. Returns 10 new codes, shown only once; **the previous ones stop working**.",
+        "operationId": "MfaController_regenerateRecoveryCodes_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "currentPassword",
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recoveryCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "recoveryCodes"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Generate new recovery codes",
+        "tags": [
+          "Two-step verification"
+        ]
+      }
+    },
+    "/api/v1/me/profile": {
+      "get": {
+        "description": "Declared identity (given name, family name, `additionalName` for the Congolese \"postnom\"), address and preferences. These are **declared** values: nothing has verified them yet.",
+        "operationId": "ProfileController_getProfile_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "givenName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "familyName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "additionalName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "dateOfBirth": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    "addressLine1": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "addressLine2": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "city": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "region": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "postalCode": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "locale": {
+                      "type": "string",
+                      "enum": [
+                        "fr",
+                        "en"
+                      ]
+                    },
+                    "timeZone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "givenName",
+                    "familyName",
+                    "additionalName",
+                    "dateOfBirth",
+                    "addressLine1",
+                    "addressLine2",
+                    "city",
+                    "region",
+                    "postalCode",
+                    "locale",
+                    "timeZone",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My profile",
+        "tags": [
+          "Account"
+        ]
+      },
+      "patch": {
+        "description": "Partial update: only the fields present change; `null` clears a field (`locale` cannot be cleared). The account holder must be at least 18 years old.",
+        "operationId": "ProfileController_updateProfile_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "givenName": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[\\p{L}\\p{M}][\\p{L}\\p{M}'’ .-]*$"
+                  },
+                  "familyName": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[\\p{L}\\p{M}][\\p{L}\\p{M}'’ .-]*$"
+                  },
+                  "additionalName": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^[\\p{L}\\p{M}][\\p{L}\\p{M}'’ .-]*$"
+                  },
+                  "dateOfBirth": {
+                    "nullable": true,
+                    "type": "string",
+                    "format": "date",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                  },
+                  "addressLine1": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "addressLine2": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "city": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "region": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "postalCode": {
+                    "nullable": true,
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 20,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "locale": {
+                    "type": "string",
+                    "enum": [
+                      "fr",
+                      "en"
+                    ]
+                  },
+                  "timeZone": {
+                    "nullable": true,
+                    "type": "string",
+                    "maxLength": 64
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "givenName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "familyName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "additionalName": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "dateOfBirth": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    "addressLine1": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "addressLine2": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "city": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "region": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "postalCode": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "locale": {
+                      "type": "string",
+                      "enum": [
+                        "fr",
+                        "en"
+                      ]
+                    },
+                    "timeZone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "updatedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "givenName",
+                    "familyName",
+                    "additionalName",
+                    "dateOfBirth",
+                    "addressLine1",
+                    "addressLine2",
+                    "city",
+                    "region",
+                    "postalCode",
+                    "locale",
+                    "timeZone",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update my profile",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/me/phone/verification": {
+      "post": {
+        "description": "Texts a 6-digit code to the number. The number of the account only changes once the code is confirmed: until then, a previously verified number stays in place. Only mobile numbers of supported countries are accepted (currently DR Congo, `+243`). At most 3 codes per account every 15 minutes, and 3 per number every hour.",
+        "operationId": "ProfileController_requestPhoneVerification_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "phone": {
+                    "type": "string",
+                    "pattern": "^\\+[1-9]\\d{7,14}$"
+                  }
+                },
+                "required": [
+                  "phone"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nextStep": {
+                      "type": "string",
+                      "enum": [
+                        "VERIFY_PHONE"
+                      ]
+                    },
+                    "codeTtlSeconds": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "nextStep",
+                    "codeTtlSeconds"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Send a verification code to a phone number",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/me/phone/verify": {
+      "post": {
+        "description": "Confirms the number the last code was sent to; it becomes the verified number of the account. A code can be tried 5 times. Answers `CONFLICT` if the number is already verified on another account.",
+        "operationId": "ProfileController_verifyPhone_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  }
+                },
+                "required": [
+                  "code"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Phone number verified."
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Confirm my phone number",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/me/activity": {
+      "get": {
+        "description": "Security events of the account, most recent first: sign-ins (including failed ones), password and two-step verification changes, actions taken by support. Page with `before` = the `nextCursor` of the previous page.",
+        "operationId": "ProfileController_listActivity_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "before",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "ACCOUNT_CREATED",
+                              "EMAIL_VERIFIED",
+                              "SIGN_IN",
+                              "SIGN_IN_FAILED",
+                              "SIGN_IN_DENIED",
+                              "SECOND_FACTOR_FAILED",
+                              "SIGN_OUT",
+                              "SESSION_CLOSED",
+                              "OTHER_SESSIONS_CLOSED",
+                              "SESSION_REVOKED_TOKEN_REUSE",
+                              "PASSWORD_CHANGED",
+                              "PASSWORD_CHANGE_FAILED",
+                              "PASSWORD_RESET_REQUESTED",
+                              "PASSWORD_RESET",
+                              "TWO_FACTOR_ENABLED",
+                              "TWO_FACTOR_DISABLED",
+                              "RECOVERY_CODES_REGENERATED",
+                              "RECOVERY_CODE_USED",
+                              "PROFILE_UPDATED",
+                              "PHONE_VERIFIED",
+                              "ACCOUNT_SUSPENDED",
+                              "ACCOUNT_REACTIVATED",
+                              "SESSIONS_CLOSED_BY_SUPPORT",
+                              "TWO_FACTOR_RESET_BY_SUPPORT"
+                            ]
+                          },
+                          "occurredAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "SUCCESS",
+                              "FAILURE",
+                              "DENIED"
+                            ]
+                          },
+                          "ipAddress": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "userAgent": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "occurredAt",
+                          "outcome",
+                          "ipAddress",
+                          "userAgent"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "entries",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My account activity",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/api/v1/admin/users": {
+      "get": {
+        "description": "Accounts from the most recent to the oldest, optionally filtered by `status`. Page with `before` = the `nextCursor` of the previous page. To find one account, use `POST /admin/users/search`. Every page viewed is recorded in the audit log. Requires `users.read`.",
+        "operationId": "AdminUsersController_list_v1",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING_VERIFICATION",
+                "ACTIVE",
+                "SUSPENDED",
+                "CLOSED"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "before",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "emailVerified": {
+                            "type": "boolean"
+                          },
+                          "phone": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "phoneVerified": {
+                            "type": "boolean"
+                          },
+                          "countryCode": {
+                            "type": "string"
+                          },
+                          "accountType": {
+                            "type": "string",
+                            "enum": [
+                              "INDIVIDUAL",
+                              "BUSINESS"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING_VERIFICATION",
+                              "ACTIVE",
+                              "SUSPENDED",
+                              "CLOSED"
+                            ]
+                          },
+                          "roles": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "secondFactorEnabled": {
+                            "type": "boolean"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "email",
+                          "emailVerified",
+                          "phone",
+                          "phoneVerified",
+                          "countryCode",
+                          "accountType",
+                          "status",
+                          "roles",
+                          "secondFactorEnabled",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "users",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Browse accounts",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/search": {
+      "post": {
+        "description": "Looks accounts up by **one complete identifier**: `email`, `phone` (international format) or `id`. There is no search by fragment. The identifier travels in the request body, never in the URL — servers and proxies keep URLs in their logs. Usually returns one account or none; a phone number that was declared but never verified can belong to several. Every search is recorded in the audit log, with a digest of the identifier only. Requires `users.read`.",
+        "operationId": "AdminUsersController_lookup_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "pattern": "^\\+[1-9]\\d{7,14}$"
+                  },
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "emailVerified": {
+                            "type": "boolean"
+                          },
+                          "phone": {
+                            "nullable": true,
+                            "type": "string"
+                          },
+                          "phoneVerified": {
+                            "type": "boolean"
+                          },
+                          "countryCode": {
+                            "type": "string"
+                          },
+                          "accountType": {
+                            "type": "string",
+                            "enum": [
+                              "INDIVIDUAL",
+                              "BUSINESS"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING_VERIFICATION",
+                              "ACTIVE",
+                              "SUSPENDED",
+                              "CLOSED"
+                            ]
+                          },
+                          "roles": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "secondFactorEnabled": {
+                            "type": "boolean"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "email",
+                          "emailVerified",
+                          "phone",
+                          "phoneVerified",
+                          "countryCode",
+                          "accountType",
+                          "status",
+                          "roles",
+                          "secondFactorEnabled",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "users"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Find an account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{userId}": {
+      "get": {
+        "description": "Account, declared profile, two-step verification state and number of open sessions. No authentication secret is ever returned. Viewing an account is recorded in the audit log. Requires `users.read`.",
+        "operationId": "AdminUsersController_get_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "emailVerified": {
+                      "type": "boolean"
+                    },
+                    "phone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "phoneVerified": {
+                      "type": "boolean"
+                    },
+                    "countryCode": {
+                      "type": "string"
+                    },
+                    "accountType": {
+                      "type": "string",
+                      "enum": [
+                        "INDIVIDUAL",
+                        "BUSINESS"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING_VERIFICATION",
+                        "ACTIVE",
+                        "SUSPENDED",
+                        "CLOSED"
+                      ]
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "secondFactorEnabled": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "locale": {
+                      "type": "string",
+                      "enum": [
+                        "fr",
+                        "en"
+                      ]
+                    },
+                    "termsAcceptedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "profile": {
+                      "type": "object",
+                      "properties": {
+                        "givenName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "familyName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "additionalName": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "dateOfBirth": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                        },
+                        "addressLine1": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "addressLine2": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "city": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "region": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "postalCode": {
+                          "nullable": true,
+                          "type": "string"
+                        },
+                        "timeZone": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "givenName",
+                        "familyName",
+                        "additionalName",
+                        "dateOfBirth",
+                        "addressLine1",
+                        "addressLine2",
+                        "city",
+                        "region",
+                        "postalCode",
+                        "timeZone"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "secondFactor": {
+                      "type": "object",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "enabledAt": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "recoveryCodesRemaining": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "enabled",
+                        "enabledAt",
+                        "recoveryCodesRemaining"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "activeSessions": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "email",
+                    "emailVerified",
+                    "phone",
+                    "phoneVerified",
+                    "countryCode",
+                    "accountType",
+                    "status",
+                    "roles",
+                    "secondFactorEnabled",
+                    "createdAt",
+                    "locale",
+                    "termsAcceptedAt",
+                    "updatedAt",
+                    "profile",
+                    "secondFactor",
+                    "activeSessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "View an account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{userId}/suspend": {
+      "post": {
+        "description": "Only an active account can be suspended. Its sessions are closed at once and it can no longer sign in (`ACCOUNT_DISABLED`). The holder is told by e-mail — never why — unless `notifyUser` is `false`. Requires `users.suspend`.\n\nThe mandatory `reason` is written to the audit log with the action. You cannot act on your own account, and acting on a staff account (one that holds a role) also requires `roles.manage`.",
+        "operationId": "AdminUsersController_suspend_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  },
+                  "notifyUser": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "emailVerified": {
+                      "type": "boolean"
+                    },
+                    "phone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "phoneVerified": {
+                      "type": "boolean"
+                    },
+                    "countryCode": {
+                      "type": "string"
+                    },
+                    "accountType": {
+                      "type": "string",
+                      "enum": [
+                        "INDIVIDUAL",
+                        "BUSINESS"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING_VERIFICATION",
+                        "ACTIVE",
+                        "SUSPENDED",
+                        "CLOSED"
+                      ]
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "secondFactorEnabled": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "email",
+                    "emailVerified",
+                    "phone",
+                    "phoneVerified",
+                    "countryCode",
+                    "accountType",
+                    "status",
+                    "roles",
+                    "secondFactorEnabled",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Suspend an account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{userId}/reactivate": {
+      "post": {
+        "description": "Lifts a suspension: the holder can sign in again and is told by e-mail. Requires `users.suspend`.\n\nThe mandatory `reason` is written to the audit log with the action. You cannot act on your own account, and acting on a staff account (one that holds a role) also requires `roles.manage`.",
+        "operationId": "AdminUsersController_reactivate_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "email": {
+                      "type": "string"
+                    },
+                    "emailVerified": {
+                      "type": "boolean"
+                    },
+                    "phone": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "phoneVerified": {
+                      "type": "boolean"
+                    },
+                    "countryCode": {
+                      "type": "string"
+                    },
+                    "accountType": {
+                      "type": "string",
+                      "enum": [
+                        "INDIVIDUAL",
+                        "BUSINESS"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING_VERIFICATION",
+                        "ACTIVE",
+                        "SUSPENDED",
+                        "CLOSED"
+                      ]
+                    },
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "secondFactorEnabled": {
+                      "type": "boolean"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "email",
+                    "emailVerified",
+                    "phone",
+                    "phoneVerified",
+                    "countryCode",
+                    "accountType",
+                    "status",
+                    "roles",
+                    "secondFactorEnabled",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reactivate a suspended account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{userId}/sessions/revoke": {
+      "post": {
+        "description": "Closes every session of the account (lost device, suspected compromise). The account stays active: its holder can sign in again. Requires `users.revoke_sessions`.\n\nThe mandatory `reason` is written to the audit log with the action. You cannot act on your own account, and acting on a staff account (one that holds a role) also requires `roles.manage`.",
+        "operationId": "AdminUsersController_revokeSessions_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revokedSessions": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "revokedSessions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Sign an account out everywhere",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{userId}/mfa/reset": {
+      "post": {
+        "description": "For a holder who lost both the authenticator app and the recovery codes. The account falls back to its password alone, so this is the most sensitive support action: the holder's identity must have been established first, every session is closed and the holder is always told by e-mail. Answers `CONFLICT` when two-step verification is not enabled. Requires `users.reset_mfa`.\n\nThe mandatory `reason` is written to the audit log with the action. You cannot act on your own account, and acting on a staff account (one that holds a role) also requires `roles.manage`.",
+        "operationId": "AdminUsersController_resetSecondFactor_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Two-step verification removed."
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove the two-step verification of an account",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/roles": {
+      "get": {
+        "description": "Back-office roles with their permissions and number of holders. Roles are defined by the platform. Requires `roles.read`.",
+        "operationId": "AdminRolesController_listRoles_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "isSystem": {
+                            "type": "boolean"
+                          },
+                          "permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "system_settings.read",
+                                "system_settings.write",
+                                "users.read",
+                                "users.suspend",
+                                "users.revoke_sessions",
+                                "users.reset_mfa",
+                                "roles.read",
+                                "roles.manage"
+                              ]
+                            }
+                          },
+                          "holders": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "name",
+                          "description",
+                          "isSystem",
+                          "permissions",
+                          "holders"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "roles"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List roles",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/role-changes": {
+      "get": {
+        "description": "Most recent first, optionally filtered by `status`. Page with `before` = the `nextCursor` of the previous page. Requires `roles.read`.",
+        "operationId": "AdminRolesController_list_v1",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING",
+                "APPROVED",
+                "REJECTED",
+                "CANCELLED",
+                "EXPIRED"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "before",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "roleChanges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "user": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "email": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "email"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "role": {
+                            "type": "object",
+                            "properties": {
+                              "key": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "name"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "action": {
+                            "type": "string",
+                            "enum": [
+                              "GRANT",
+                              "REVOKE"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "APPROVED",
+                              "REJECTED",
+                              "CANCELLED",
+                              "EXPIRED"
+                            ]
+                          },
+                          "requestedBy": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "email": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "email"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "requestedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "decidedBy": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "email": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "email"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "decidedAt": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "decisionNote": {
+                            "nullable": true,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "user",
+                          "role",
+                          "action",
+                          "reason",
+                          "status",
+                          "requestedBy",
+                          "requestedAt",
+                          "expiresAt",
+                          "decidedBy",
+                          "decidedAt",
+                          "decisionNote"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "roleChanges",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List role change requests",
+        "tags": [
+          "Administration"
+        ]
+      },
+      "post": {
+        "description": "Asks for a role to be granted to, or revoked from, an account. **Nothing changes until a second administrator approves the request**; it lapses after 72 hours. You cannot request a change of your own roles, and one request at most can be pending for an account and a role. Requires `roles.manage`.",
+        "operationId": "AdminRolesController_request_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "userId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "roleKey": {
+                    "type": "string",
+                    "maxLength": 64,
+                    "pattern": "^[a-z][a-z0-9_]*$"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "GRANT",
+                      "REVOKE"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "userId",
+                  "roleKey",
+                  "action",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "role": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "GRANT",
+                        "REVOKE"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "CANCELLED",
+                        "EXPIRED"
+                      ]
+                    },
+                    "requestedBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decidedBy": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decidedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decisionNote": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "user",
+                    "role",
+                    "action",
+                    "reason",
+                    "status",
+                    "requestedBy",
+                    "requestedAt",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                    "decisionNote"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Request a role change",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/role-changes/{requestId}": {
+      "get": {
+        "description": "Requires `roles.read`.",
+        "operationId": "AdminRolesController_get_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "role": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "GRANT",
+                        "REVOKE"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "CANCELLED",
+                        "EXPIRED"
+                      ]
+                    },
+                    "requestedBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decidedBy": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decidedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decisionNote": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "user",
+                    "role",
+                    "action",
+                    "reason",
+                    "status",
+                    "requestedBy",
+                    "requestedAt",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                    "decisionNote"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "View a role change request",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/role-changes/{requestId}/approve": {
+      "post": {
+        "description": "Applies the role change. The approver must be a **different administrator** from the author of the request, and cannot be the account concerned. The database enforces the same rules when it applies the change, and also checks that both administrators are still active and still hold `roles.manage`. A role granted to an account takes effect at once; that account must have two-step verification enabled to use the back office. Requires `roles.manage`.",
+        "operationId": "AdminRolesController_approve_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "default": {},
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 500
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "role": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "GRANT",
+                        "REVOKE"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "CANCELLED",
+                        "EXPIRED"
+                      ]
+                    },
+                    "requestedBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decidedBy": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decidedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decisionNote": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "user",
+                    "role",
+                    "action",
+                    "reason",
+                    "status",
+                    "requestedBy",
+                    "requestedAt",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                    "decisionNote"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a role change request",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/role-changes/{requestId}/reject": {
+      "post": {
+        "description": "Closes the request without changing any role; the `note` says why. Like an approval, a rejection comes from a second administrator — the author of a request cancels it instead. Requires `roles.manage`.",
+        "operationId": "AdminRolesController_reject_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "note"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "role": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "GRANT",
+                        "REVOKE"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "CANCELLED",
+                        "EXPIRED"
+                      ]
+                    },
+                    "requestedBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decidedBy": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decidedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decisionNote": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "user",
+                    "role",
+                    "action",
+                    "reason",
+                    "status",
+                    "requestedBy",
+                    "requestedAt",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                    "decisionNote"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reject a role change request",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/role-changes/{requestId}/cancel": {
+      "post": {
+        "description": "Only the author of a pending request can cancel it. Requires `roles.manage`.",
+        "operationId": "AdminRolesController_cancel_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "role": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "key",
+                        "name"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "action": {
+                      "type": "string",
+                      "enum": [
+                        "GRANT",
+                        "REVOKE"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "PENDING",
+                        "APPROVED",
+                        "REJECTED",
+                        "CANCELLED",
+                        "EXPIRED"
+                      ]
+                    },
+                    "requestedBy": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decidedBy": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "email": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "decidedAt": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "decisionNote": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "user",
+                    "role",
+                    "action",
+                    "reason",
+                    "status",
+                    "requestedBy",
+                    "requestedAt",
+                    "expiresAt",
+                    "decidedBy",
+                    "decidedAt",
+                    "decisionNote"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel my role change request",
+        "tags": [
+          "Administration"
         ]
       }
     },
@@ -2070,6 +6410,7 @@
               "FEATURE_DISABLED",
               "EMAIL_NOT_VERIFIED",
               "ACCOUNT_DISABLED",
+              "MFA_ENROLLMENT_REQUIRED",
               "NOT_FOUND",
               "METHOD_NOT_ALLOWED",
               "NOT_ACCEPTABLE",

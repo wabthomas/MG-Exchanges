@@ -1,13 +1,13 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-11 — phase 2 en cours, lot 1 livré._
+_Dernière mise à jour : 2026-11-12 — phase 2 en cours, lots 1 et 2 livrés._
 
 ## Synthèse
 
 | Phase | Périmètre                               | État                             |
 | ----- | --------------------------------------- | -------------------------------- |
 | 1     | Analyse et fondations                   | **Livrée** (réserves ci-dessous) |
-| 2     | Identité et utilisateurs                | **En cours** — lot 1 sur 3 livré |
+| 2     | Identité et utilisateurs                | **En cours** — lots 1 et 2 sur 3 |
 | 3     | Infrastructure financière (grand livre) | Non commencée                    |
 | 4     | Échange et paiements                    | Non commencée                    |
 | 5     | Blockchain                              | Non commencée                    |
@@ -25,8 +25,10 @@ back-office relèvent de la phase 7. Ce qui est visible aujourd'hui est l'API (d
 interactive `/api/docs`).
 
 **L'inscription ne peut pas être ouverte au public en l'état** : aucun prestataire d'envoi
-d'e-mails n'est branché (décision attendue, voir plus bas). Hors développement, l'API refuse
-alors l'inscription plutôt que de créer des comptes qui ne recevraient jamais leur code.
+d'e-mails ni de SMS n'est branché (décision attendue, voir plus bas). Hors développement,
+l'API refuse alors l'inscription, la réinitialisation du mot de passe et la vérification du
+téléphone plutôt que de promettre un code qui n'arriverait jamais ; et les messages de
+sécurité (nouvel appareil, second facteur modifié, suspension…) ne partent pas.
 
 ## Phase 2 — identité et utilisateurs
 
@@ -48,18 +50,38 @@ alors l'inscription plutôt que de créer des comptes qui ne recevraient jamais 
 
 Détail des routes : [`docs/API.md`](docs/API.md). Décisions : ADR 0013 à 0016.
 
+### Lot 2 — livré : sécurité du compte, profil, back-office des comptes
+
+| Sujet                     | Réalisation                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Validation en deux étapes | application d'authentification (TOTP) et dix codes de secours ; connexion en deux temps ; essais bornés par compte ; secret chiffré           |
+| Back-office protégé       | toute route d'administration exige la validation en deux étapes, quelles que soient les permissions                                           |
+| Profil                    | nom, date de naissance, adresse, langue, fuseau horaire — **déclarés**, non vérifiés (la vérification d'identité est l'objet du lot 3)        |
+| Téléphone                 | vérification du numéro par code SMS ; un numéro vérifié n'appartient qu'à un compte                                                           |
+| Historique                | le titulaire voit les événements de sécurité de son compte, interventions du support comprises                                                |
+| Connexion inhabituelle    | une connexion depuis un appareil inconnu du compte est signalée par e-mail                                                                    |
+| Back-office : comptes     | liste, recherche par identifiant complet, fiche, suspension et réactivation, fermeture des sessions, retrait du second facteur                |
+| Traçabilité               | chaque action du back-office porte une justification ; chaque recherche, page et consultation est inscrite au journal d'audit                 |
+| Back-office : rôles       | demande, puis approbation par un **second** administrateur ; la règle est appliquée par la base de données elle-même ; nouveau rôle `support` |
+| Purge                     | toutes les heures : inscriptions jamais vérifiées (7 j), sessions closes (90 j), codes échus (7 j), activations abandonnées, demandes échues  |
+
+Détail : [`docs/API.md`](docs/API.md), [`docs/SECURITY.md`](docs/SECURITY.md). Décisions : ADR 0017 à 0020.
+
+**Ce qui change pour un client écrit contre le lot 1** (aucune version n'a été mise en
+service entre les deux lots) : la connexion répond par un `status` (`AUTHENTICATED` ou
+`MFA_REQUIRED`) ; la vérification de l'adresse exige aussi le mot de passe ; un administrateur
+doit activer la validation en deux étapes avant toute action. Liste complète :
+[`CHANGELOG.md`](CHANGELOG.md).
+
 ### Reste à faire en phase 2
 
-- **Lot 2** — second facteur (TOTP, codes de secours) ; vérification du téléphone par SMS ;
-  profil (informations personnelles, coordonnées, préférences) et historique d'activité ;
-  gestion des comptes depuis le back-office (recherche, suspension, attribution des rôles avec
-  double validation) ; détection de connexion inhabituelle ; purge des données expirées.
 - **Lot 3** — KYC et KYB : dossiers, pièces, niveaux de vérification, validation manuelle,
-  historique des décisions ; comptes professionnels.
+  historique des décisions ; comptes professionnels. Il dépend de décisions attendues
+  (niveaux, plafonds, vérification manuelle ou prestataire).
 
 ## Résultats de tests
 
-Exécution du 2026-11-11 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
+Exécution du 2026-11-12 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
 
 | Vérification                     | Résultat                       |
 | -------------------------------- | ------------------------------ |
@@ -69,16 +91,16 @@ Exécution du 2026-11-11 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                       |
 | `pnpm db:check-drift`            | aucune différence              |
 | `pnpm audit --prod`              | aucune vulnérabilité connue    |
-| `pnpm test`                      | **492 tests réussis, 0 échec** |
+| `pnpm test`                      | **762 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels            |
 | ------------------------- | ----- | ------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                         |
-| `@mgx/validation`         | 54    | —                         |
-| `@mgx/contracts`          | 10    | —                         |
-| API — unitaires           | 160   | —                         |
-| API — intégration         | 56    | PostgreSQL, Redis, BullMQ |
-| API — bout en bout (HTTP) | 109   | PostgreSQL, Redis, BullMQ |
+| `@mgx/validation`         | 93    | —                         |
+| `@mgx/contracts`          | 21    | —                         |
+| API — unitaires           | 253   | —                         |
+| API — intégration         | 109   | PostgreSQL, Redis, BullMQ |
+| API — bout en bout (HTTP) | 183   | PostgreSQL, Redis, BullMQ |
 
 Ce que ces tests établissent, notamment :
 
@@ -107,14 +129,43 @@ Ce que ces tests établissent, notamment :
 - **sessions** : aucun jeton en base (empreintes seulement) ; déconnexion, changement de mot
   de passe et suspension coupent l'accès immédiatement ; la réutilisation d'un jeton de
   renouvellement révoque la session ; dix renouvellements simultanés restent cohérents ;
-  la session d'un autre compte est introuvable.
+  la session d'un autre compte est introuvable ;
+- **validation en deux étapes** : l'implémentation TOTP reproduit les vecteurs des RFC 4226
+  et 6238 ; le secret n'est conservé que chiffré, et ne se déchiffre ni avec une autre clé ni
+  recopié sur un autre compte ; après le mot de passe, aucune session n'existe tant que le
+  code n'est pas donné ; un code ne sert qu'une fois — présenté au même instant sur quatre
+  connexions, il n'en ouvre qu'une, et il en va de même d'un code de secours ; les essais sont
+  bornés par compte, d'où qu'ils viennent ;
+- **back-office** : sans validation en deux étapes, aucune route d'administration ne répond ;
+  chaque route exige sa permission ; nul n'agit sur son propre compte ; le support n'agit pas
+  sur le personnel ; chaque action laisse sa justification au journal, chaque recherche sa
+  trace — sans l'adresse ni le numéro recherchés ; la liste des comptes refuse tout
+  identifiant dans l'URL ;
+- **rôles** : des tests s'adressent **directement à PostgreSQL** avec le rôle de l'API. La
+  base refuse alors toute écriture directe d'une attribution, l'approbation d'une demande par
+  son auteur ou par l'intéressé, l'approbation d'une demande échue ou dont l'auteur a perdu
+  sa qualité, la modification de ses termes, la réécriture ou la suppression d'une demande
+  décidée. Huit approbations simultanées d'une même demande en appliquent une seule ; deux
+  approbations simultanées qui se retirent mutuellement un intervenant sont appliquées l'une
+  après l'autre, et la seconde est refusée ;
+- **téléphone** : deux comptes qui confirment le même numéro au même instant — un seul l'obtient ;
+- **purge** : ne supprime ni un compte vérifié, ni une inscription récente, ni la dernière
+  session d'un compte, ni un second facteur actif ; chaque inscription supprimée est tracée ;
+  l'échec d'une étape n'empêche pas les suivantes.
 
-**Efficacité des tests vérifiée par mutation.** 52 défauts ont été introduits volontairement,
-puis retirés : 20 en phase 1 (calculs monétaires, concurrence, expurgation, privilèges,
-configuration du proxy) et 32 dans le code d'identité. Sur les 28 premiers défauts d'identité,
-26 ont été détectés d'emblée ; 2 ne l'étaient pas (jeton stocké en clair plutôt que son
-empreinte ; règle de mot de passe contournée à la réinitialisation). Les tests concernés ont
-été renforcés, 4 défauts supplémentaires ont été ajoutés, et les 32 sont désormais détectés.
+**Efficacité des tests vérifiée par mutation.** 157 défauts ont été introduits volontairement,
+un par un, puis retirés ; chacun doit faire échouer au moins un test.
+
+- Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
+  configuration du proxy), tous détectés.
+- Lot 1 : 32 défauts dans le code d'identité. Sur les 28 premiers, 2 n'étaient pas détectés
+  (jeton stocké en clair plutôt que son empreinte ; règle de mot de passe contournée à la
+  réinitialisation) ; les tests ont été renforcés, 4 défauts ajoutés, et les 32 sont détectés.
+- Lot 2 : 105 défauts (second facteur, téléphone, profil, back-office, règles SQL de la double
+  validation, purge, accès simultanés), tous détectés. L'un d'eux — une purge au travail non
+  borné — ne faisait pas échouer les tests : il les bloquait ; le test concerné échoue
+  maintenant immédiatement. Quatre défauts ne se manifestent que lorsque deux requêtes
+  arrivent en même temps : ils sont détectés par les tests d'accès simultanés.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -122,17 +173,17 @@ L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accè
 paquets système**. Chaque fichier d'infrastructure a donc été exécuté hors Docker, avec le
 vrai logiciel, y compris après les ajouts de la phase 2 :
 
-| Élément                             | Vérifié ici                                                                                                                                                                                                                                                             | Reste à confirmer                                                                                  |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture.                                       | Construction par Docker (images de base, couches, cache)                                           |
-| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                  | Exécution par le point d'entrée de l'image officielle                                              |
-| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose.                                             | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) |
-| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API.                                                                                          | Exécution dans l'image `nginx:1.30-alpine`                                                         |
-| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé par l'outil en ligne de commande, ouverture de l'inscription, inscription, code reçu, vérification, connexion, contrôle des droits, renouvellement, déconnexion. | Exécution dans la pile Docker                                                                      |
-| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` ont été exécutées ici. Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                     | **Toute exécution par GitHub** (voir ci-dessous)                                                   |
-| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations ont été créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). Son comportement pour le contrôle de cohérence a été établi par lecture de son code source.                          | Exécution par la CI                                                                                |
-| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles.                                                                                                               | —                                                                                                  |
-| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                             | —                                                                                                  |
+| Élément                             | Vérifié ici                                                                                                                                                                                                                                                                                                                                                                                 | Reste à confirmer                                                                                  |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture.                                                                                                                                                           | Construction par Docker (images de base, couches, cache)                                           |
+| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                                                                                                                                      | Exécution par le point d'entrée de l'image officielle                                              |
+| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose.                                                                                                                                                                 | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) |
+| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API.                                                                                                                                                                                                              | Exécution dans l'image `nginx:1.30-alpine`                                                         |
+| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. | Exécution dans la pile Docker                                                                      |
+| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` ont été exécutées ici. Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                         | **Toute exécution par GitHub** (voir ci-dessous)                                                   |
+| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations ont été créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). Son comportement pour le contrôle de cohérence a été établi par lecture de son code source.                                                                                                                                              | Exécution par la CI                                                                                |
+| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles.                                                                                                                                                                                                                                   | —                                                                                                  |
+| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                 | —                                                                                                  |
 
 ## Intégration continue : à activer
 
@@ -150,6 +201,37 @@ travers Nginx, avec le moteur de migration natif de Prisma : elle lèvera les r�
 ci-dessus ou révélera des défauts.
 
 ## Problèmes identifiés
+
+### Pendant le lot 2 de la phase 2
+
+Tous corrigés avant la livraison du lot.
+
+1. **Un tiers pouvait préparer un compte à l'adresse d'une autre personne** (défaut du lot 1,
+   trouvé à la relecture). Il s'inscrivait avec l'adresse de sa victime et son propre mot de
+   passe, puis attendait qu'elle active elle-même le compte en saisissant le code reçu — il
+   en connaissait alors le mot de passe. Désormais, vérifier l'adresse exige aussi le mot de
+   passe de l'inscription ; une nouvelle inscription remplace entièrement la précédente tant
+   que l'adresse n'est pas vérifiée ; une inscription jamais vérifiée ne se réinitialise pas.
+2. **Deux approbations simultanées de changements de rôle pouvaient se priver l'une l'autre
+   de leurs intervenants**, et passer toutes les deux alors qu'aucun ordre ne les admet
+   ensemble — au pire, ne laisser aucun administrateur. Trouvé en écrivant les tests d'accès
+   simultanés, reproduit par un test qui échoue sur la version précédente. Les approbations
+   sont désormais appliquées une à une par la base.
+3. **Qui connaissait le mot de passe pouvait essayer des codes à six chiffres sans limite**,
+   en rouvrant une connexion après chaque série de cinq essais (première version du lot). Les
+   essais sont maintenant comptés par compte : 5 en 15 minutes, 20 en 24 heures, et le
+   titulaire est prévenu du blocage.
+4. **Une session ouverte à l'instant même d'une suspension pouvait revivre à la
+   réactivation.** Réactiver un compte ferme désormais toutes ses sessions.
+5. **L'adresse ou le numéro recherché par le support figurait dans l'URL** (`?email=`). Les
+   journaux de l'API et du Nginx fourni n'enregistrent pas les paramètres d'URL, mais ceux
+   d'un hébergeur ou d'un proxy le font. La recherche passe désormais par le corps d'une
+   requête, et la liste des comptes refuse tout identifiant en paramètre.
+6. **Un index de recherche par préfixe rendait le contrôle de cohérence des migrations
+   définitivement faux** (Prisma ne sait pas le décrire). Il a été remplacé par un index
+   ordinaire, suffisant puisque la recherche se fait par identifiant complet.
+7. **Un défaut volontaire bloquait les tests au lieu de les faire échouer** (voir
+   « mutation » ci-dessus).
 
 ### Pendant le lot 1 de la phase 2
 
@@ -193,21 +275,46 @@ ce que les validations statiques faites jusque-là ne permettaient pas de voir.
 
 Identité :
 
-- **Aucun prestataire d'envoi** : en pré-production et en production, inscription et
-  réinitialisation du mot de passe répondent `503`. Seuls des administrateurs créés en ligne
-  de commande peuvent se connecter.
-- **Pas de second facteur, pas de vérification du téléphone** (lot 2). Le numéro déclaré à
-  l'inscription est enregistré mais ne sert à rien d'autre.
-- **Un seul rôle d'administration** (`super_admin`), attribué uniquement en ligne de commande ;
-  aucune route ne permet encore de suspendre un compte ni de gérer les rôles (lot 2). La
-  modification des paramètres de la plateforme n'est pas encore soumise à une double validation.
-- **L'identifiant de connexion est l'adresse e-mail**, pas le numéro de téléphone.
+- **Aucun prestataire d'envoi** (e-mail, SMS) : en pré-production et en production,
+  inscription, réinitialisation du mot de passe et vérification du téléphone répondent `503`,
+  et les messages de sécurité ne partent pas. Seuls des administrateurs créés en ligne de
+  commande peuvent se connecter.
+- **Retrait d'un second facteur par le support : la procédure n'est pas écrite.** L'API borne
+  le risque (permission réservée, justification, sessions fermées, titulaire prévenu) mais ne
+  vérifie pas l'identité de la personne qui dit avoir perdu son téléphone. À écrire avant
+  toute mise en service.
+- **Clé de chiffrement des seconds facteurs** (`AUTH_SECRETS_ENCRYPTION_KEY`) : à sauvegarder
+  hors de la base. La perdre ou la changer rend tous les seconds facteurs invérifiables ; sa
+  rotation n'est pas outillée. Changer `AUTH_CODE_HMAC_SECRET` invalide les codes de secours.
+- **Double validation des rôles** : il faut au moins deux administrateurs pour faire évoluer
+  les rôles par l'API. La base vérifie la qualité des deux intervenants que l'API lui désigne,
+  pas leur présence : elle protège d'un administrateur seul et d'un défaut du code, **pas d'un
+  attaquant qui exécuterait du SQL sous le rôle de l'API** — celui-ci laisserait toutefois une
+  trace ineffaçable (ADR 0018). Suspendre un administrateur et modifier les paramètres de la
+  plateforme restent des actions d'une seule personne.
+- **Le TOTP ne résiste pas à l'hameçonnage en temps réel.** Les clés d'accès (WebAuthn) sont
+  la suite prévue.
+- **Connexion inhabituelle** : seule la connexion depuis un appareil inconnu est signalée,
+  d'après un identifiant que l'application fournit (à défaut, l'agent utilisateur). Pas de
+  géolocalisation, pas de réputation d'adresse IP.
+- **Suspension sans prévenir le titulaire** (`notifyUser: false`) : pouvoir sensible, tracé,
+  à réserver à un rôle de conformité quand il existera.
+- **Le back-office ne lit pas encore le journal d'audit** ni l'historique d'un compte.
+- **Recherche d'un compte par identifiant complet uniquement** (adresse, numéro, identifiant) :
+  pas de recherche par nom. C'est voulu à ce stade.
+- **Le profil est déclaré, pas vérifié** : la vérification d'identité est l'objet du lot 3.
+- **L'identifiant de connexion est l'adresse e-mail.** Le numéro de téléphone se vérifie mais
+  ne permet pas de se connecter (décision attendue).
+- **Durées de conservation** (7 jours, 90 jours…) : valeurs de départ, à confirmer avec la
+  conformité. Le journal d'audit n'est jamais purgé.
 - **Conditions d'utilisation** : seule la date d'acceptation est enregistrée, pas la version du texte.
 - **Mots de passe** : la liste des mots de passe courants refusés est courte ; pas encore de
   vérification contre les fuites connues.
 - **Blocage par un tiers** : en multipliant les échecs, un tiers peut bloquer temporairement
-  la connexion à un compte ; la réinitialisation du mot de passe lève le blocage.
-- **Purges non implémentées** : inscriptions jamais vérifiées, sessions et codes expirés.
+  la connexion à un compte ; qui connaît le mot de passe peut bloquer la seconde étape
+  (24 heures au plus). Le titulaire en est prévenu.
+- **Horloge** : sessions et codes à usage unique lisent encore directement l'heure du
+  système ; le reste du lot 2 passe par une horloge injectable, ce qui en facilite le test.
 - **Chaque requête authentifiée lit la session en base** : simple et immédiat ; un cache
   s'ajoutera si la charge le demande.
 
@@ -234,15 +341,18 @@ Socle :
 
 ## Décisions attendues
 
-1. **Prestataire d'envoi d'e-mails (puis de SMS) pour la RDC** — c'est désormais la seule
-   chose qui empêche d'ouvrir l'inscription hors développement. L'intégration se fera derrière
+1. **Prestataire d'envoi d'e-mails, puis de SMS, pour la RDC** — c'est la seule chose qui
+   empêche d'ouvrir l'inscription hors développement. L'intégration se fera derrière
    l'interface existante.
 2. **Identifiant de connexion** : l'adresse e-mail suffit-elle, ou le numéro de téléphone
-   doit-il aussi permettre de se connecter (usage courant sur le marché visé) ? À trancher
-   avant le lot 2.
-3. **Niveaux de vérification KYC et plafonds associés** ; vérification manuelle seule ou
-   prestataire de vérification d'identité — nécessaire pour le lot 3.
-4. **Conditions d'utilisation** : texte et gestion des versions.
-5. **Hébergement cible** (fournisseur, région) et exigences de localisation des données.
-6. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne
+   doit-il aussi permettre de se connecter (usage courant sur le marché visé) ? Sans réponse,
+   le lot 2 a conservé l'adresse e-mail ; le numéro est seulement vérifié.
+3. **Procédure du support pour le retrait d'un second facteur** : quelles preuves d'identité,
+   quel délai de carence.
+4. **Niveaux de vérification KYC et plafonds associés** ; vérification manuelle seule ou
+   prestataire de vérification d'identité — nécessaire pour commencer le lot 3.
+5. **Durées de conservation** des données d'identité : confirmer ou corriger les valeurs de départ.
+6. **Conditions d'utilisation** : texte et gestion des versions.
+7. **Hébergement cible** (fournisseur, région) et exigences de localisation des données.
+8. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne
    l'ordre d'ouverture des fonctionnalités.

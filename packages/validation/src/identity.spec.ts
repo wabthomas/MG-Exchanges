@@ -2,11 +2,21 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   countryCodeSchema,
+  deviceIdSchema,
   emailSchema,
+  isoDateSchema,
+  isTimeZone,
   localeSchema,
+  normalizeRecoveryCode,
   passwordSchema,
+  personNameSchema,
   phoneNumberSchema,
   presentedPasswordSchema,
+  RECOVERY_CODE_ALPHABET,
+  recoveryCodeSchema,
+  textLineSchema,
+  timeZoneSchema,
+  totpCodeSchema,
   uuidSchema,
   verificationCodeSchema,
 } from './identity.js';
@@ -90,5 +100,135 @@ describe('autres primitives d’identité', () => {
       '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d',
     );
     expect(uuidSchema.safeParse('not-a-uuid').success).toBe(false);
+  });
+});
+
+describe('second facteur', () => {
+  it('code de l’application d’authentification : six chiffres, zéros de tête compris', () => {
+    expect(totpCodeSchema.parse('000042')).toBe('000042');
+    for (const value of ['42', '12345', '1234567', '12 345', 'abcdef', '', 123456, null]) {
+      expect(totpCodeSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('l’alphabet des codes de secours écarte les lettres qui se confondent', () => {
+    expect(RECOVERY_CODE_ALPHABET).toHaveLength(32);
+    expect(new Set(RECOVERY_CODE_ALPHABET).size).toBe(32);
+    for (const ambiguous of ['I', 'L', 'O', 'U']) {
+      expect(RECOVERY_CODE_ALPHABET).not.toContain(ambiguous);
+    }
+  });
+
+  it.each([
+    ['ABCDE-12345', 'ABCDE12345'],
+    ['abcde-12345', 'ABCDE12345'],
+    [' abcde 12345 ', 'ABCDE12345'],
+    ['ABCDE12345', 'ABCDE12345'],
+    // Lettres absentes de l'alphabet, ramenées au chiffre qu'elles évoquent.
+    ['OIL0Z-1AAAA', '0110Z1AAAA'],
+    ['oooo0-iiill', '0000011111'],
+  ])('un code de secours saisi à la main est normalisé : %s', (typed, canonical) => {
+    expect(normalizeRecoveryCode(typed)).toBe(canonical);
+    expect(recoveryCodeSchema.parse(typed)).toBe(canonical);
+  });
+
+  it.each(['', 'ABCDE-1234', 'ABCDE-123456', 'ABCDE-1234U', 'ABCDE_12345', 'x'.repeat(33), 12345])(
+    'refuse le code de secours %s',
+    (value) => {
+      expect(recoveryCodeSchema.safeParse(value).success).toBe(false);
+    },
+  );
+
+  it('identifiant d’appareil : valeur opaque de 16 à 128 caractères sûrs', () => {
+    for (const value of ['a'.repeat(16), 'A1b2-C3d4_E5f6-G7h8', 'z'.repeat(128)]) {
+      expect(deviceIdSchema.parse(value)).toBe(value);
+    }
+    for (const value of [
+      'a'.repeat(15),
+      'z'.repeat(129),
+      'has spaces in the id',
+      'émoji-😀-device-id',
+      '',
+    ]) {
+      expect(deviceIdSchema.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
+describe('profil', () => {
+  it.each([
+    ['Jean', 'Jean'],
+    ['  Jean-Pierre ', 'Jean-Pierre'],
+    ["N'Kashama", "N'Kashama"],
+    ['N’Kashama', 'N’Kashama'],
+    ['Mukendi wa Kabongo', 'Mukendi wa Kabongo'],
+    ['Élisabeth', 'Élisabeth'],
+    ['St. Clair', 'St. Clair'],
+    ['محمد', 'محمد'],
+    ['x'.repeat(100), 'x'.repeat(100)],
+  ])('accepte le nom « %s »', (value, expected) => {
+    expect(personNameSchema.parse(value)).toBe(expected);
+  });
+
+  it.each([
+    '',
+    '   ',
+    'Jean2',
+    '-Jean',
+    "'Jean",
+    'Jean<script>',
+    'Jean_Pierre',
+    'a@b.cd',
+    'x'.repeat(101),
+    'Jean\nPierre',
+    42,
+  ])('refuse le nom %s', (value) => {
+    expect(personNameSchema.safeParse(value).success).toBe(false);
+  });
+
+  it('date civile : année-mois-jour, et le jour doit exister', () => {
+    expect(isoDateSchema.parse('1990-05-17')).toBe('1990-05-17');
+    expect(isoDateSchema.parse('2024-02-29')).toBe('2024-02-29');
+    for (const value of [
+      '2023-02-29',
+      '1990-13-01',
+      '17/05/1990',
+      '1990-5-17',
+      '1990-05-17T00:00:00Z',
+      '',
+      19900517,
+    ]) {
+      expect(isoDateSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('ligne de texte : bornée, espaces superflus retirés, sans caractère de contrôle', () => {
+    const line = textLineSchema(20);
+    expect(line.parse('  12, av. de la Paix ')).toBe('12, av. de la Paix');
+    expect(line.parse('x'.repeat(20))).toBe('x'.repeat(20));
+    // Un retour à la ligne final n'est qu'un espace superflu.
+    expect(line.parse('Goma\r\n')).toBe('Goma');
+    for (const value of [
+      '',
+      '   ',
+      'x'.repeat(21),
+      'ligne 1\nligne 2',
+      'tab\tulation',
+      'nul\u0000',
+      'retour\rchariot',
+      7,
+    ]) {
+      expect(line.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('fuseau horaire : un identifiant IANA connu', () => {
+    for (const value of ['Africa/Kinshasa', 'Africa/Lubumbashi', 'Europe/Paris', 'UTC']) {
+      expect(isTimeZone(value)).toBe(true);
+      expect(timeZoneSchema.parse(value)).toBe(value);
+    }
+    for (const value of ['Mars/Olympus_Mons', 'Kinshasa', '', 'x'.repeat(65), '+01:00:00:00', 1]) {
+      expect(timeZoneSchema.safeParse(value).success).toBe(false);
+    }
   });
 });

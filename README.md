@@ -4,12 +4,15 @@ Plateforme fintech permettant d'acheter, vendre, échanger, envoyer, recevoir et
 actifs numériques et des devises depuis une interface unique. Marché de lancement : la
 République démocratique du Congo ; l'architecture est prévue pour s'étendre à d'autres marchés.
 
-> **État : phase 2 en cours — comptes, authentification, sessions et autorisations sont
-> livrés ; second facteur, profil et KYC restent à faire.** Aucune fonctionnalité financière
-> n'existe : ni paiement, ni transfert, ni retrait. L'inscription est fermée par défaut.
-> L'application web, les applications mobiles et le back-office n'existent pas encore
-> (phase 7). L'avancement détaillé, les résultats de tests et les limites connues sont dans
-> [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **État : phase 2 en cours — comptes, authentification, validation en deux étapes, profil,
+> vérification du téléphone et routes d'administration des comptes sont livrés ; le KYC reste
+> à faire.**
+> Aucune fonctionnalité financière n'existe : ni paiement, ni transfert, ni retrait.
+> L'inscription est fermée par défaut, et aucun e-mail ni SMS ne part réellement (aucun
+> prestataire d'envoi n'est encore choisi).
+> Ce dépôt contient une **API** : l'application web, les applications mobiles et l'interface
+> du back-office n'existent pas encore (phase 7). L'avancement détaillé, les résultats de
+> tests et les limites connues sont dans [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## Ce que contient le dépôt
 
@@ -19,7 +22,7 @@ apps/
 packages/
   shared/              primitives métier : montants exacts (bigint), sans virgule flottante
   validation/          schémas de validation primitifs (Zod), partagés avec les futurs clients
-  contracts/           contrats de l'API : erreurs, état de la plateforme
+  contracts/           contrats de l'API : erreurs, identité, back-office, catalogue des permissions
   config/              préréglages d'outillage : TypeScript, ESLint, Jest
 infrastructure/
   docker/              image de l'API, initialisation de PostgreSQL (rôles et privilèges)
@@ -49,36 +52,43 @@ docker compose up -d
 
 # 2. Dépendances et configuration de l'API
 pnpm install
-cp apps/api/.env.example apps/api/.env   # reporter les mots de passe du fichier .env racine
-                                         # et générer AUTH_CODE_HMAC_SECRET : openssl rand -hex 32
+cp apps/api/.env.example apps/api/.env   # reporter les mots de passe du fichier .env racine, puis générer :
+                                         #   AUTH_CODE_HMAC_SECRET        openssl rand -hex 32
+                                         #   AUTH_SECRETS_ENCRYPTION_KEY  openssl rand -base64 32
 
 # 3. Schéma de base de données, compilation, lancement
 pnpm db:migrate:deploy
 pnpm build
 pnpm dev:api
 
-# 4. Premier compte d'administration (hors de l'API, voir docs/DEPLOYMENT.md)
+# 4. Comptes d'administration (hors de l'API, voir docs/DEPLOYMENT.md) — il en faut deux
+#    pour que les rôles puissent ensuite évoluer par l'API (double validation)
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
 pnpm admin:create --email admin@example.com
 ```
 
+Un administrateur doit **activer la validation en deux étapes** avant toute action du
+back-office (`POST /api/v1/me/mfa/totp/enroll`, puis `…/confirm` avec un code de son
+application d'authentification) : sans elle, les routes `/api/v1/admin/…` répondent
+`403 MFA_ENROLLMENT_REQUIRED`.
+
 L'API écoute sur `http://localhost:3000` :
 
-| URL                     | Rôle                                                        |
-| ----------------------- | ----------------------------------------------------------- |
-| `/api/docs`             | documentation interactive (Swagger UI) — développement seul |
-| `/api/v1/system/status` | état de la plateforme et fonctionnalités ouvertes           |
-| `/api/v1/auth/…`        | inscription, connexion, session, mot de passe               |
-| `/api/v1/me`            | compte connecté et ses sessions                             |
-| `/api/v1/admin/…`       | back-office (permissions requises)                          |
-| `/api/v1/dev/mailbox`   | messages « envoyés » — développement seul                   |
-| `/health/live`          | sonde de vivacité                                           |
-| `/health/ready`         | sonde de disponibilité (PostgreSQL, Redis)                  |
+| URL                     | Rôle                                                                            |
+| ----------------------- | ------------------------------------------------------------------------------- |
+| `/api/docs`             | documentation interactive (Swagger UI) — développement seul                     |
+| `/api/v1/system/status` | état de la plateforme et fonctionnalités ouvertes                               |
+| `/api/v1/auth/…`        | inscription, connexion en une ou deux étapes, mot de passe                      |
+| `/api/v1/me/…`          | compte, sessions, second facteur, profil, téléphone, historique                 |
+| `/api/v1/admin/…`       | back-office : paramètres, comptes, rôles (permissions et second facteur requis) |
+| `/api/v1/dev/mailbox`   | e-mails et SMS « envoyés » — développement seul                                 |
+| `/health/live`          | sonde de vivacité                                                               |
+| `/health/ready`         | sonde de disponibilité (PostgreSQL, Redis)                                      |
 
 Toute route exige une authentification, sauf celles explicitement publiques. L'inscription
 est fermée par défaut : un administrateur l'ouvre avec
-`PUT /api/v1/admin/system-settings/features.registration`. En développement, le code de
-vérification se lit sur `/api/v1/dev/mailbox?recipient=<adresse>`.
+`PUT /api/v1/admin/system-settings/features.registration`. En développement, les codes
+envoyés par e-mail ou par SMS se lisent sur `/api/v1/dev/mailbox?recipient=<adresse ou numéro>`.
 
 Pile entièrement conteneurisée (migrations, API, Nginx sur le port 8080) :
 

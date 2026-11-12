@@ -1,11 +1,15 @@
 import { type PermissionKey, permissionKeySchema } from '@mgx/contracts';
 import { Injectable } from '@nestjs/common';
 
+import type { UserStatus } from '@mgx/contracts';
+
 import { Prisma } from '../../../generated/prisma/client.js';
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
 import {
   EmailAlreadyTakenError,
   type NewUser,
+  type PendingRegistration,
+  PhoneAlreadyVerifiedError,
   type UserAccess,
   UserRepository,
   type UserWithPasswordHash,
@@ -77,6 +81,26 @@ export class PrismaUserRepository extends UserRepository {
     }
   }
 
+  async replacePendingRegistration(
+    tx: DbClient,
+    userId: string,
+    registration: PendingRegistration,
+  ): Promise<boolean> {
+    const { passwordHash, ...declared } = registration;
+    const { count } = await tx.user.updateMany({
+      where: { id: userId, status: 'PENDING_VERIFICATION', emailVerifiedAt: null },
+      data: declared,
+    });
+    if (count !== 1) {
+      return false;
+    }
+    await tx.userCredential.update({
+      where: { userId },
+      data: { passwordHash, passwordChangedAt: registration.termsAcceptedAt },
+    });
+    return true;
+  }
+
   async markEmailVerified(tx: DbClient, userId: string, now: Date): Promise<void> {
     await tx.user.updateMany({
       where: { id: userId, emailVerifiedAt: null },
@@ -102,6 +126,73 @@ export class PrismaUserRepository extends UserRepository {
 
   async replacePasswordHash(db: DbClient, userId: string, passwordHash: string): Promise<void> {
     await db.userCredential.update({ where: { userId }, data: { passwordHash } });
+  }
+
+  async updateLocale(tx: DbClient, userId: string, locale: string): Promise<void> {
+    await tx.user.update({ where: { id: userId }, data: { locale } });
+  }
+
+  async setVerifiedPhone(tx: DbClient, userId: string, phone: string, now: Date): Promise<void> {
+    try {
+      await tx.user.update({ where: { id: userId }, data: { phone, phoneVerifiedAt: now } });
+    } catch (error) {
+      // Index unique partiel `users_verified_phone_key` : un numéro vérifié, un seul compte.
+      if (isUniqueViolation(error)) {
+        throw new PhoneAlreadyVerifiedError();
+      }
+      throw error;
+    }
+  }
+
+  async changeStatus(
+    tx: DbClient,
+    userId: string,
+    from: UserStatus,
+    to: UserStatus,
+  ): Promise<boolean> {
+    const { count } = await tx.user.updateMany({
+      where: { id: userId, status: from },
+      data: { status: to },
+    });
+    return count === 1;
+  }
+
+  async findUnverifiedRegistrations(
+    db: DbClient,
+    registeredBefore: Date,
+    limit: number,
+  ): Promise<string[]> {
+    const rows = await db.user.findMany({
+      where: { status: 'PENDING_VERIFICATION', termsAcceptedAt: { lt: registeredBefore } },
+      orderBy: { termsAcceptedAt: 'asc' },
+      take: limit,
+      select: { id: true },
+    });
+    return rows.map(({ id }) => id);
+  }
+
+  async deleteUnverifiedRegistration(
+    tx: DbClient,
+    userId: string,
+    registeredBefore: Date,
+  ): Promise<boolean> {
+    // La ligne est verrouillée et réexaminée : une vérification de l'adresse ou une nouvelle
+    // inscription survenue entre-temps l'emporte sur la purge.
+    const locked = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT id::text AS id
+      FROM users
+      WHERE id = ${userId}::uuid
+        AND status = 'PENDING_VERIFICATION'
+        AND terms_accepted_at < ${registeredBefore}
+      FOR UPDATE
+    `);
+    if (locked.length === 0) {
+      return false;
+    }
+    await tx.verificationChallenge.deleteMany({ where: { userId } });
+    await tx.userCredential.deleteMany({ where: { userId } });
+    await tx.user.delete({ where: { id: userId } });
+    return true;
   }
 
   async findAccess(db: DbClient, userId: string): Promise<UserAccess> {

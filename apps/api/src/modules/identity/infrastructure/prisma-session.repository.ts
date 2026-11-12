@@ -6,6 +6,7 @@ import type { DbClient } from '../../../infrastructure/database/prisma.service.j
 import type { Digest } from '../application/digest.js';
 import {
   type AccessTokenOwner,
+  type DeviceHistory,
   type LockedRefreshToken,
   type NewSession,
   type NewTokenPair,
@@ -167,6 +168,20 @@ export class PrismaSessionRepository extends SessionRepository {
     return count;
   }
 
+  async deviceHistory(
+    db: DbClient,
+    userId: string,
+    deviceFingerprint: Digest | null,
+  ): Promise<DeviceHistory> {
+    const [anySession, sameDevice] = await Promise.all([
+      db.userSession.findFirst({ where: { userId }, select: { id: true } }),
+      deviceFingerprint === null
+        ? null
+        : db.userSession.findFirst({ where: { userId, deviceFingerprint }, select: { id: true } }),
+    ]);
+    return { hasSessions: anySession !== null, knownDevice: sameDevice !== null };
+  }
+
   listActive(db: DbClient, userId: string, now: Date): Promise<SessionSummary[]> {
     return db.userSession.findMany({
       where: { userId, revokedAt: null, idleExpiresAt: { gt: now }, expiresAt: { gt: now } },
@@ -182,5 +197,31 @@ export class PrismaSessionRepository extends SessionRepository {
         expiresAt: true,
       },
     });
+  }
+
+  countActive(db: DbClient, userId: string, now: Date): Promise<number> {
+    return db.userSession.count({
+      where: { userId, revokedAt: null, idleExpiresAt: { gt: now }, expiresAt: { gt: now } },
+    });
+  }
+
+  deleteEnded(db: DbClient, endedBefore: Date, limit: number): Promise<number> {
+    // Les identifiants (UUID v7) suivent l'ordre de création : « une session plus récente
+    // existe » se lit sur l'identifiant. Les jetons sont supprimés en cascade.
+    return db.$executeRaw(Prisma.sql`
+      DELETE FROM user_sessions
+      WHERE id IN (
+        SELECT s.id
+        FROM user_sessions AS s
+        WHERE s.idle_expires_at < ${endedBefore}
+          AND EXISTS (
+            SELECT 1 FROM user_sessions AS newer
+            WHERE newer.user_id = s.user_id AND newer.id > s.id
+          )
+        ORDER BY s.idle_expires_at
+        LIMIT ${limit}
+        FOR UPDATE OF s SKIP LOCKED
+      )
+    `);
   }
 }

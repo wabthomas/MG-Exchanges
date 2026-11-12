@@ -1,4 +1,4 @@
-import { emailSchema } from '@mgx/validation';
+import { emailSchema, phoneNumberSchema } from '@mgx/validation';
 import { Controller, Get, Query } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { z } from 'zod';
@@ -9,10 +9,14 @@ import { AllowDuringMaintenance } from '../../system-settings/presentation/acces
 import { NotificationSender } from '../application/notification-sender.js';
 import { InMemoryNotificationSender } from '../infrastructure/in-memory-notification-sender.js';
 
-const mailboxQuerySchema = z.strictObject({ recipient: emailSchema });
+/** Destinataire : adresse e-mail, ou numéro de téléphone (SMS) au format E.164. */
+const mailboxQuerySchema = z.strictObject({
+  recipient: z.union([phoneNumberSchema, emailSchema]),
+});
 type MailboxQuery = z.infer<typeof mailboxQuerySchema>;
 
 interface MailboxMessage {
+  readonly channel: string;
   readonly template: string;
   readonly locale: string;
   readonly subject: string;
@@ -42,6 +46,7 @@ export class DevMailboxController {
     }
     return {
       messages: this.sender.messagesFor(query.recipient).map((message) => ({
+        channel: message.channel,
         template: message.template,
         locale: message.locale,
         subject: message.subject,

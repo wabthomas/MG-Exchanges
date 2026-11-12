@@ -58,8 +58,10 @@ apps/api/src/
     audit/                journal d'audit en ajout seul
     outbox/               boîte d'envoi transactionnelle et distribution des événements
     notifications/        messages aux utilisateurs (port d'envoi, modèles, boîte de développement)
-    identity/             comptes, authentification, sessions, mots de passe, autorisations
-  cli/                    outil d'exploitation (création du premier administrateur)
+    identity/             comptes, authentification, second facteur, sessions, profil,
+                          téléphone, historique, autorisations, back-office des comptes et
+                          des rôles, purge périodique
+  cli/                    outil d'exploitation (création des premiers administrateurs)
 ```
 
 ### Chaîne de traitement d'une requête
@@ -69,10 +71,29 @@ Quatre gardes globales s'exécutent dans cet ordre, avant toute validation du co
 1. **limitation de débit** par adresse IP ;
 2. **maintenance** — `503` sauf routes `@AllowDuringMaintenance()` ;
 3. **authentification** — refus par défaut : `401` sauf routes `@Public()` ;
-4. **permissions** — `403` si la route porte `@RequirePermissions(...)` et que le compte ne
-   les détient pas.
+4. **permissions** — sur une route qui porte `@RequirePermissions(...)` : `403 FORBIDDEN` si
+   le compte ne les détient pas, puis `403 MFA_ENROLLMENT_REQUIRED` s'il n'a pas activé la
+   validation en deux étapes. Tout refus est inscrit au journal d'audit.
 
 Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
+
+### Tâches de fond
+
+| Tâche                        | Cadence        | Rôle                                                              |
+| ---------------------------- | -------------- | ----------------------------------------------------------------- |
+| relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
+| traitement des événements    | à la demande   | envoi des codes et des messages de sécurité                       |
+| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés… |
+
+Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
+les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
+
+### Deux horloges, un seul port
+
+Le temps est lu à travers le port `Clock` (`common/clock.ts`) partout où un test doit pouvoir
+le maîtriser : codes TOTP, décisions du back-office, échéances des demandes de rôle, purge.
+Les sessions et les codes à usage unique lisent encore l'horloge du système directement ;
+les faire passer par ce port est une dette connue, sans effet en exécution réelle.
 
 ### Couches d'un module métier
 
@@ -90,6 +111,15 @@ Prisma, ni aucune bibliothèque d'entrées/sorties ; la couche application ignor
 
 Les modules de plateforme (`audit`, `outbox`) sont volontairement plus minces : ils _sont_
 le mécanisme de persistance et s'appuient directement sur le client de base de données.
+
+**Quand la règle vit dans la base.** Certaines garanties ne peuvent pas reposer sur le seul
+code applicatif — précisément celles qui doivent tenir même si ce code est fautif : journal
+d'audit en ajout seul, double validation des changements de rôle. Elles sont alors
+écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
+et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
+rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
+traduit le refus de la base (`sqlStateOf`, `infrastructure/database/database-errors.ts`) en
+erreur métier.
 
 ## Principes transverses
 

@@ -5,6 +5,7 @@ import { Injectable } from '@nestjs/common';
 import { AppError } from '../../../common/errors/app-error.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import type { UserRecord } from '../domain/user.js';
+import { MfaRepository } from './mfa.repository.js';
 import { UserRepository } from './user.repository.js';
 
 /** Présentation d'un compte à son titulaire. */
@@ -12,6 +13,7 @@ import { UserRepository } from './user.repository.js';
 export class AccountService {
   constructor(
     private readonly users: UserRepository,
+    private readonly mfa: MfaRepository,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -24,7 +26,10 @@ export class AccountService {
   }
 
   async describe(user: UserRecord): Promise<CurrentUser> {
-    const access = await this.users.findAccess(this.prisma, user.id);
+    const [access, secondFactorEnabled] = await Promise.all([
+      this.users.findAccess(this.prisma, user.id),
+      this.mfa.isTotpEnabled(this.prisma, user.id),
+    ]);
     return {
       id: user.id,
       email: user.email,
@@ -37,6 +42,7 @@ export class AccountService {
       status: user.status,
       roles: [...access.roles],
       permissions: [...access.permissions],
+      secondFactorEnabled,
       createdAt: user.createdAt.toISOString(),
     };
   }

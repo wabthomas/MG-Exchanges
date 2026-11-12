@@ -7,18 +7,17 @@ import type {
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
-import { AppError } from '../../../common/errors/app-error.js';
 import { type DbClient, PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
-import { RedisRateLimiter } from '../../../infrastructure/rate-limit/redis-rate-limiter.js';
 import { AuditService } from '../../audit/application/audit.service.js';
 import { OutboxService } from '../../outbox/application/outbox.service.js';
 import { SECURITY_NOTICE_REQUESTED_EVENT } from '../domain/identity-events.js';
 import { LoginThrottle } from '../infrastructure/login-throttle.js';
 import type { ClientContext } from './client-context.js';
-import { PASSWORD_CHANGE_FAILURES_PER_ACCOUNT } from './identity-policy.js';
 import { PasswordHasher } from './password-hasher.js';
 import { assertAcceptablePassword } from './password-rules.js';
+import { PendingLoginStore } from './pending-login.store.js';
+import { ReauthenticationService } from './reauthentication.service.js';
 import { SessionRepository } from './session.repository.js';
 import { UserRepository } from './user.repository.js';
 import { invalidCodeError, VerificationService } from './verification.service.js';
@@ -32,7 +31,8 @@ export class PasswordService {
     private readonly verification: VerificationService,
     private readonly hasher: PasswordHasher,
     private readonly throttle: LoginThrottle,
-    private readonly limiter: RedisRateLimiter,
+    private readonly reauthentication: ReauthenticationService,
+    private readonly pendingLogins: PendingLoginStore,
     private readonly unitOfWork: UnitOfWork,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -47,8 +47,9 @@ export class PasswordService {
     this.verification.assertDeliveryAvailable();
 
     const user = await this.users.findByEmail(this.prisma, request.email);
-    // Un compte suspendu ou clôturé ne se rouvre pas par une réinitialisation.
-    if (user !== null && (user.status === 'ACTIVE' || user.status === 'PENDING_VERIFICATION')) {
+    // Seul un compte actif se réinitialise : un compte suspendu ou clôturé ne se rouvre pas
+    // ainsi, et une inscription inachevée ne s'achève que par la vérification de l'adresse.
+    if (user?.status === 'ACTIVE') {
       await this.unitOfWork.run(async (tx) => {
         if (await this.verification.request(tx, user, 'PASSWORD_RESET', client)) {
           await this.audit.record(tx, {
@@ -60,6 +61,27 @@ export class PasswordService {
           });
         }
       });
+    } else if (user?.status === 'PENDING_VERIFICATION') {
+      // La personne croit avoir un compte : elle est invitée, par e-mail, à reprendre
+      // l'inscription. Réinitialiser activerait un compte dont les informations déclarées
+      // et l'acceptation des conditions peuvent venir de quelqu'un d'autre.
+      await this.unitOfWork.run(async (tx) => {
+        await this.audit.record(tx, {
+          actor: { type: 'SYSTEM' },
+          action: 'user.password_reset_requested',
+          resource: { type: 'user', id: user.id },
+          outcome: 'DENIED',
+          ...client,
+          metadata: { reason: 'REGISTRATION_INCOMPLETE' },
+        });
+        await this.outbox.append(tx, {
+          aggregateType: 'user',
+          aggregateId: user.id,
+          eventType: SECURITY_NOTICE_REQUESTED_EVENT,
+          payload: { userId: user.id, notice: 'REGISTRATION_INCOMPLETE' },
+          metadata: { requestId: client.requestId },
+        });
+      });
     }
     return { nextStep: 'RESET_PASSWORD', codeTtlSeconds: this.verification.codeTtlSeconds };
   }
@@ -70,7 +92,7 @@ export class PasswordService {
 
     const now = new Date();
     const user = await this.users.findByEmail(this.prisma, request.email);
-    if (user === null) {
+    if (user?.status !== 'ACTIVE') {
       throw invalidCodeError();
     }
 
@@ -93,9 +115,8 @@ export class PasswordService {
         return false;
       }
       await this.users.updatePasswordHash(tx, user.id, passwordHash, now);
-      // Le code est arrivé dans la boîte aux lettres : l'adresse est, de fait, vérifiée.
-      await this.users.markEmailVerified(tx, user.id, now);
-      // Quiconque détenait une session — y compris un intrus — la perd.
+      // Quiconque détenait une session — y compris un intrus — la perd. Le second facteur,
+      // lui, reste en place : l'accès à la boîte aux lettres ne suffit pas à le contourner.
       const revokedSessions = await this.sessions.revokeAllForUser(
         tx,
         user.id,
@@ -117,6 +138,8 @@ export class PasswordService {
       throw invalidCodeError();
     }
 
+    // Une connexion restée en attente du second facteur a été ouverte avec l'ancien mot de passe.
+    await this.pendingLogins.invalidateAllForUser(user.id);
     await this.throttle.clearAccount(user.email, client.ipAddress ?? 'unknown');
   }
 
@@ -125,32 +148,13 @@ export class PasswordService {
     request: ChangePasswordRequest,
     client: ClientContext,
   ): Promise<void> {
-    const failuresKey = `password-change-failures:${auth.userId}`;
-    const blockedFor = await this.limiter.blockedForSeconds(failuresKey);
-    if (blockedFor > 0) {
-      throw new AppError('RATE_LIMITED', 'Too many failed attempts. Please try again later.', {
-        retryAfterSeconds: blockedFor,
-      });
-    }
-
-    const user = await this.users.findById(this.prisma, auth.userId);
-    const currentHash = await this.users.findPasswordHash(this.prisma, auth.userId);
-    if (user === null || currentHash === null) {
-      throw new AppError('UNAUTHENTICATED', 'Authentication is required.');
-    }
-
     // Une session ouverte ne suffit pas : le mot de passe actuel prouve que c'est bien le titulaire.
-    if (!(await this.hasher.verify(currentHash, request.currentPassword))) {
-      await this.limiter.consume(failuresKey, PASSWORD_CHANGE_FAILURES_PER_ACCOUNT);
-      await this.audit.record(this.prisma, {
-        actor: { type: 'USER', id: user.id },
-        action: 'user.password_change_failed',
-        resource: { type: 'user', id: user.id },
-        outcome: 'FAILURE',
-        ...client,
-      });
-      throw new AppError('INVALID_CREDENTIALS', 'The current password is incorrect.');
-    }
+    const user = await this.reauthentication.confirmPassword(
+      auth,
+      request.currentPassword,
+      client,
+      'user.password_change_failed',
+    );
     assertAcceptablePassword(request.newPassword, user, 'newPassword');
 
     const now = new Date();
@@ -174,7 +178,7 @@ export class PasswordService {
       });
       await this.notifyPasswordChanged(tx, user.id, client);
     });
-    await this.limiter.reset(failuresKey);
+    await this.pendingLogins.invalidateAllForUser(user.id);
   }
 
   private async notifyPasswordChanged(

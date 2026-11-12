@@ -36,10 +36,13 @@ peut l'écrire peut faire rejouer ou ignorer une migration au déploiement suiva
 applicatif n'y a **aucun accès**, pas même en lecture.
 
 Les droits d'administration (`permissions`, `roles`, `role_permissions`, `user_roles`) sont
-en **lecture seule** pour le rôle applicatif : ils ne changent que par migration ou par
-l'outil d'amorçage en ligne de commande, exécutés avec le rôle propriétaire. Une API
-compromise ne peut donc pas s'attribuer de droits. Ce verrou sera desserré, de façon ciblée,
-lorsque l'attribution des rôles depuis le back-office sera livrée.
+en **lecture seule** pour le rôle applicatif. Le catalogue ne change que par migration. Une
+attribution (`user_roles`) ne change que de deux façons : l'outil d'amorçage en ligne de
+commande, exécuté avec le rôle propriétaire ; ou l'**approbation d'une demande de changement
+de rôle**, que la base applique elle-même (voir `role_change_requests`). L'API n'écrit donc
+jamais directement une attribution : chacune résulte d'une demande approuvée, qui en reste la
+trace ineffaçable. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
+elle ne peut pas vérifier que ce sont bien eux qui agissent (limite décrite dans l'ADR 0018).
 
 En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
 utilisée pour les migrations.
@@ -119,7 +122,9 @@ Index : `(aggregate_type, aggregate_id)` et l'index partiel
 
 Contraintes : adresse normalisée et bien formée, téléphone E.164, code pays en majuscules,
 **un compte `ACTIVE` a toujours une adresse vérifiée**. Un compte n'est jamais supprimé :
-il est clôturé (toutes les clés étrangères vers `users` sont `ON DELETE RESTRICT`).
+il est clôturé (toutes les clés étrangères vers `users` sont `ON DELETE RESTRICT`). Seule
+exception : une **inscription jamais vérifiée** (`PENDING_VERIFICATION`), qui n'est pas encore
+un compte, est supprimée après 7 jours avec son secret et ses codes.
 
 ### `user_credentials` — secret d'authentification
 
@@ -130,15 +135,61 @@ valeur — un mot de passe en clair ne peut pas y être écrit, même par erreur
 ### `permissions`, `roles`, `role_permissions`, `user_roles` — droits du back-office
 
 `permissions` est la copie du catalogue du code (`@mgx/contracts`) ; un test vérifie que les
-deux sont identiques. `roles` contient les rôles système (`super_admin`, qui détient toutes
-les permissions). `user_roles` attribue un rôle à un compte (`granted_by` : auteur, `NULL`
-pour l'amorçage). Tables en lecture seule pour le rôle applicatif (voir « Rôles et privilèges »).
+deux sont identiques, rôle par rôle. `roles` contient les rôles système : `super_admin`
+(toutes les permissions) et `support` (`users.read`, `users.suspend`,
+`users.revoke_sessions`). `user_roles` attribue un rôle à un compte (`granted_by` : auteur de
+la demande approuvée, `NULL` pour l'amorçage). Tables en lecture seule pour le rôle
+applicatif (voir « Rôles et privilèges »).
+
+### `role_change_requests` — changements de rôle sous double validation
+
+| Colonne                                      | Notes                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------- |
+| `user_id`, `role_id`, `action`               | compte concerné, rôle, `GRANT` ou `REVOKE`                       |
+| `reason`                                     | justification de la demande                                      |
+| `status`                                     | `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED`, `EXPIRED`        |
+| `requested_by`, `requested_at`, `expires_at` | auteur, date, échéance (72 heures)                               |
+| `decided_by`, `decided_at`, `decision_note`  | auteur et date de la décision ; `decided_by` est `NULL` si échue |
+
+**La règle des quatre yeux est portée par la base**, pas seulement par l'API :
+
+- contraintes : nul ne demande un changement de ses propres rôles ; une approbation ou un
+  refus vient d'un compte qui n'est ni l'auteur de la demande ni l'intéressé ; seul l'auteur
+  retire sa demande ; une décision est complète (datée, attribuée) ; une seule demande en
+  attente par compte et par rôle ;
+- déclencheur `role_change_requests_enforce` (fonction `mgx_enforce_role_change()`,
+  `SECURITY DEFINER`, chemin de recherche figé) : une demande naît en attente ; ses termes ne
+  changent jamais ; une demande décidée ne se redécide pas ; **à l'approbation**, la fonction
+  vérifie que la demande n'est pas échue, que son auteur et l'approbateur sont actifs et
+  détiennent `roles.manage`, qu'un rôle ne va qu'à un compte actif — puis écrit elle-même
+  dans `user_roles`. Elle prend d'abord un verrou consultatif
+  (`pg_advisory_xact_lock`, clé `role_change:approval`) : les approbations sont appliquées
+  une à une, chacune vérifiée sur un état que la précédente a déjà validé. Toute règle
+  enfreinte lève l'erreur `MGX02` ;
+- une demande ne s'efface pas (`MGX01`) : elle est la trace de la décision.
+
+### `user_profiles` — profil déclaré
+
+Prénom, nom, postnom (`additional_name`), date de naissance, adresse, fuseau horaire : une
+ligne par compte, créée à la première modification. Ces informations sont **déclarées** par
+le titulaire ; rien ne les a vérifiées. Contraintes : noms non vides, naissance ≥ 1900 (la
+majorité est vérifiée par l'API, qui connaît la date du jour).
+
+### `user_totp_credentials`, `user_recovery_codes` — validation en deux étapes
+
+`user_totp_credentials` : une ligne par compte. `secret_ciphertext` est le secret TOTP
+**chiffré** (AES-256-GCM, clé hors base) : version (1 octet) ‖ nonce (12) ‖ secret chiffré
+(20) ‖ sceau (16) — une contrainte refuse toute autre forme, donc un secret en clair.
+`confirmed_at` est `NULL` tant que l'enrôlement n'est pas confirmé ; `last_used_step` retient
+le dernier pas de temps accepté (un code ne sert qu'une fois).
+`user_recovery_codes` : une ligne par code de secours, **empreinte HMAC-SHA-256 uniquement**
+(contrainte de longueur), `used_at` marque l'usage.
 
 ### `verification_challenges` — codes à usage unique
 
 | Colonne                                       | Notes                                                                  |
 | --------------------------------------------- | ---------------------------------------------------------------------- |
-| `purpose`                                     | `EMAIL_VERIFICATION`, `PASSWORD_RESET`                                 |
+| `purpose`                                     | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `PHONE_VERIFICATION`           |
 | `target`                                      | adresse à laquelle le code est envoyé — la seule qu'il vérifie         |
 | `code_hash`                                   | HMAC-SHA-256 du code, clé hors base ; `NULL` tant qu'il n'est pas émis |
 | `attempts`, `max_attempts`                    | essais comptés ; la base refuse tout dépassement                       |
@@ -150,7 +201,9 @@ compte et par usage.
 ### `user_sessions`, `session_tokens` — sessions
 
 `user_sessions` : une ligne par connexion (appareil, adresse IP, agent utilisateur, échéances
-d'inactivité et absolue, révocation et son motif). `session_tokens` : une ligne par paire de
+d'inactivité et absolue, révocation et son motif). `device_fingerprint` est l'empreinte
+SHA-256 de l'identifiant d'appareil (jamais l'identifiant lui-même) : elle sert à reconnaître
+un appareil déjà utilisé par le compte. `session_tokens` : une ligne par paire de
 jetons émise ; seules les **empreintes SHA-256** des jetons sont stockées (contrainte de
 longueur : 32 octets), `consumed_at` marque le renouvellement. Les paires renouvelées depuis
 plus de 24 heures sont supprimées au renouvellement suivant.
@@ -179,9 +232,27 @@ Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** 
 | `session_tokens_hash_length_check`                                                                                                                                                | `session_tokens`                                         |
 | données initiales : catalogue des permissions, rôle `super_admin`                                                                                                                 | `permissions`, `roles`, `role_permissions`               |
 | retrait des privilèges d'écriture aux rôles non propriétaires                                                                                                                     | `permissions`, `roles`, `role_permissions`, `user_roles` |
+| `user_totp_credentials_ciphertext_format_check`, `user_totp_credentials_last_used_step_check`                                                                                     | `user_totp_credentials`                                  |
+| `user_recovery_codes_hash_length_check`                                                                                                                                           | `user_recovery_codes`                                    |
+| `user_profiles_names_not_blank_check`, `user_profiles_date_of_birth_check`                                                                                                        | `user_profiles`                                          |
+| `user_sessions_device_fingerprint_length_check`                                                                                                                                   | `user_sessions`                                          |
+| `role_change_requests_reason_not_blank_check`, `…_expiry_check`, `…_not_self_requested_check`, `…_decision_check`, `…_four_eyes_check`, `…_cancelled_by_requester_check`          | `role_change_requests`                                   |
+| index unique partiel `role_change_requests_pending_key`                                                                                                                           | `role_change_requests`                                   |
+| fonction `mgx_enforce_role_change()` (`SECURITY DEFINER`, `search_path` figé, `EXECUTE` retiré à `PUBLIC`) ; déclencheur `role_change_requests_enforce`                           | `role_change_requests`, `user_roles`                     |
+| déclencheurs `role_change_requests_no_delete`, `role_change_requests_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                 | `role_change_requests`                                   |
+| index partiel `users_pending_registration_idx` (purge des inscriptions jamais vérifiées)                                                                                          | `users`                                                  |
+| données initiales : permissions du back-office, rôle `support`                                                                                                                    | `permissions`, `roles`, `role_permissions`               |
 
-Leur présence et leur effet sont vérifiés par
-`apps/api/test/integration/database-constraints.spec.ts` et `identity-schema.spec.ts`.
+Leur présence et leur effet sont vérifiés par les tests d'intégration
+`database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`
+et `back-office-schema.spec.ts` (dans `apps/api/test/integration/`).
+
+**Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
+
+| Code    | Signification                                                   |
+| ------- | --------------------------------------------------------------- |
+| `MGX01` | modification ou suppression interdite d'une table en ajout seul |
+| `MGX02` | règle de la double validation d'un changement de rôle enfreinte |
 
 ## Migrations
 
@@ -226,13 +297,23 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 | `audit_logs`                | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                            |
 | `outbox_events`             | les événements publiés pourront être purgés après un délai — purge non implémentée                          |
 | `system_settings`           | historique complet des changements dans `audit_logs`                                                        |
-| `users`, `user_credentials` | conservés ; un compte clôturé n'est pas supprimé. Purge des inscriptions jamais vérifiées : non implémentée |
-| `user_sessions`             | sessions expirées ou révoquées conservées (historique de sécurité) ; purge non implémentée                  |
-| `session_tokens`            | paires renouvelées supprimées après 24 heures                                                               |
-| `verification_challenges`   | conservés après usage ou expiration ; purge non implémentée                                                 |
+| `users`, `user_credentials` | conservés ; un compte clôturé n'est pas supprimé. **Inscription jamais vérifiée : supprimée après 7 jours** |
+| `user_sessions`             | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte            |
+| `session_tokens`            | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                |
+| `verification_challenges`   | supprimés **7 jours** après leur expiration                                                                 |
+| `user_totp_credentials`     | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé              |
+| `role_change_requests`      | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                     |
+| `user_profiles`             | conservés avec le compte                                                                                    |
+
+La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file
+`account-maintenance`), bornée à 500 lignes par catégorie et par exécution. Chaque
+suppression d'inscription est écrite au journal d'audit (`user.registration_purged`). La
+dernière session de chaque compte est conservée : elle atteste qu'il s'est déjà connecté, ce
+dont dépend l'avertissement de connexion depuis un nouvel appareil. Ces durées sont des
+valeurs de départ, à confirmer avec la conformité (phase 8).
 
 ## Tables à venir
 
-Le modèle cible (profils, KYC, portefeuilles, grand livre en partie double, échanges,
+Le modèle cible (KYC, portefeuilles, grand livre en partie double, échanges,
 paiements, blockchain, P2P, séquestre, risque, support…) sera introduit phase par phase,
 chaque table arrivant avec le module qui l'utilise, ses contraintes et ses tests.

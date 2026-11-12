@@ -1,11 +1,14 @@
 import {
   countryCodeSchema,
+  deviceIdSchema,
   emailSchema,
   isoDateTimeSchema,
   localeSchema,
   passwordSchema,
   phoneNumberSchema,
   presentedPasswordSchema,
+  recoveryCodeSchema,
+  totpCodeSchema,
   uuidSchema,
   verificationCodeSchema,
 } from '@mgx/validation';
@@ -51,9 +54,16 @@ export const verificationPendingSchema = z.object({
 });
 export type VerificationPending = z.infer<typeof verificationPendingSchema>;
 
+/**
+ * Le mot de passe choisi à l'inscription accompagne le code : l'adresse n'est vérifiée — et le
+ * compte activé — que par la personne qui connaît **les deux**. Sans cela, un tiers pourrait
+ * préparer un compte à l'adresse d'autrui, avec son propre mot de passe, et attendre que le
+ * titulaire de la boîte aux lettres l'active à sa place.
+ */
 export const verifyEmailRequestSchema = z.strictObject({
   email: emailSchema,
   code: verificationCodeSchema,
+  password: presentedPasswordSchema,
 });
 export type VerifyEmailRequest = z.infer<typeof verifyEmailRequestSchema>;
 
@@ -70,6 +80,12 @@ export const loginRequestSchema = z.strictObject({
   password: presentedPasswordSchema,
   /** Nom affiché dans la liste des sessions (« iPhone de Jean »). */
   deviceName: z.string().trim().min(1).max(DEVICE_NAME_MAX_LENGTH).optional(),
+  /**
+   * Identifiant aléatoire créé par l'application à son installation et conservé sur
+   * l'appareil. Il permet de reconnaître un appareil déjà utilisé : une connexion depuis un
+   * appareil inconnu est signalée au titulaire du compte.
+   */
+  deviceId: deviceIdSchema.optional(),
 });
 export type LoginRequest = z.infer<typeof loginRequestSchema>;
 
@@ -101,21 +117,63 @@ export const currentUserSchema = z.object({
   roles: z.array(z.string()),
   /** Permissions effectives, issues des rôles. */
   permissions: z.array(permissionKeySchema),
+  /** Vrai si la validation en deux étapes est activée. Elle est exigée pour le back-office. */
+  secondFactorEnabled: z.boolean(),
   createdAt: isoDateTimeSchema,
 });
 export type CurrentUser = z.infer<typeof currentUserSchema>;
 
-/**
- * Réponse de connexion. Les clients doivent se fonder sur `status` : d'autres valeurs
- * (second facteur requis…) s'ajouteront sans changement de version.
- */
-export const loginResponseSchema = z.object({
+/** Session ouverte : la connexion est terminée. */
+export const authenticatedLoginSchema = z.object({
   status: z.literal('AUTHENTICATED'),
   tokens: tokenPairSchema,
   sessionId: uuidSchema,
   user: currentUserSchema,
 });
+export type AuthenticatedLogin = z.infer<typeof authenticatedLoginSchema>;
+
+/** Moyens de franchir la seconde étape : code de l'application d'authentification, ou code de secours. */
+export const SECOND_FACTOR_METHODS = ['TOTP', 'RECOVERY_CODE'] as const;
+export type SecondFactorMethod = (typeof SECOND_FACTOR_METHODS)[number];
+
+/**
+ * Mot de passe correct, mais le compte exige une seconde étape : aucune session n'est encore
+ * ouverte. Présenter `mfaToken` et un code à `POST /auth/mfa/verify` avant son expiration.
+ */
+export const mfaRequiredLoginSchema = z.object({
+  status: z.literal('MFA_REQUIRED'),
+  /** Jeton à usage unique de la connexion en cours. N'ouvre aucun droit par lui-même. */
+  mfaToken: z.string(),
+  mfaTokenExpiresAt: isoDateTimeSchema,
+  methods: z.array(z.enum(SECOND_FACTOR_METHODS)),
+});
+export type MfaRequiredLogin = z.infer<typeof mfaRequiredLoginSchema>;
+
+/**
+ * Réponse de connexion. Les clients doivent se fonder sur `status` : d'autres valeurs
+ * pourront s'ajouter sans changement de version.
+ */
+export const loginResponseSchema = z.discriminatedUnion('status', [
+  authenticatedLoginSchema,
+  mfaRequiredLoginSchema,
+]);
 export type LoginResponse = z.infer<typeof loginResponseSchema>;
+
+/**
+ * Seconde étape de la connexion : le jeton reçu avec `MFA_REQUIRED`, et **soit** le code de
+ * l'application d'authentification, **soit** un code de secours (à usage unique).
+ */
+export const mfaLoginRequestSchema = z
+  .strictObject({
+    mfaToken: z.string().min(1).max(256),
+    code: totpCodeSchema.optional(),
+    recoveryCode: recoveryCodeSchema.optional(),
+  })
+  .refine((value) => (value.code === undefined) !== (value.recoveryCode === undefined), {
+    error: 'Provide either "code" or "recoveryCode".',
+    path: ['code'],
+  });
+export type MfaLoginRequest = z.infer<typeof mfaLoginRequestSchema>;
 
 export const refreshRequestSchema = z.strictObject({
   refreshToken: z.string().min(1).max(256),

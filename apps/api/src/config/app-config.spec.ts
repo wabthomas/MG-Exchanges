@@ -4,10 +4,13 @@ import { ConfigValidationError, loadAppConfig } from './app-config.js';
 
 const DB_PASSWORD = 'sup3r-s3cret-db-password';
 const CODE_SECRET = 'code-hmac-secret-0123456789abcdef-0123456789abcdef';
+/** 32 octets en base64 — clé de test uniquement. */
+const ENCRYPTION_KEY = Buffer.from('unit-test-secrets-encryption-key').toString('base64');
 const minimal = {
   DATABASE_URL: `postgresql://mgx_app:${DB_PASSWORD}@db.internal:5432/mgx`,
   REDIS_URL: 'redis://cache.internal:6379/0',
   AUTH_CODE_HMAC_SECRET: CODE_SECRET,
+  AUTH_SECRETS_ENCRYPTION_KEY: ENCRYPTION_KEY,
 };
 const production = { ...minimal, NODE_ENV: 'production', APP_ENV: 'production' };
 
@@ -185,6 +188,7 @@ describe('configuration de l’identité et des notifications', () => {
     expect(auth).toEqual({
       codeHmacSecret: CODE_SECRET,
       codeTtlSeconds: 900,
+      secretsEncryptionKey: ENCRYPTION_KEY,
       accessTokenTtlMs: 10 * 60_000,
       sessionIdleTtlMs: 14 * 24 * 3600_000,
       sessionAbsoluteTtlMs: 60 * 24 * 3600_000,
@@ -202,6 +206,27 @@ describe('configuration de l’identité et des notifications', () => {
     const problems = problemsOf({ ...minimal, AUTH_CODE_HMAC_SECRET: short });
     expect(problems).toEqual(['AUTH_CODE_HMAC_SECRET: Must be at least 32 characters.']);
     expect(problems.join(' ')).not.toContain(short);
+  });
+
+  it('exige une clé de chiffrement de 32 octets en base64, sans jamais l’afficher', () => {
+    const { AUTH_SECRETS_ENCRYPTION_KEY: _removed, ...withoutKey } = minimal;
+    expect(problemsOf(withoutKey)).toEqual(['AUTH_SECRETS_ENCRYPTION_KEY: is required.']);
+
+    const expected = [
+      'AUTH_SECRETS_ENCRYPTION_KEY: Must be 32 random bytes encoded in base64 (openssl rand -base64 32).',
+    ];
+    for (const malformed of [
+      Buffer.alloc(16, 1).toString('base64'), // 128 bits : trop court
+      Buffer.alloc(33, 1).toString('base64'), // trop long
+      Buffer.alloc(32, 1).toString('hex'), // 32 octets, mais pas en base64
+      `${ENCRYPTION_KEY.slice(0, -2)}*=`, // caractère hors alphabet
+      'a-passphrase-is-not-a-key-of-32-random-bytes',
+    ]) {
+      const problems = problemsOf({ ...minimal, AUTH_SECRETS_ENCRYPTION_KEY: malformed });
+      expect(problems).toEqual(expected);
+      expect(problems.join(' ')).not.toContain(malformed);
+    }
+    expect(loadAppConfig(minimal).auth.secretsEncryptionKey).toBe(ENCRYPTION_KEY);
   });
 
   it('refuse une durée d’inactivité supérieure à la durée de vie maximale d’une session', () => {

@@ -26,21 +26,22 @@ par environnement (`mgx:<APP_ENV>:`).
 
 Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env.example).
 
-| Variable                 | Obligatoire           | Rôle                                                                                             |
-| ------------------------ | --------------------- | ------------------------------------------------------------------------------------------------ |
-| `APP_ENV`, `NODE_ENV`    | recommandé            | environnement                                                                                    |
-| `DATABASE_URL`           | oui                   | PostgreSQL, **rôle applicatif**                                                                  |
-| `DATABASE_MIGRATION_URL` | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                       |
-| `SHADOW_DATABASE_URL`    | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production |
-| `REDIS_URL`              | oui                   | Redis (`rediss://` pour TLS)                                                                     |
-| `QUEUE_REDIS_URL`        | non                   | Redis dédié aux files (politique `noeviction`)                                                   |
-| `TRUST_PROXY_HOPS`       | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                 |
-| `CORS_ALLOWED_ORIGINS`   | selon clients         | origines autorisées                                                                              |
-| `LOG_LEVEL`              | non                   | `info` par défaut                                                                                |
-| `AUTH_CODE_HMAC_SECRET`  | oui                   | clé du HMAC des codes à usage unique (32 caractères au moins) — secret                           |
-| `AUTH_*_TTL_SECONDS`     | non                   | durées des codes, des jetons d'accès et des sessions                                             |
-| `AUTH_PASSWORD_HASH_*`   | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production           |
-| `NOTIFICATION_DELIVERY`  | non                   | `memory` (développement, tests) ou `none` ; `memory` interdit en staging et en production        |
+| Variable                      | Obligatoire           | Rôle                                                                                                             |
+| ----------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`, `NODE_ENV`         | recommandé            | environnement                                                                                                    |
+| `DATABASE_URL`                | oui                   | PostgreSQL, **rôle applicatif**                                                                                  |
+| `DATABASE_MIGRATION_URL`      | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                                       |
+| `SHADOW_DATABASE_URL`         | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production                 |
+| `REDIS_URL`                   | oui                   | Redis (`rediss://` pour TLS)                                                                                     |
+| `QUEUE_REDIS_URL`             | non                   | Redis dédié aux files (politique `noeviction`)                                                                   |
+| `TRUST_PROXY_HOPS`            | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                                 |
+| `CORS_ALLOWED_ORIGINS`        | selon clients         | origines autorisées                                                                                              |
+| `LOG_LEVEL`                   | non                   | `info` par défaut                                                                                                |
+| `AUTH_CODE_HMAC_SECRET`       | oui                   | clé du HMAC des codes à usage unique et des codes de secours (32 caractères au moins) — secret                   |
+| `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder** |
+| `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                             |
+| `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                           |
+| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests) ou `none` ; `memory` interdit en staging et en production                        |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
@@ -83,14 +84,42 @@ est corrigée par une nouvelle migration. Procédure détaillée et testée : ph
 `infrastructure/docker/postgres/sql/grant-app-privileges.sql` (voir `DATABASE.md`) avant
 la première migration.
 
-**Rotation de `AUTH_CODE_HMAC_SECRET`.** Les codes en cours deviennent invalides (il suffit
-d'en redemander un) ; les sessions ne sont pas affectées.
+**Rotation de `AUTH_CODE_HMAC_SECRET`.** Les codes à usage unique en cours deviennent
+invalides (il suffit d'en redemander un) ; les sessions ne sont pas affectées. **Les codes de
+secours de la validation en deux étapes deviennent eux aussi invalides** : chaque titulaire
+doit les régénérer (ce qui exige un code de son application d'authentification). À ne faire
+qu'en cas de compromission de la clé, en prévenant les utilisateurs.
 
-## Premier compte d'administration
+**`AUTH_SECRETS_ENCRYPTION_KEY` : sauvegarde obligatoire, rotation non encore outillée.**
+Cette clé chiffre le secret du second facteur de chaque compte. Générer :
+`openssl rand -base64 32`.
 
-Aucune route de l'API ne permet d'obtenir un rôle. Le premier administrateur se crée en ligne
-de commande, avec le **rôle propriétaire** de la base (celui des migrations), seul autorisé à
-attribuer un rôle. L'opération est inscrite au journal d'audit.
+- **La perdre désactive tous les seconds facteurs** : plus aucun code ne peut être vérifié, et
+  chaque compte protégé — administrateurs compris — reste bloqué à la seconde étape jusqu'à ce
+  que le support retire son second facteur. Elle doit être sauvegardée séparément de la base.
+- **La changer a le même effet** : il n'existe pas encore de procédure de rotation (le format
+  de stockage réserve un octet de version pour l'introduire sans migration des données).
+- Une sauvegarde de la base sans cette clé ne contient aucun secret TOTP exploitable ; une
+  sauvegarde de la base **avec** cette clé les contient tous : ne pas les stocker ensemble.
+
+**Tâches planifiées.** L'API exécute elle-même, par BullMQ (un planificateur partagé par
+toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **purge des
+données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
+expirés, enrôlements abandonnés, demandes de rôle échues — durées dans `DATABASE.md`). Un
+échec est journalisé (`Account maintenance step failed`) et visible dans la file
+`account-maintenance` ; l'exécution suivante réessaie.
+
+## Premiers comptes d'administration
+
+Aucune route de l'API ne permet d'obtenir un rôle sans l'accord de deux administrateurs. Les
+premiers se créent donc en ligne de commande, avec le **rôle propriétaire** de la base (celui
+des migrations), seul autorisé à écrire une attribution. L'opération est inscrite au journal
+d'audit.
+
+**Il en faut au moins deux**, détenus par deux personnes : tout changement de rôle par l'API
+exige qu'un administrateur le demande et qu'un _autre_ l'approuve. Avec un seul
+administrateur, les rôles ne peuvent plus évoluer que par cet outil — qui reste aussi le
+recours si tous les administrateurs perdent leur accès.
 
 ```bash
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD   # saisie masquée, 10 caractères au moins
@@ -103,21 +132,35 @@ docker compose --profile app run --rm --env MGX_ADMIN_PASSWORD \
   migrate node dist/cli/main.js admin:create --email admin@example.com
 ```
 
-Le compte reçoit le rôle `super_admin`. C'est lui qui ouvre ensuite les fonctionnalités
-(`PUT /api/v1/admin/system-settings/features.registration`…). Le mot de passe est haché avec
-le coût exigé en production, quel que soit l'environnement.
+Le compte reçoit le rôle `super_admin`. Le mot de passe est haché avec le coût exigé en
+production, quel que soit l'environnement.
+
+**Avant toute action d'administration, le compte doit activer la validation en deux étapes** :
+se connecter, puis `POST /api/v1/me/mfa/totp/enroll` et `POST /api/v1/me/mfa/totp/confirm`
+(voir `API.md`). Tant que ce n'est pas fait, toute route du back-office répond
+`403 MFA_ENROLLMENT_REQUIRED`. Conserver les codes de secours en lieu sûr. Le compte peut
+ensuite ouvrir les fonctionnalités
+(`PUT /api/v1/admin/system-settings/features.registration`…) et demander l'attribution du
+rôle `support` aux agents (`POST /api/v1/admin/role-changes`).
 
 ## Notifications
 
 Aucun prestataire d'e-mail ou de SMS n'est encore branché (décision en attente). En
 conséquence :
 
-- en local, en développement et en test, les messages restent en mémoire et se lisent sur
-  `GET /api/v1/dev/mailbox?recipient=<adresse>` ;
-- en pré-production et en production, rien ne part : l'inscription et la réinitialisation du
-  mot de passe répondent `503` — **l'inscription ne peut donc pas être ouverte au public
-  avant le choix d'un prestataire**. Un administrateur créé en ligne de commande peut, lui,
-  se connecter.
+- en local, en développement et en test, les messages — e-mails et SMS — restent en mémoire
+  et se lisent sur `GET /api/v1/dev/mailbox?recipient=<adresse ou numéro>` ;
+- en pré-production et en production, rien ne part : l'inscription, la réinitialisation du
+  mot de passe et la vérification du téléphone répondent `503` — **l'inscription ne peut donc
+  pas être ouverte au public avant le choix d'un prestataire**. Un administrateur créé en
+  ligne de commande peut, lui, se connecter et activer sa validation en deux étapes (qui ne
+  dépend d'aucun envoi) ;
+- les **messages de sécurité** (nouvelle connexion, second facteur modifié, compte suspendu…)
+  ne partent pas davantage : sans prestataire, les titulaires ne sont pas prévenus. C'est une
+  raison de plus de ne pas ouvrir au public avant ce choix.
+
+Les deux canaux sont distincts : un prestataire d'e-mail seul laisse la vérification du
+téléphone indisponible (`503`), sans autre effet.
 
 ## Environnement local avec Docker Compose
 
@@ -176,7 +219,8 @@ Il s'exécute ensuite à chaque demande de fusion et sur `main` :
 2. **docker** — validation de la configuration Compose, construction des images, démarrage
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
    à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
-   ouverture de l'inscription, inscription, vérification, connexion, contrôle des droits),
+   activation de sa validation en deux étapes, ouverture de l'inscription, inscription,
+   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office),
    puis contrôle de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme
    créée par le script d'initialisation.
 

@@ -1,12 +1,12 @@
-import type { RenderedNotification } from '../domain/notification.js';
+import type { NotificationChannel, RenderedNotification } from '../domain/notification.js';
 
 /**
- * Port de remise des messages (e-mail aujourd'hui, SMS et notifications poussées ensuite).
+ * Port de remise des messages (e-mail, SMS ; notifications poussées ensuite).
  * Chaque prestataire d'envoi en sera une implémentation ; le reste de l'application l'ignore.
  */
 export abstract class NotificationSender {
-  /** Faux lorsqu'aucun moyen de remise n'est configuré : aucun message ne peut partir. */
-  abstract readonly operational: boolean;
+  /** Faux lorsqu'aucun moyen de remise n'est configuré pour ce canal : aucun message ne peut partir. */
+  abstract supports(channel: NotificationChannel): boolean;
 
   /** Remet le message, ou lève une exception (l'appelant réessaiera). */
   abstract deliver(notification: RenderedNotification): Promise<void>;

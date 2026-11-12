@@ -144,7 +144,8 @@ enum UserStatus {
 }
 
 /// Compte d'un utilisateur — client ou membre du personnel. Un compte n'est jamais supprimé
-/// physiquement : il est clôturé (`CLOSED`).
+/// physiquement : il est clôturé (`CLOSED`). Seule exception : une inscription dont l'adresse
+/// n'a jamais été vérifiée, qui n'est pas encore un compte, est purgée après quelques jours.
 model User {
   id              String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
   accountType     AccountType @default(INDIVIDUAL) @map("account_type")
@@ -165,13 +166,49 @@ model User {
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  credential   UserCredential?
-  roles        UserRole[]              @relation("RoleHolder")
-  grantedRoles UserRole[]              @relation("RoleGrantor")
-  sessions     UserSession[]
-  challenges   VerificationChallenge[]
+  credential    UserCredential?
+  profile       UserProfile?
+  totp          UserTotpCredential?
+  recoveryCodes UserRecoveryCode[]
+  roles         UserRole[]              @relation("RoleHolder")
+  grantedRoles  UserRole[]              @relation("RoleGrantor")
+  sessions      UserSession[]
+  challenges    VerificationChallenge[]
 
+  roleChanges          RoleChangeRequest[] @relation("RoleChangeTarget")
+  requestedRoleChanges RoleChangeRequest[] @relation("RoleChangeRequester")
+  decidedRoleChanges   RoleChangeRequest[] @relation("RoleChangeDecider")
+
+  // Recherche d'un compte par son numéro, vérifié ou non (back-office).
+  @@index([phone])
   @@map("users")
+}
+
+/// Profil déclaré par l'utilisateur : identité, adresse, préférences. Ces informations sont
+/// déclaratives tant que l'identité n'a pas été vérifiée (KYC).
+model UserProfile {
+  userId         String    @id @map("user_id") @db.Uuid
+  /// Prénom.
+  givenName      String?   @map("given_name") @db.VarChar(100)
+  /// Nom.
+  familyName     String?   @map("family_name") @db.VarChar(100)
+  /// Postnom (usage congolais).
+  additionalName String?   @map("additional_name") @db.VarChar(100)
+  dateOfBirth    DateTime? @map("date_of_birth") @db.Date
+  addressLine1   String?   @map("address_line1") @db.VarChar(200)
+  addressLine2   String?   @map("address_line2") @db.VarChar(200)
+  city           String?   @db.VarChar(100)
+  /// Province ou région.
+  region         String?   @db.VarChar(100)
+  postalCode     String?   @map("postal_code") @db.VarChar(20)
+  /// Fuseau horaire IANA choisi par l'utilisateur.
+  timeZone       String?   @map("time_zone") @db.VarChar(64)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_profiles")
 }
 
 /// Secret d'authentification, isolé du compte : aucune lecture de `users` ne le renvoie.
@@ -186,6 +223,42 @@ model UserCredential {
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@map("user_credentials")
+}
+
+/// Second facteur : secret TOTP (RFC 6238) de l'application d'authentification.
+///
+/// Contrairement à un mot de passe, ce secret doit pouvoir être relu pour vérifier un code :
+/// il est donc **chiffré** (AES-256-GCM) avec une clé absente de la base de données.
+model UserTotpCredential {
+  userId           String    @id @map("user_id") @db.Uuid
+  /// version (1 octet) ‖ nonce (12) ‖ secret chiffré (20) ‖ étiquette d'authenticité (16).
+  secretCiphertext Bytes     @map("secret_ciphertext")
+  /// NULL tant que l'enrôlement n'a pas été confirmé par un premier code valide : le second
+  /// facteur n'est alors pas exigé.
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  /// Dernier pas de temps (30 s) dont le code a été accepté : un code ne sert qu'une fois.
+  lastUsedStep     Int?      @map("last_used_step")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_totp_credentials")
+}
+
+/// Code de secours du second facteur, à usage unique. Seule son empreinte (HMAC-SHA-256,
+/// clé absente de la base) est conservée.
+model UserRecoveryCode {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  Bytes     @map("code_hash")
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, codeHash])
+  @@map("user_recovery_codes")
 }
 
 /// Catalogue des permissions du back-office, copie de celui du code (`@mgx/contracts`).
@@ -213,6 +286,7 @@ model Role {
 
   permissions RolePermission[]
   users       UserRole[]
+  changes     RoleChangeRequest[]
 
   @@map("roles")
 }
@@ -246,6 +320,61 @@ model UserRole {
   @@map("user_roles")
 }
 
+enum RoleChangeAction {
+  GRANT
+  REVOKE
+
+  @@map("role_change_action")
+}
+
+enum RoleChangeStatus {
+  PENDING
+  /// Approuvée par un second administrateur : le changement a été appliqué.
+  APPROVED
+  /// Refusée par un second administrateur.
+  REJECTED
+  /// Retirée par son auteur.
+  CANCELLED
+  /// Restée sans décision jusqu'à son échéance.
+  EXPIRED
+
+  @@map("role_change_status")
+}
+
+/// Demande d'attribution ou de retrait d'un rôle, soumise à **double validation** : elle n'est
+/// appliquée qu'une fois approuvée par un second administrateur.
+///
+/// C'est le seul moyen, pour l'API, de modifier `user_roles` : elle n'a aucun droit d'écriture
+/// sur cette table. L'approbation d'une demande déclenche l'application du changement par la
+/// base elle-même, qui vérifie que la règle est respectée (voir la migration).
+model RoleChangeRequest {
+  id           String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Compte dont les rôles changent.
+  userId       String           @map("user_id") @db.Uuid
+  roleId       String           @map("role_id") @db.Uuid
+  action       RoleChangeAction
+  /// Justification de la demande.
+  reason       String           @db.VarChar(500)
+  status       RoleChangeStatus @default(PENDING)
+  requestedBy  String           @map("requested_by") @db.Uuid
+  requestedAt  DateTime         @default(now()) @map("requested_at") @db.Timestamptz(6)
+  /// Échéance : une demande restée sans décision ne peut plus être approuvée.
+  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(6)
+  /// Auteur de la décision ; NULL pour une demande en attente ou échue.
+  decidedBy    String?          @map("decided_by") @db.Uuid
+  decidedAt    DateTime?        @map("decided_at") @db.Timestamptz(6)
+  decisionNote String?          @map("decision_note") @db.VarChar(500)
+
+  user      User  @relation("RoleChangeTarget", fields: [userId], references: [id], onDelete: Restrict)
+  role      Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  requester User  @relation("RoleChangeRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+  decider   User? @relation("RoleChangeDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+
+  @@index([status, id])
+  @@index([userId])
+  @@map("role_change_requests")
+}
+
 // ---------------------------------------------------------------------------------------
 // Identité : codes à usage unique et sessions
 // ---------------------------------------------------------------------------------------
@@ -253,17 +382,20 @@ model UserRole {
 enum ChallengePurpose {
   EMAIL_VERIFICATION
   PASSWORD_RESET
+  PHONE_VERIFICATION
 
   @@map("challenge_purpose")
 }
 
-/// Code à usage unique envoyé à l'utilisateur (vérification d'adresse, réinitialisation du
-/// mot de passe). Le code lui-même n'est jamais stocké ; le nombre d'essais est borné.
+/// Code à usage unique envoyé à l'utilisateur (vérification de l'adresse e-mail ou du numéro
+/// de téléphone, réinitialisation du mot de passe). Le code lui-même n'est jamais stocké ; le
+/// nombre d'essais est borné.
 model VerificationChallenge {
   id            String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
   userId        String           @map("user_id") @db.Uuid
   purpose       ChallengePurpose
-  /// Destinataire du code : c'est cette adresse, et elle seule, que le code vérifie.
+  /// Destinataire du code — adresse e-mail ou numéro de téléphone : c'est cette adresse, et
+  /// elle seule, que le code vérifie.
   target        String           @db.VarChar(254)
   /// HMAC-SHA-256 du code, calculé avec une clé absente de la base. NULL tant que le code
   /// n'a pas été émis (il l'est de façon asynchrone, à l'envoi du message).
@@ -279,6 +411,8 @@ model VerificationChallenge {
   user User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId, purpose])
+  // Purge des codes expirés.
+  @@index([expiresAt])
   @@map("verification_challenges")
 }
 
@@ -294,30 +428,37 @@ enum SessionRevocationReason {
   /// Compte suspendu ou clôturé.
   ACCOUNT_DISABLED
   ADMIN_REVOKED
+  /// Second facteur activé, désactivé ou réinitialisé : les autres sessions sont fermées.
+  SECOND_FACTOR_CHANGED
 
   @@map("session_revocation_reason")
 }
 
 /// Session ouverte par une connexion, sur un appareil.
 model UserSession {
-  id               String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  userId           String                   @map("user_id") @db.Uuid
-  createdAt        DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
-  lastUsedAt       DateTime                 @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  id                String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId            String                   @map("user_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt        DateTime                 @default(now()) @map("last_used_at") @db.Timestamptz(6)
   /// Expiration par inactivité : repoussée à chaque renouvellement des jetons.
-  idleExpiresAt    DateTime                 @map("idle_expires_at") @db.Timestamptz(6)
+  idleExpiresAt     DateTime                 @map("idle_expires_at") @db.Timestamptz(6)
   /// Expiration absolue : jamais repoussée.
-  expiresAt        DateTime                 @map("expires_at") @db.Timestamptz(6)
-  revokedAt        DateTime?                @map("revoked_at") @db.Timestamptz(6)
-  revocationReason SessionRevocationReason? @map("revocation_reason")
-  ipAddress        String?                  @map("ip_address") @db.Inet
-  userAgent        String?                  @map("user_agent") @db.VarChar(512)
-  deviceName       String?                  @map("device_name") @db.VarChar(64)
+  expiresAt         DateTime                 @map("expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime?                @map("revoked_at") @db.Timestamptz(6)
+  revocationReason  SessionRevocationReason? @map("revocation_reason")
+  ipAddress         String?                  @map("ip_address") @db.Inet
+  userAgent         String?                  @map("user_agent") @db.VarChar(512)
+  deviceName        String?                  @map("device_name") @db.VarChar(64)
+  /// Empreinte SHA-256 de l'identifiant d'appareil (à défaut, de l'agent utilisateur) : sert
+  /// à reconnaître un appareil déjà utilisé par ce compte.
+  deviceFingerprint Bytes?                   @map("device_fingerprint")
 
   user   User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   tokens SessionToken[]
 
   @@index([userId])
+  // Purge des sessions terminées.
+  @@index([idleExpiresAt])
   @@map("user_sessions")
 }
 

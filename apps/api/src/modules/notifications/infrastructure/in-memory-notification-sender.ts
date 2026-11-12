@@ -9,12 +9,15 @@ const CAPACITY = 500;
 
 /**
  * Boîte de réception en mémoire — **outil de développement et de test**. Aucun message ne
- * quitte le processus : les codes à usage unique s'y lisent directement. Elle est interdite
+ * quitte le processus, e-mail comme SMS : les codes à usage unique s'y lisent directement. Elle est interdite
  * en pré-production et en production par la validation de la configuration.
  */
 export class InMemoryNotificationSender extends NotificationSender {
-  readonly operational = true;
   private readonly messages: StoredNotification[] = [];
+
+  supports(): boolean {
+    return true;
+  }
 
   deliver(notification: RenderedNotification): Promise<void> {
     this.messages.push({ ...notification, sentAt: new Date() });

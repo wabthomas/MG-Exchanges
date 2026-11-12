@@ -3,6 +3,59 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 2, lot 2 : sécurité du compte, profil, back-office des comptes
+
+### Ajouté
+
+- **Validation en deux étapes** (TOTP, RFC 6238) : activation, confirmation, désactivation ;
+  dix codes de secours à usage unique ; secret chiffré au repos (AES-256-GCM) ; un code n'est
+  accepté qu'une fois. La connexion se fait alors en deux temps (`POST /auth/mfa/verify`) ;
+  aucune session n'existe entre les deux.
+- **Essais bornés par compte** sur la seconde étape (5 en 15 minutes, 20 en 24 heures), et
+  message au titulaire en cas de blocage.
+- **Profil** (`/me/profile`) : identité déclarée, adresse, langue ; les champs laissés vides
+  le restent, rien n'est vérifié à ce stade.
+- **Vérification du numéro de téléphone** par code SMS (`/me/phone/verification`,
+  `/me/phone/verify`) ; un numéro vérifié n'appartient qu'à un compte.
+- **Historique d'activité** (`/me/activity`) : événements de sécurité du compte, interventions
+  du support comprises.
+- **Connexion depuis un appareil inconnu** signalée au titulaire par e-mail (`deviceId`
+  facultatif à la connexion).
+- **Back-office des comptes** : liste, recherche par identifiant complet
+  (`POST /admin/users/search`), fiche, suspension et réactivation, fermeture des sessions,
+  retrait du second facteur. Chaque action porte une justification ; chaque accès est inscrit
+  au journal d'audit.
+- **Rôles sous double validation** (`/admin/role-changes`) : demande, puis approbation par un
+  second administrateur. La règle est appliquée par un déclencheur PostgreSQL ; le rôle
+  applicatif de la base n'écrit toujours pas lui-même dans la table des rôles attribués.
+  Rôle système `support`.
+- **Purge horaire** des données expirées (inscriptions jamais vérifiées, sessions closes,
+  codes échus, activations de second facteur abandonnées, demandes de rôle échues).
+- Migrations `account_security` et `back_office_accounts`.
+- Permissions : `users.read`, `users.suspend`, `users.revoke_sessions`, `users.reset_mfa`,
+  `roles.read`, `roles.manage`. Code d'erreur : `MFA_ENROLLMENT_REQUIRED`.
+- Variable **obligatoire** `AUTH_SECRETS_ENCRYPTION_KEY` (32 octets en base64) — à
+  sauvegarder hors de la base : la perdre rend tous les seconds facteurs invérifiables.
+- Tests : 762 au total, dont 292 sur PostgreSQL, Redis et BullMQ réels.
+- ADR 0017 à 0020.
+
+### Modifié — ruptures pour un client du lot 1
+
+- `POST /auth/login` répond par un objet à `status` : `AUTHENTICATED` (avec les jetons) ou
+  `MFA_REQUIRED` (avec un jeton de connexion en attente).
+- `POST /auth/email/verify` exige le mot de passe choisi à l'inscription, en plus du code.
+- Une nouvelle inscription sur une adresse jamais vérifiée **remplace** la précédente.
+- Le mot de passe oublié ne s'applique qu'à un compte actif : une inscription jamais vérifiée
+  ne se réinitialise pas.
+- **Toute route `/admin` exige la validation en deux étapes** (`403 MFA_ENROLLMENT_REQUIRED`
+  sinon), y compris pour un administrateur créé en ligne de commande.
+
+### Corrigé
+
+- Un tiers pouvait créer un compte à l'adresse d'une personne, avec son propre mot de passe,
+  et attendre qu'elle l'active elle-même (défaut du lot 1, trouvé à la relecture) : voir les
+  ruptures ci-dessus sur la vérification de l'adresse, la réinscription et le mot de passe oublié.
+
 ## [Non publié] — Phase 2, lot 1 : comptes, authentification, sessions, autorisations
 
 ### Ajouté

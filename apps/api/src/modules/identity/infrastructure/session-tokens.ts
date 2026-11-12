@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import type { Digest } from '../application/digest.js';
 
-export type SessionTokenKind = 'access' | 'refresh';
+export type SessionTokenKind = 'access' | 'refresh' | 'mfa';
 
 /**
  * Préfixes reconnaissables : ils indiquent la nature d'un jeton trouvé dans un journal ou un
@@ -11,6 +11,8 @@ export type SessionTokenKind = 'access' | 'refresh';
 const PREFIXES: Readonly<Record<SessionTokenKind, string>> = {
   access: 'mgx_at_',
   refresh: 'mgx_rt_',
+  /** Jeton d'une connexion en attente du second facteur : n'ouvre aucun droit par lui-même. */
+  mfa: 'mgx_mfa_',
 };
 
 const SECRET_BYTES = 32;

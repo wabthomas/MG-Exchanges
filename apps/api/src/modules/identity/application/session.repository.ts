@@ -11,7 +11,8 @@ export type SessionRevocationReason =
   | 'PASSWORD_RESET'
   | 'TOKEN_REUSE'
   | 'ACCOUNT_DISABLED'
-  | 'ADMIN_REVOKED';
+  | 'ADMIN_REVOKED'
+  | 'SECOND_FACTOR_CHANGED';
 
 export interface NewTokenPair {
   readonly accessTokenHash: Digest;
@@ -26,7 +27,17 @@ export interface NewSession {
   readonly ipAddress: string | null;
   readonly userAgent: string | null;
   readonly deviceName: string | null;
+  /** Empreinte de l'appareil, ou `null` s'il n'est pas identifiable. */
+  readonly deviceFingerprint: Digest | null;
   readonly tokens: NewTokenPair;
+}
+
+/** Ce que les sessions passées du compte disent de l'appareil qui se connecte. */
+export interface DeviceHistory {
+  /** Le compte a déjà ouvert au moins une session. */
+  readonly hasSessions: boolean;
+  /** Une session passée du compte porte la même empreinte d'appareil. */
+  readonly knownDevice: boolean;
 }
 
 /** Ce que la présentation d'un jeton d'accès permet d'établir. */
@@ -104,6 +115,24 @@ export abstract class SessionRepository {
     exceptSessionId?: string,
   ): Promise<number>;
 
+  /** Historique du compte au regard d'un appareil (avant l'ouverture d'une nouvelle session). */
+  abstract deviceHistory(
+    db: DbClient,
+    userId: string,
+    deviceFingerprint: Digest | null,
+  ): Promise<DeviceHistory>;
+
   /** Sessions utilisables du compte, de la plus récemment utilisée à la plus ancienne. */
   abstract listActive(db: DbClient, userId: string, now: Date): Promise<SessionSummary[]>;
+
+  abstract countActive(db: DbClient, userId: string, now: Date): Promise<number>;
+
+  /**
+   * Supprime, avec leurs jetons, des sessions inutilisables depuis `endedBefore` (échéance
+   * d'inactivité dépassée, qu'elles aient été révoquées ou non). La session la plus récente de
+   * chaque compte est toujours conservée : elle atteste que le compte s'est déjà connecté, ce
+   * dont dépend l'avertissement de connexion depuis un nouvel appareil.
+   * @returns le nombre de sessions supprimées (au plus `limit`).
+   */
+  abstract deleteEnded(db: DbClient, endedBefore: Date, limit: number): Promise<number>;
 }

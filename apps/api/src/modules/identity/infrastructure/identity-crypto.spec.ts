@@ -114,6 +114,7 @@ describe('codes à usage unique', () => {
       DATABASE_URL: 'postgresql://app:pw@localhost:5432/db',
       REDIS_URL: 'redis://localhost:6379/0',
       AUTH_CODE_HMAC_SECRET: secret,
+      AUTH_SECRETS_ENCRYPTION_KEY: 'dW5pdC10ZXN0LXNlY3JldHMtZW5jcnlwdGlvbi1rZXk=',
     });
   const codes = new VerificationCodes(config('unit-test-code-hmac-secret-0123456789abcdef'));
   const CHALLENGE = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';

@@ -12,7 +12,8 @@ import { AuditService } from '../../audit/application/audit.service.js';
 import { AuthorizationService } from '../application/authorization.service.js';
 
 /**
- * Garde globale d'autorisation : applique `@RequirePermissions()`.
+ * Garde globale d'autorisation : applique `@RequirePermissions()`. Une route du back-office
+ * exige les permissions citées **et** un compte protégé par la validation en deux étapes.
  * Un refus est inscrit au journal d'audit (tentative d'accès au back-office).
  */
 @Injectable()
@@ -43,20 +44,33 @@ export class PermissionsGuard implements CanActivate {
       throw new AppError('UNAUTHENTICATED', 'Authentication is required.');
     }
 
+    const route = `${request.method} ${request.originalUrl.split('?')[0] ?? ''}`;
     const missing = await this.authorization.missingPermissions(user.userId, required);
     if (missing.length > 0) {
       await this.audit.record(this.prisma, {
         actor: { type: 'USER', id: user.userId },
         action: 'authorization.denied',
-        resource: {
-          type: 'route',
-          id: `${request.method} ${request.originalUrl.split('?')[0] ?? ''}`,
-        },
+        resource: { type: 'route', id: route },
         outcome: 'DENIED',
         ...toRequestContext(request),
         metadata: { missingPermissions: missing },
       });
       throw new AppError('FORBIDDEN', 'You do not have permission to perform this action.');
+    }
+
+    if (!(await this.authorization.hasSecondFactor(user.userId))) {
+      await this.audit.record(this.prisma, {
+        actor: { type: 'USER', id: user.userId },
+        action: 'authorization.denied',
+        resource: { type: 'route', id: route },
+        outcome: 'DENIED',
+        ...toRequestContext(request),
+        metadata: { reason: 'SECOND_FACTOR_NOT_ENABLED' },
+      });
+      throw new AppError(
+        'MFA_ENROLLMENT_REQUIRED',
+        'Two-step verification must be enabled to use the back office.',
+      );
     }
     return true;
   }

@@ -1,6 +1,8 @@
+import { getQueueToken } from '@nestjs/bullmq';
 import type { ModuleMetadata } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
+import type { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 
 import { AppModule } from '../../src/app.module.js';
@@ -9,12 +11,39 @@ import {
   initializeApp,
   NEST_APPLICATION_OPTIONS,
 } from '../../src/bootstrap/configure-app.js';
+import { Clock } from '../../src/common/clock.js';
 import { AppConfig, loadAppConfig } from '../../src/config/app-config.js';
+import { ACCOUNT_MAINTENANCE_QUEUE } from '../../src/infrastructure/queue/queue.constants.js';
 import { createTestDatabase, type TestDatabase } from './test-database.js';
 import { redisUrl } from './test-environment.js';
 
-/** Clé de test uniquement : elle n'existe dans aucun environnement réel. */
+/** Clés de test uniquement : elles n'existent dans aucun environnement réel. */
 export const TEST_CODE_HMAC_SECRET = 'test-only-code-hmac-secret-0123456789abcdef';
+export const TEST_SECRETS_ENCRYPTION_KEY = Buffer.from('test-only-secrets-encryption-key').toString(
+  'base64',
+);
+
+/**
+ * Horloge maîtrisée par les tests ; elle ne peut qu'avancer. L'application y lit l'heure des
+ * codes du second facteur — qui changent toutes les trente secondes et ne sont acceptés qu'une
+ * fois : l'avancer en donne un nouveau sans attendre —, des décisions du back-office, des
+ * échéances des demandes de changement de rôle et de la purge périodique. Les sessions et les
+ * codes à usage unique lisent l'heure réelle.
+ */
+export class TestClock extends Clock {
+  private offsetMs = 0;
+
+  now(): Date {
+    return new Date(Date.now() + this.offsetMs);
+  }
+
+  advance(milliseconds: number): void {
+    this.offsetMs += milliseconds;
+  }
+}
+
+/** Une horloge par fichier de test, partagée par ses applications et ses utilitaires. */
+export const testClock = new TestClock();
 
 export interface TestApp {
   readonly app: NestExpressApplication;
@@ -54,6 +83,7 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
     RATE_LIMIT_MAX_REQUESTS: '1000',
     OUTBOX_POLL_INTERVAL_MS: '100',
     AUTH_CODE_HMAC_SECRET: TEST_CODE_HMAC_SECRET,
+    AUTH_SECRETS_ENCRYPTION_KEY: TEST_SECRETS_ENCRYPTION_KEY,
     // Coût de hachage minimal : les tests vérifient le comportement, pas la résistance.
     ...(hardened ? {} : { AUTH_PASSWORD_HASH_MEMORY_KIB: '64', AUTH_PASSWORD_HASH_PASSES: '1' }),
     ...options.env,
@@ -64,11 +94,14 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
   })
     .overrideProvider(AppConfig)
     .useValue(config)
+    .overrideProvider(Clock)
+    .useValue(testClock)
     .compile();
 
   const app = moduleRef.createNestApplication<NestExpressApplication>(NEST_APPLICATION_OPTIONS);
   configureApp(app);
   await initializeApp(app);
+  await startupMaintenanceDone(app);
 
   return {
     app,
@@ -79,6 +112,19 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
       await database.drop();
     },
   };
+}
+
+/**
+ * La purge périodique s'exécute une première fois au démarrage, puis toutes les heures.
+ * Attendre la fin de cette première exécution garantit qu'aucune purge ne se déroule pendant
+ * les tests — sauf celles qu'ils déclenchent eux-mêmes.
+ */
+async function startupMaintenanceDone(app: NestExpressApplication): Promise<void> {
+  const queue = app.get<Queue>(getQueueToken(ACCOUNT_MAINTENANCE_QUEUE));
+  await eventually(async () => {
+    const counts = await queue.getJobCounts('waiting', 'active', 'prioritized');
+    return Object.values(counts).every((count) => count === 0);
+  });
 }
 
 /** Attend qu'une condition asynchrone devienne vraie (traitements en arrière-plan). */

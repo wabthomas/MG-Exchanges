@@ -62,3 +62,95 @@ export const verificationCodeSchema = z.string().regex(VERIFICATION_CODE_PATTERN
 
 /** Identifiant de ressource (UUID). */
 export const uuidSchema = z.uuid({ error: 'Must be a UUID.' });
+
+// --- Second facteur ---------------------------------------------------------------------------
+
+/** Code à six chiffres affiché par une application d'authentification (TOTP, RFC 6238). */
+export const TOTP_CODE_PATTERN = /^\d{6}$/;
+export const totpCodeSchema = z.string().regex(TOTP_CODE_PATTERN, {
+  error: 'Must be the 6-digit code shown by your authenticator app.',
+});
+
+/**
+ * Codes de secours : dix caractères de l'alphabet base32 de Crockford (ni I, ni L, ni O, ni U,
+ * trop faciles à confondre), présentés par groupes de cinq : `ABCDE-12345`.
+ */
+export const RECOVERY_CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+export const RECOVERY_CODE_LENGTH = 10;
+export const RECOVERY_CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{10}$/;
+
+/**
+ * Forme canonique d'un code de secours saisi à la main : majuscules, sans espace ni tiret ;
+ * les lettres absentes de l'alphabet sont ramenées au chiffre qu'elles évoquent (O → 0, I et L → 1).
+ */
+export function normalizeRecoveryCode(value: string): string {
+  return value.toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+}
+
+/** Code de secours tel que saisi ; il est **normalisé** par le schéma. */
+export const recoveryCodeSchema = z
+  .string()
+  .max(32)
+  .transform(normalizeRecoveryCode)
+  .pipe(
+    z.string().regex(RECOVERY_CODE_PATTERN, {
+      error: 'Must be a recovery code such as "ABCDE-12345".',
+    }),
+  );
+
+/**
+ * Identifiant d'appareil : valeur aléatoire créée par l'application cliente à son installation
+ * et conservée sur l'appareil. Il permet de reconnaître un appareil déjà utilisé.
+ */
+export const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{16,128}$/;
+export const deviceIdSchema = z.string().regex(DEVICE_ID_PATTERN, {
+  error: 'Must be 16 to 128 characters: letters, digits, "_" or "-".',
+});
+
+// --- Profil -----------------------------------------------------------------------------------
+
+export const PERSON_NAME_MAX_LENGTH = 100;
+/** Lettres de toute écriture, avec espaces, apostrophes, points et traits d'union. */
+export const PERSON_NAME_PATTERN = /^[\p{L}\p{M}][\p{L}\p{M}'’ .-]*$/u;
+
+/** Nom ou prénom d'une personne (espaces superflus retirés). */
+export const personNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(PERSON_NAME_MAX_LENGTH)
+  .regex(PERSON_NAME_PATTERN, {
+    error: 'Must contain only letters, spaces, apostrophes, dots and hyphens.',
+  });
+
+/** Date civile sans heure : `1990-05-17`. */
+export const isoDateSchema = z.iso.date();
+
+const NO_CONTROL_CHARACTER = /^\P{Cc}*$/u;
+
+/** Ligne de texte libre (adresse…) : bornée, sans caractère de contrôle. */
+export function textLineSchema(maxLength: number): z.ZodString {
+  return z
+    .string()
+    .trim()
+    .min(1)
+    .max(maxLength)
+    .regex(NO_CONTROL_CHARACTER, { error: 'Must not contain control characters.' });
+}
+
+/** Vrai si `value` est un fuseau horaire IANA connu de l'environnement (`Africa/Kinshasa`). */
+export function isTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const TIME_ZONE_MAX_LENGTH = 64;
+/** Fuseau horaire IANA : `Africa/Kinshasa`, `Africa/Lubumbashi`, `UTC`… */
+export const timeZoneSchema = z
+  .string()
+  .max(TIME_ZONE_MAX_LENGTH)
+  .refine(isTimeZone, { error: 'Must be an IANA time zone such as "Africa/Kinshasa".' });

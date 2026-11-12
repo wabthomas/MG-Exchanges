@@ -2,8 +2,8 @@ import { createHmac } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import {
+  authenticatedLoginSchema,
   currentUserSchema,
-  loginResponseSchema,
   problemDetailsSchema,
   verificationPendingSchema,
 } from '@mgx/contracts';
@@ -57,8 +57,8 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
 
   const register = (body: Record<string, unknown>, ip = newClientIp()) =>
     http.post('/api/v1/auth/register').set(from(ip)).send(body);
-  const verify = (email: string, code: string, ip = newClientIp()) =>
-    http.post('/api/v1/auth/email/verify').set(from(ip)).send({ email, code });
+  const verify = (email: string, code: string, ip = newClientIp(), password = PASSWORD) =>
+    http.post('/api/v1/auth/email/verify').set(from(ip)).send({ email, code, password });
 
   it('l’inscription est fermée tant qu’aucune décision ne l’a ouverte', async () => {
     const response = await register(registration(newEmail())).expect(403);
@@ -119,7 +119,9 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
     });
 
     it('le compte vérifié se connecte ; la réponse respecte le contrat', async () => {
-      const session = loginResponseSchema.parse(await login(http, { email, password: PASSWORD }));
+      const session = authenticatedLoginSchema.parse(
+        await login(http, { email, password: PASSWORD }),
+      );
       expect(session.status).toBe('AUTHENTICATED');
       expect(session.user).toMatchObject({
         email,
@@ -313,21 +315,33 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
       await verify(email, fresh).expect(204);
     });
 
-    it('un nouveau code annule le précédent', async () => {
+    it('une nouvelle inscription remplace celle qui n’a pas été vérifiée : son code et son mot de passe seuls comptent', async () => {
       const email = newEmail('replace');
       await register(registration(email)).expect(202);
       const first = await nextCode(testApp, email);
 
-      // Une nouvelle inscription sur un compte encore en attente renvoie simplement un code.
-      await register(registration(email, { password: 'another-password-77' })).expect(202);
+      // Rien ne prouve que la première inscription venait du titulaire de l'adresse : la
+      // suivante la remplace entièrement, mot de passe compris.
+      const replacement = 'another-password-77';
+      await register(registration(email, { password: replacement })).expect(202);
       const second = await nextCode(testApp, email, 1);
 
       if (first !== second) {
-        await verify(email, first).expect(400);
+        await verify(email, first, newClientIp(), replacement).expect(400);
       }
-      await verify(email, second).expect(204);
-      // Le mot de passe retenu est celui de la première inscription.
-      await login(http, { email, password: PASSWORD });
+      // Le mot de passe de la première inscription ne vérifie plus rien…
+      const stale = await verify(email, second).expect(401);
+      expect(stale.body.code).toBe('INVALID_CREDENTIALS');
+      // …celui de la seconde, avec son code, achève l'inscription.
+      await verify(email, second, newClientIp(), replacement).expect(204);
+
+      await http
+        .post('/api/v1/auth/login')
+        .set(from(newClientIp()))
+        .send({ email, password: PASSWORD })
+        .expect(401);
+      await login(http, { email, password: replacement });
+      expect(await prisma.user.count({ where: { email } })).toBe(1);
     });
 
     it('au plus trois codes par quart d’heure et par compte ; un refus n’annule pas le code en cours', async () => {

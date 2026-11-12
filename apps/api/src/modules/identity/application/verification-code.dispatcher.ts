@@ -14,6 +14,13 @@ import { UserRepository } from './user.repository.js';
 
 const payloadSchema = z.object({ challengeId: z.uuid() });
 
+/** Canal et modèle de message de chaque usage : le code part là où il doit être prouvé. */
+const DELIVERY = {
+  EMAIL_VERIFICATION: { channel: 'EMAIL', template: 'email_verification_code' },
+  PASSWORD_RESET: { channel: 'EMAIL', template: 'password_reset_code' },
+  PHONE_VERIFICATION: { channel: 'SMS', template: 'phone_verification_code' },
+} as const;
+
 /**
  * Émet et envoie le code d'un défi.
  *
@@ -65,18 +72,12 @@ export class VerificationCodeDispatcher implements DomainEventHandler, OnModuleI
       return;
     }
 
+    const { channel, template } = DELIVERY[challenge.purpose];
     await this.notifications.send({
-      channel: 'EMAIL',
+      channel,
       recipient: challenge.target,
       locale: localeSchema.catch('fr').parse(user.locale),
-      content: {
-        template:
-          challenge.purpose === 'EMAIL_VERIFICATION'
-            ? 'email_verification_code'
-            : 'password_reset_code',
-        code,
-        ttlMinutes: Math.round(this.config.auth.codeTtlSeconds / 60),
-      },
+      content: { template, code, ttlMinutes: Math.round(this.config.auth.codeTtlSeconds / 60) },
     });
   }
 }

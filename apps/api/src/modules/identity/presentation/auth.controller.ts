@@ -1,4 +1,6 @@
 import {
+  type AuthenticatedLogin,
+  authenticatedLoginSchema,
   type ChangePasswordRequest,
   changePasswordRequestSchema,
   type EmailOnlyRequest,
@@ -7,6 +9,8 @@ import {
   loginRequestSchema,
   type LoginResponse,
   loginResponseSchema,
+  type MfaLoginRequest,
+  mfaLoginRequestSchema,
   type PasswordResetPending,
   passwordResetPendingSchema,
   type RefreshRequest,
@@ -79,7 +83,8 @@ export class AuthController {
     summary: 'Create an account',
     description:
       'Creates an individual account and e-mails a 6-digit verification code. The account ' +
-      `cannot sign in until the address is verified. ${SAME_ANSWER} ` +
+      'cannot sign in until the address is verified. Signing up again with an address whose ' +
+      `sign-up was never completed replaces it entirely. ${SAME_ANSWER} ` +
       'Requires the `registration` feature to be open.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(registerRequestSchema) })
@@ -100,12 +105,15 @@ export class AuthController {
   @ApiOperation({
     summary: 'Verify the e-mail address',
     description:
-      'Confirms the address with the code received by e-mail and activates the account. A code ' +
-      'can be tried 5 times; every failure answers `INVALID_OR_EXPIRED_CODE`, whatever its cause.',
+      'Confirms the address with the code received by e-mail **and the password chosen at ' +
+      'sign-up**, and activates the account: only the person who both receives the code and ' +
+      'chose the password can activate it. A code can be tried 5 times; a wrong code answers ' +
+      '`INVALID_OR_EXPIRED_CODE`, whatever its cause. A right code with another password ' +
+      'answers `INVALID_CREDENTIALS`: sign up again to replace the unfinished sign-up.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(verifyEmailRequestSchema) })
   @ApiNoContentResponse({ description: 'Address verified. The account can now sign in.' })
-  @ApiProblemResponses(400, 403, 429)
+  @ApiProblemResponses(400, 401, 403, 429)
   async verifyEmail(
     @Body({ schema: verifyEmailRequestSchema }) body: VerifyEmailRequest,
     @ReqContext() client: RequestContext,
@@ -145,6 +153,11 @@ export class AuthController {
       'Opens a session and returns its tokens. Send the access token with every request ' +
       '(`Authorization: Bearer <accessToken>`); use the refresh token to obtain a new pair ' +
       'before the access token expires.\n\n' +
+      '**Read `status`.** `AUTHENTICATED`: the session is open. `MFA_REQUIRED`: the account ' +
+      'is protected by two-step verification and no session is open yet — send `mfaToken` and ' +
+      'a code to `POST /auth/mfa/verify` within 5 minutes.\n\n' +
+      'Send a stable random `deviceId` (created once per installation): a sign-in from a ' +
+      'device the account has never used is reported to its holder by e-mail.\n\n' +
       'A wrong e-mail or a wrong password both answer `INVALID_CREDENTIALS`. After 5 failures ' +
       'in 15 minutes the client is blocked for 15 minutes (`RATE_LIMITED`, see `Retry-After`). ' +
       '`EMAIL_NOT_VERIFIED` and `ACCOUNT_DISABLED` are only returned when the password is correct.',
@@ -157,6 +170,31 @@ export class AuthController {
     @ReqContext() client: RequestContext,
   ): Promise<LoginResponse> {
     return this.authentication.login(body, client);
+  }
+
+  @Post('mfa/verify')
+  @Public()
+  @AllowDuringMaintenance()
+  @RateLimit(LOGIN_RATE_LIMIT)
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Complete a sign-in with the second step',
+    description:
+      'Second step of a sign-in that answered `MFA_REQUIRED`: the `mfaToken`, and either the ' +
+      '6-digit `code` of the authenticator app or a `recoveryCode` (single use). Opens the ' +
+      'session.\n\n' +
+      'A code is accepted once. A wrong code answers `INVALID_OR_EXPIRED_CODE`; after 5 wrong ' +
+      'codes the token is void (`UNAUTHENTICATED`: sign in again) and the second step of the ' +
+      'account is blocked for 15 minutes (`RATE_LIMITED`).',
+  })
+  @ApiBody({ schema: toOpenApiInputSchema(mfaLoginRequestSchema) })
+  @ApiOkResponse({ schema: toOpenApiSchema(authenticatedLoginSchema) })
+  @ApiProblemResponses(400, 401, 429)
+  verifySecondFactor(
+    @Body({ schema: mfaLoginRequestSchema }) body: MfaLoginRequest,
+    @ReqContext() client: RequestContext,
+  ): Promise<AuthenticatedLogin> {
+    return this.authentication.completeMfaLogin(body, client);
   }
 
   @Post('refresh')
@@ -203,7 +241,9 @@ export class AuthController {
   @HttpCode(202)
   @ApiOperation({
     summary: 'Request a password reset',
-    description: `E-mails a 6-digit reset code. ${SAME_ANSWER}`,
+    description:
+      `E-mails a 6-digit reset code. ${SAME_ANSWER} An address whose sign-up was never ` +
+      'completed receives an invitation to sign up again instead.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(emailOnlyRequestSchema) })
   @ApiAcceptedResponse({ schema: toOpenApiSchema(passwordResetPendingSchema) })
@@ -222,8 +262,9 @@ export class AuthController {
   @ApiOperation({
     summary: 'Set a new password with a reset code',
     description:
-      'Replaces the password and **closes every session** of the account. A code can be tried ' +
-      '5 times; every failure answers `INVALID_OR_EXPIRED_CODE`.',
+      'Replaces the password and **closes every session** of the account. Two-step ' +
+      'verification, if enabled, stays in place. A code can be tried 5 times; every failure ' +
+      'answers `INVALID_OR_EXPIRED_CODE`.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(resetPasswordRequestSchema) })
   @ApiNoContentResponse({ description: 'Password replaced. Sign in again.' })

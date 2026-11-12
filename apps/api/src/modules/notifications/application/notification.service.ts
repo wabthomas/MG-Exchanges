@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import type { NotificationMessage } from '../domain/notification.js';
+import type { NotificationChannel, NotificationMessage } from '../domain/notification.js';
 import { renderNotification } from '../domain/templates.js';
 import { NotificationSender } from './notification-sender.js';
 
@@ -10,11 +10,12 @@ export class NotificationService {
   constructor(private readonly sender: NotificationSender) {}
 
   /**
-   * Faux tant qu'aucun moyen de remise n'est configuré. Les parcours qui dépendent d'un
-   * message (inscription, réinitialisation) doivent alors être refusés d'emblée.
+   * Faux tant qu'aucun moyen de remise n'est configuré pour ce canal. Les parcours qui
+   * dépendent d'un message (inscription, réinitialisation, vérification du téléphone) doivent
+   * alors être refusés d'emblée.
    */
-  get operational(): boolean {
-    return this.sender.operational;
+  canDeliver(channel: NotificationChannel): boolean {
+    return this.sender.supports(channel);
   }
 
   async send(message: NotificationMessage): Promise<void> {
