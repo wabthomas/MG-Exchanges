@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path';
+
 import { emailSchema } from '@mgx/validation';
 import { z } from 'zod';
 
@@ -204,6 +206,28 @@ export const envSchema = z
     SMTP_PASSWORD: z.string().min(1).optional(),
     /** Expéditeur des e-mails : `adresse` ou `Nom affiché <adresse>`. */
     EMAIL_FROM: emailSender.optional(),
+
+    // --- Vérification d'identité (KYC) ---
+    /**
+     * Répertoire (chemin absolu) où sont conservées, chiffrées, les pièces jointes aux dossiers
+     * de vérification. Défini avec KYC_ENCRYPTION_KEY, il rend la vérification d'identité
+     * utilisable ; sans eux, ses routes répondent « indisponible ».
+     */
+    KYC_STORAGE_DIR: z
+      .string()
+      .refine((value) => isAbsolute(value), { error: 'Must be an absolute path.' })
+      .optional(),
+    /**
+     * Clé maîtresse du chiffrement des pièces et des numéros de pièce d'identité : 32 octets
+     * aléatoires encodés en base64 (`openssl rand -base64 32`). Distincte de
+     * AUTH_SECRETS_ENCRYPTION_KEY. La perdre, c'est perdre toutes les pièces.
+     */
+    KYC_ENCRYPTION_KEY: z
+      .string()
+      .refine(isBase64Key32, {
+        error: 'Must be 32 random bytes encoded in base64 (openssl rand -base64 32).',
+      })
+      .optional(),
   })
   .superRefine((env, context) => {
     const hardened = HARDENED_ENVIRONMENTS.includes(env.APP_ENV);
@@ -285,6 +309,18 @@ export const envSchema = z
           `Must be "starttls" or "tls" when APP_ENV is "${env.APP_ENV}" (encrypted connection).`,
         );
       }
+    }
+
+    // Vérification d'identité : le stockage des pièces et sa clé vont ensemble, et la clé
+    // ne sert qu'à cela.
+    if ((env.KYC_STORAGE_DIR === undefined) !== (env.KYC_ENCRYPTION_KEY === undefined)) {
+      issue('KYC_STORAGE_DIR', 'KYC_STORAGE_DIR and KYC_ENCRYPTION_KEY must be set together.');
+    }
+    if (
+      env.KYC_ENCRYPTION_KEY !== undefined &&
+      env.KYC_ENCRYPTION_KEY === env.AUTH_SECRETS_ENCRYPTION_KEY
+    ) {
+      issue('KYC_ENCRYPTION_KEY', 'Must be a key of its own, not AUTH_SECRETS_ENCRYPTION_KEY.');
     }
   });
 

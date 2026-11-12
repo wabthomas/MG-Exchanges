@@ -232,8 +232,14 @@ describe('Back-office des comptes — bout en bout', () => {
       const roles = roleListSchema.parse(
         (await get(alice.accessToken, '/admin/roles').expect(200)).body,
       );
-      expect(roles.roles.map((role) => role.key)).toEqual(['super_admin', 'support']);
-      const [superAdmin, supportRole] = roles.roles;
+      expect(roles.roles.map((role) => role.key)).toEqual(['compliance', 'super_admin', 'support']);
+      const [compliance, superAdmin, supportRole] = roles.roles;
+      // La conformité examine les dossiers de vérification ; elle n'agit pas sur les comptes.
+      expect(compliance).toMatchObject({
+        isSystem: true,
+        permissions: ['kyc.read', 'kyc.review', 'kyc.revoke', 'users.read'],
+        holders: 0,
+      });
       expect(superAdmin).toMatchObject({
         isSystem: true,
         permissions: [...PERMISSION_KEYS].sort(),
@@ -475,9 +481,13 @@ describe('Back-office des comptes — bout en bout', () => {
           familyName: 'Mukendi',
           additionalName: null,
           dateOfBirth: '1990-05-17',
+          placeOfBirth: null,
+          nationality: null,
           city: 'Goma',
           timeZone: null,
         },
+        // Rien n'a été vérifié : ce profil est seulement déclaré.
+        verification: { level: 0, identityVerified: false, addressVerified: false },
         secondFactor: { enabled: true, recoveryCodesRemaining: 10 },
         activeSessions: 2,
       });
@@ -608,6 +618,15 @@ describe('Back-office des comptes — bout en bout', () => {
         where: { action: 'user.suspended', resourceId: user.id },
       });
       expect(stored.ipAddress).not.toBeNull();
+
+      // Ces décisions concernent le compte du client : elles n'apparaissent pas dans
+      // l'historique de l'agent qui les a prises, dont le compte n'a été ni suspendu ni réactivé.
+      const ownActivity = activityListSchema.parse(
+        (await get(support.accessToken, '/me/activity?limit=100').expect(200)).body,
+      );
+      expect(ownActivity.entries.map((entry) => entry.type)).not.toContain('ACCOUNT_SUSPENDED');
+      expect(ownActivity.entries.map((entry) => entry.type)).not.toContain('ACCOUNT_REACTIVATED');
+      expect(ownActivity.entries.map((entry) => entry.type)).toContain('SIGN_IN');
 
       const again = await post(support.accessToken, `/admin/users/${user.id}/reactivate`, {
         reason: REASON,

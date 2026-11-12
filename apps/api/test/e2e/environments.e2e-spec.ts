@@ -29,6 +29,12 @@ describe('Règles par environnement — bout en bout', () => {
       const response = await http.get('/api/docs-json').expect(200);
       expect(response.body.openapi).toMatch(/^3\./);
       expect(Object.keys(response.body.paths).sort()).toEqual([
+        '/api/v1/admin/kyc/cases',
+        '/api/v1/admin/kyc/cases/{caseId}',
+        '/api/v1/admin/kyc/cases/{caseId}/approve',
+        '/api/v1/admin/kyc/cases/{caseId}/documents/{documentId}',
+        '/api/v1/admin/kyc/cases/{caseId}/reject',
+        '/api/v1/admin/kyc/cases/{caseId}/revoke',
         '/api/v1/admin/role-changes',
         '/api/v1/admin/role-changes/{requestId}',
         '/api/v1/admin/role-changes/{requestId}/approve',
@@ -67,6 +73,14 @@ describe('Règles par environnement — bout en bout', () => {
         '/api/v1/me/sessions',
         '/api/v1/me/sessions/revoke-others',
         '/api/v1/me/sessions/{sessionId}',
+        '/api/v1/me/verification',
+        '/api/v1/me/verification/address',
+        '/api/v1/me/verification/cases/{caseId}',
+        '/api/v1/me/verification/cases/{caseId}/documents',
+        '/api/v1/me/verification/cases/{caseId}/documents/{documentId}',
+        '/api/v1/me/verification/cases/{caseId}/submit',
+        '/api/v1/me/verification/identity',
+        '/api/v1/me/verification/source-of-funds',
         '/api/v1/system/status',
         '/health/live',
         '/health/ready',

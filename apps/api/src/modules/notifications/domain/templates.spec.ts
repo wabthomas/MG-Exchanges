@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import { KYC_LEVELS, KYC_REJECTION_REASONS } from '@mgx/contracts';
 import { SUPPORTED_LOCALES } from '@mgx/validation';
 
 import type { NotificationContent, NotificationTemplate } from './notification.js';
@@ -47,6 +48,23 @@ const SAMPLES: {
   ],
   account_suspended: [{ template: 'account_suspended' }],
   account_reactivated: [{ template: 'account_reactivated' }],
+  identity_verification_approved: KYC_LEVELS.map((level) => ({
+    template: 'identity_verification_approved' as const,
+    level,
+  })),
+  identity_verification_rejected: [
+    ...KYC_LEVELS.map((level) => ({
+      template: 'identity_verification_rejected' as const,
+      level,
+      reasons: ['DOCUMENT_UNREADABLE', 'SELFIE_MISMATCH'] as const,
+    })),
+    // Tous les motifs, pour que chacun soit rédigé dans chaque langue.
+    { template: 'identity_verification_rejected', level: 1, reasons: KYC_REJECTION_REASONS },
+  ],
+  identity_verification_revoked: KYC_LEVELS.map((level) => ({
+    template: 'identity_verification_revoked' as const,
+    level,
+  })),
 };
 
 const CONTENTS: readonly NotificationContent[] = Object.values(SAMPLES).flat();

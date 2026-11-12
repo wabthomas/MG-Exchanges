@@ -24,6 +24,14 @@ export interface SmtpConfig {
   readonly from: EmailSender;
 }
 
+/** Stockage chiffré des pièces jointes aux dossiers de vérification d'identité. */
+export interface KycStorageConfig {
+  /** Répertoire des fichiers chiffrés. */
+  readonly storageDir: string;
+  /** Clé maîtresse AES-256 (base64). Ne jamais journaliser. */
+  readonly encryptionKey: string;
+}
+
 /** Levée au démarrage lorsque la configuration est invalide. Ne contient jamais de valeur. */
 export class ConfigValidationError extends Error {
   readonly problems: readonly string[];
@@ -102,6 +110,12 @@ export class AppConfig {
     readonly smtp: SmtpConfig | null;
   };
 
+  /**
+   * Stockage chiffré des pièces de vérification d'identité ; `null` s'il n'est pas configuré —
+   * la vérification d'identité est alors indisponible.
+   */
+  readonly kyc: KycStorageConfig | null;
+
   constructor(env: ValidatedEnv, version: string) {
     this.app = {
       name: SERVICE_NAME,
@@ -175,6 +189,11 @@ export class AppConfig {
             }
           : null,
     };
+    // Le schéma garantit que le répertoire et la clé sont définis ensemble.
+    this.kyc =
+      env.KYC_STORAGE_DIR !== undefined && env.KYC_ENCRYPTION_KEY !== undefined
+        ? { storageDir: env.KYC_STORAGE_DIR, encryptionKey: env.KYC_ENCRYPTION_KEY }
+        : null;
     Object.freeze(this);
   }
 

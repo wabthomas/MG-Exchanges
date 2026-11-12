@@ -409,3 +409,63 @@ describe('configuration de l’envoi des e-mails par SMTP', () => {
     ).toMatchObject({ security: 'none', port: 1025 });
   });
 });
+
+describe('configuration de la vérification d’identité', () => {
+  /** 32 octets en base64 — clé de test uniquement, distincte de celle des secrets. */
+  const KYC_KEY = Buffer.from('unit-test-kyc-documents-key-0001').toString('base64');
+  const kyc = { ...minimal, KYC_STORAGE_DIR: '/var/lib/mgx/kyc', KYC_ENCRYPTION_KEY: KYC_KEY };
+
+  it('sans stockage ni clé, la vérification d’identité est indisponible — et rien n’est exigé', () => {
+    expect(loadAppConfig(minimal).kyc).toBeNull();
+    expect(loadAppConfig(production).kyc).toBeNull();
+  });
+
+  it('un répertoire et une clé rendent le stockage chiffré utilisable', () => {
+    expect(loadAppConfig(kyc).kyc).toEqual({
+      storageDir: '/var/lib/mgx/kyc',
+      encryptionKey: KYC_KEY,
+    });
+  });
+
+  it('le répertoire et la clé vont ensemble', () => {
+    const expected = [
+      'KYC_STORAGE_DIR: KYC_STORAGE_DIR and KYC_ENCRYPTION_KEY must be set together.',
+    ];
+    expect(problemsOf({ ...minimal, KYC_STORAGE_DIR: '/var/lib/mgx/kyc' })).toEqual(expected);
+    const problems = problemsOf({ ...minimal, KYC_ENCRYPTION_KEY: KYC_KEY });
+    expect(problems).toEqual(expected);
+    expect(problems.join(' ')).not.toContain(KYC_KEY);
+  });
+
+  it('le répertoire est un chemin absolu : il ne dépend pas du répertoire de lancement', () => {
+    for (const relative of ['kyc', './kyc', '../kyc', 'var/lib/mgx/kyc']) {
+      expect(problemsOf({ ...kyc, KYC_STORAGE_DIR: relative })).toEqual([
+        'KYC_STORAGE_DIR: Must be an absolute path.',
+      ]);
+    }
+  });
+
+  it('exige une clé de 32 octets en base64, sans jamais l’afficher', () => {
+    for (const malformed of [
+      Buffer.alloc(16, 1).toString('base64'),
+      Buffer.alloc(33, 1).toString('base64'),
+      Buffer.alloc(32, 1).toString('hex'),
+      `${KYC_KEY.slice(0, -2)}*=`,
+      'a-passphrase-is-not-a-key-of-32-random-bytes',
+    ]) {
+      const problems = problemsOf({ ...kyc, KYC_ENCRYPTION_KEY: malformed });
+      expect(problems).toEqual([
+        'KYC_ENCRYPTION_KEY: Must be 32 random bytes encoded in base64 (openssl rand -base64 32).',
+      ]);
+      expect(problems.join(' ')).not.toContain(malformed);
+    }
+  });
+
+  it('la clé des pièces n’est pas celle des secrets de connexion : chacune ne sert qu’à son usage', () => {
+    const problems = problemsOf({ ...kyc, KYC_ENCRYPTION_KEY: ENCRYPTION_KEY });
+    expect(problems).toEqual([
+      'KYC_ENCRYPTION_KEY: Must be a key of its own, not AUTH_SECRETS_ENCRYPTION_KEY.',
+    ]);
+    expect(problems.join(' ')).not.toContain(ENCRYPTION_KEY);
+  });
+});

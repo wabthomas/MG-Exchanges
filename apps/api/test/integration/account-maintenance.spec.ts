@@ -26,6 +26,7 @@ const NOTHING: MaintenanceReport = {
   expiredChallenges: 0,
   unconfirmedTotpEnrollments: 0,
   expiredRoleChanges: 0,
+  otherSteps: { 'purge-stale-kyc-drafts': 0 },
   failures: 0,
 };
 

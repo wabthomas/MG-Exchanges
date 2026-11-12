@@ -154,3 +154,28 @@ export const timeZoneSchema = z
   .string()
   .max(TIME_ZONE_MAX_LENGTH)
   .refine(isTimeZone, { error: 'Must be an IANA time zone such as "Africa/Kinshasa".' });
+
+// --- Vérification d'identité ------------------------------------------------------------------
+
+/** Numéro d'une pièce d'identité, sous sa forme normalisée : majuscules et chiffres. */
+export const IDENTITY_DOCUMENT_NUMBER_PATTERN = /^[A-Z0-9]{4,32}$/;
+
+/**
+ * Forme sous laquelle un numéro de pièce est comparé et conservé : majuscules, sans les
+ * espaces, points, barres ni traits d'union qu'on y lit souvent. Deux saisies du même numéro
+ * donnent ainsi la même valeur. Rien d'autre n'est retiré : un saut de ligne ou une tabulation
+ * font refuser la saisie.
+ */
+export function normalizeIdentityDocumentNumber(value: string): string {
+  return value.replace(/[ \u00A0./-]/g, '').toUpperCase();
+}
+
+export const identityDocumentNumberSchema = z
+  .string()
+  .max(64)
+  .transform(normalizeIdentityDocumentNumber)
+  .pipe(
+    z.string().regex(IDENTITY_DOCUMENT_NUMBER_PATTERN, {
+      error: 'Must be 4 to 32 letters and digits.',
+    }),
+  );

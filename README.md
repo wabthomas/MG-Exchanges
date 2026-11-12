@@ -5,11 +5,13 @@ actifs numériques et des devises depuis une interface unique. Marché de lancem
 République démocratique du Congo ; l'architecture est prévue pour s'étendre à d'autres marchés.
 
 > **État : phase 2 en cours — comptes, authentification, validation en deux étapes, profil,
-> vérification du téléphone et routes d'administration des comptes sont livrés ; le KYC reste
-> à faire.**
+> vérification du téléphone, routes d'administration des comptes et vérification d'identité
+> des particuliers (KYC, examen manuel) sont livrés ; la vérification des entreprises, les
+> conditions d'utilisation et la clôture de compte restent à faire.**
 > Aucune fonctionnalité financière n'existe : ni paiement, ni transfert, ni retrait.
-> L'inscription est fermée par défaut. Les e-mails partent par le serveur SMTP du prestataire
-> configuré au déploiement ; aucun SMS ne part (aucun prestataire SMS n'est branché).
+> L'inscription et la vérification d'identité sont fermées par défaut. Les e-mails partent par
+> le serveur SMTP du prestataire configuré au déploiement ; aucun SMS ne part (aucun
+> prestataire SMS n'est branché).
 > Ce dépôt contient une **API** : l'application web, les applications mobiles et l'interface
 > du back-office n'existent pas encore (phase 7). L'avancement détaillé, les résultats de
 > tests et les limites connues sont dans [PROJECT_STATUS.md](PROJECT_STATUS.md).
@@ -22,12 +24,14 @@ apps/
 packages/
   shared/              primitives métier : montants exacts (bigint), sans virgule flottante
   validation/          schémas de validation primitifs (Zod), partagés avec les futurs clients
-  contracts/           contrats de l'API : erreurs, identité, back-office, catalogue des permissions
+  contracts/           contrats de l'API : erreurs, identité, vérification d'identité,
+                       back-office, catalogue des permissions
   config/              préréglages d'outillage : TypeScript, ESLint, Jest
 infrastructure/
   docker/              image de l'API, initialisation de PostgreSQL (rôles et privilèges)
   nginx/               reverse proxy
-  ci/                  workflow GitHub Actions — à déplacer dans .github/workflows/ pour l'activer
+  ci/                  workflow GitHub Actions — à déplacer dans .github/workflows/ pour l'activer —
+                       et parcours de bout en bout rejoué sur la pile conteneurisée
 docs/                  architecture, base de données, API, sécurité, déploiement, décisions (ADR)
 docker-compose.yml     environnement local
 ```
@@ -55,6 +59,9 @@ pnpm install
 cp apps/api/.env.example apps/api/.env   # reporter les mots de passe du fichier .env racine, puis générer :
                                          #   AUTH_CODE_HMAC_SECRET        openssl rand -hex 32
                                          #   AUTH_SECRETS_ENCRYPTION_KEY  openssl rand -base64 32
+                                         # et, pour la vérification d'identité (facultatif) :
+                                         #   KYC_ENCRYPTION_KEY           openssl rand -base64 32
+                                         #   KYC_STORAGE_DIR              chemin absolu d'un répertoire
 
 # 3. Schéma de base de données, compilation, lancement
 pnpm db:migrate:deploy
@@ -74,21 +81,23 @@ application d'authentification) : sans elle, les routes `/api/v1/admin/…` rép
 
 L'API écoute sur `http://localhost:3000` :
 
-| URL                     | Rôle                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------- |
-| `/api/docs`             | documentation interactive (Swagger UI) — développement seul                     |
-| `/api/v1/system/status` | état de la plateforme et fonctionnalités ouvertes                               |
-| `/api/v1/auth/…`        | inscription, connexion en une ou deux étapes, mot de passe                      |
-| `/api/v1/me/…`          | compte, sessions, second facteur, profil, téléphone, historique                 |
-| `/api/v1/admin/…`       | back-office : paramètres, comptes, rôles (permissions et second facteur requis) |
-| `/api/v1/dev/mailbox`   | e-mails et SMS « envoyés » — développement seul                                 |
-| `/health/live`          | sonde de vivacité                                                               |
-| `/health/ready`         | sonde de disponibilité (PostgreSQL, Redis)                                      |
+| URL                         | Rôle                                                                                                                 |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `/api/docs`                 | documentation interactive (Swagger UI) — développement seul                                                          |
+| `/api/v1/system/status`     | état de la plateforme et fonctionnalités ouvertes                                                                    |
+| `/api/v1/auth/…`            | inscription, connexion en une ou deux étapes, mot de passe                                                           |
+| `/api/v1/me/…`              | compte, sessions, second facteur, profil, téléphone, historique                                                      |
+| `/api/v1/me/verification/…` | vérification d'identité : dossiers par niveau, envoi des pièces                                                      |
+| `/api/v1/admin/…`           | back-office : paramètres, comptes, rôles, examen des dossiers de vérification (permissions et second facteur requis) |
+| `/api/v1/dev/mailbox`       | e-mails et SMS « envoyés » — développement seul                                                                      |
+| `/health/live`              | sonde de vivacité                                                                                                    |
+| `/health/ready`             | sonde de disponibilité (PostgreSQL, Redis)                                                                           |
 
 Toute route exige une authentification, sauf celles explicitement publiques. L'inscription
 est fermée par défaut : un administrateur l'ouvre avec
-`PUT /api/v1/admin/system-settings/features.registration`. En développement, les codes
-envoyés par e-mail ou par SMS se lisent sur `/api/v1/dev/mailbox?recipient=<adresse ou numéro>`.
+`PUT /api/v1/admin/system-settings/features.registration` ; la vérification d'identité, de
+même, avec `…/features.kyc`. En développement, les codes envoyés par e-mail ou par SMS se
+lisent sur `/api/v1/dev/mailbox?recipient=<adresse ou numéro>`.
 
 Pile entièrement conteneurisée (migrations, API, Nginx sur le port 8080) :
 

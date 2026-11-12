@@ -179,6 +179,10 @@ model User {
   requestedRoleChanges RoleChangeRequest[] @relation("RoleChangeRequester")
   decidedRoleChanges   RoleChangeRequest[] @relation("RoleChangeDecider")
 
+  kycCases        KycCase[] @relation("KycCaseHolder")
+  decidedKycCases KycCase[] @relation("KycCaseDecider")
+  revokedKycCases KycCase[] @relation("KycCaseRevoker")
+
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
   @@map("users")
@@ -479,4 +483,198 @@ model SessionToken {
 
   @@index([sessionId])
   @@map("session_tokens")
+}
+
+// ---------------------------------------------------------------------------------------
+// Vérification d'identité (KYC)
+// ---------------------------------------------------------------------------------------
+
+/// Parcours d'un dossier de vérification.
+///
+///   DRAFT ──▶ SUBMITTED ──▶ APPROVED ──▶ SUPERSEDED (remplacé par un dossier plus récent)
+///     │           │             └──────▶ REVOKED    (vérification retirée)
+///  (effacé)       └──▶ REJECTED
+///
+/// Les transitions, et qui peut les faire, sont imposées par la base (voir la migration).
+enum KycCaseStatus {
+  /// En préparation par le titulaire : modifiable, effaçable.
+  DRAFT
+  /// Déposé : figé, en attente d'examen.
+  SUBMITTED
+  /// Accepté : le niveau est vérifié.
+  APPROVED
+  /// Refusé, avec ses motifs. Le titulaire peut déposer un nouveau dossier.
+  REJECTED
+  /// Accepté puis remplacé par un dossier plus récent du même niveau.
+  SUPERSEDED
+  /// Accepté puis retiré par la conformité.
+  REVOKED
+
+  @@map("kyc_case_status")
+}
+
+enum KycIdentityDocumentType {
+  NATIONAL_ID_CARD
+  /// Carte d'électeur : tient lieu de pièce d'identité en RDC.
+  VOTER_CARD
+  PASSPORT
+  DRIVING_LICENCE
+
+  @@map("kyc_identity_document_type")
+}
+
+enum KycAddressProofType {
+  UTILITY_BILL
+  BANK_STATEMENT
+  /// Attestation de résidence délivrée par l'autorité locale.
+  RESIDENCE_CERTIFICATE
+  LEASE_AGREEMENT
+  TAX_DOCUMENT
+  OTHER
+
+  @@map("kyc_address_proof_type")
+}
+
+enum KycFundsSource {
+  EMPLOYMENT
+  BUSINESS
+  SAVINGS
+  INVESTMENTS
+  INHERITANCE
+  SALE_OF_PROPERTY
+  FAMILY_SUPPORT
+  PENSION
+  OTHER
+
+  @@map("kyc_funds_source")
+}
+
+/// Motifs de refus communiqués au titulaire (la note interne ne l'est jamais).
+enum KycRejectionReason {
+  DOCUMENT_UNREADABLE
+  DOCUMENT_EXPIRED
+  DOCUMENT_NOT_ACCEPTED
+  DOCUMENT_INCOMPLETE
+  INFORMATION_MISMATCH
+  SELFIE_UNUSABLE
+  SELFIE_MISMATCH
+  PROOF_TOO_OLD
+  INSUFFICIENT_EVIDENCE
+  OTHER
+
+  @@map("kyc_rejection_reason")
+}
+
+enum KycDocumentKind {
+  IDENTITY_FRONT
+  IDENTITY_BACK
+  SELFIE
+  PROOF_OF_ADDRESS
+  SOURCE_OF_FUNDS
+
+  @@map("kyc_document_kind")
+}
+
+/// Dossier de vérification d'un niveau, pour un compte : ce que le titulaire déclare, les
+/// pièces qu'il joint (`kyc_documents`) et la décision prise.
+///
+/// Niveau 1 : identité (pièce officielle avec photographie + autoportrait) ; niveau 2 :
+/// adresse (justificatif) ; niveau 3 : origine des fonds. Un dossier déposé est une **preuve** :
+/// il ne se modifie plus et ne s'efface pas. Le niveau vérifié d'un compte se déduit de ses
+/// dossiers acceptés — il n'est stocké nulle part ailleurs.
+model KycCase {
+  id        String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  /// 1, 2 ou 3.
+  level     Int           @db.SmallInt
+  status    KycCaseStatus @default(DRAFT)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Date du dépôt, à la milliseconde : elle ordonne la file d'examen et sert de curseur.
+  submittedAt      DateTime?            @map("submitted_at") @db.Timestamptz(3)
+  /// Auteur de la décision (acceptation ou refus) : jamais le titulaire du dossier.
+  decidedBy        String?              @map("decided_by") @db.Uuid
+  decidedAt        DateTime?            @map("decided_at") @db.Timestamptz(6)
+  /// Motifs d'un refus, communiqués au titulaire.
+  rejectionReasons KycRejectionReason[] @default([]) @map("rejection_reasons")
+  /// Note interne de la décision : jamais communiquée au titulaire.
+  decisionNote     String?              @map("decision_note") @db.VarChar(500)
+  /// Fin de validité d'un dossier accepté : remplacement ou retrait.
+  endedAt          DateTime?            @map("ended_at") @db.Timestamptz(6)
+  revokedBy        String?              @map("revoked_by") @db.Uuid
+  revocationReason String?              @map("revocation_reason") @db.VarChar(500)
+
+  // --- Niveau 1 : identité déclarée et pièce présentée ---
+  givenName               String?                  @map("given_name") @db.VarChar(100)
+  familyName              String?                  @map("family_name") @db.VarChar(100)
+  /// Postnom (usage congolais).
+  additionalName          String?                  @map("additional_name") @db.VarChar(100)
+  dateOfBirth             DateTime?                @map("date_of_birth") @db.Date
+  placeOfBirth            String?                  @map("place_of_birth") @db.VarChar(100)
+  /// Nationalité (ISO 3166-1 alpha-2).
+  nationality             String?                  @db.Char(2)
+  documentType            KycIdentityDocumentType? @map("document_type")
+  /// Numéro de la pièce, chiffré (AES-256-GCM, clé hors de la base).
+  documentNumberEncrypted Bytes?                   @map("document_number_encrypted")
+  /// Empreinte à clé du numéro (HMAC-SHA-256) : permet de retrouver une même pièce présentée
+  /// sur plusieurs comptes sans déchiffrer.
+  documentNumberDigest    Bytes?                   @map("document_number_digest")
+  documentIssuingCountry  String?                  @map("document_issuing_country") @db.Char(2)
+  documentIssuedOn        DateTime?                @map("document_issued_on") @db.Date
+  /// Lieu de délivrance.
+  documentIssuedAt        String?                  @map("document_issued_at") @db.VarChar(100)
+  documentExpiresOn       DateTime?                @map("document_expires_on") @db.Date
+
+  // --- Niveau 2 : adresse déclarée et justificatif ---
+  addressLine1         String?              @map("address_line1") @db.VarChar(200)
+  addressLine2         String?              @map("address_line2") @db.VarChar(200)
+  city                 String?              @db.VarChar(100)
+  region               String?              @db.VarChar(100)
+  postalCode           String?              @map("postal_code") @db.VarChar(20)
+  addressCountry       String?              @map("address_country") @db.Char(2)
+  addressProofType     KycAddressProofType? @map("address_proof_type")
+  addressProofIssuedOn DateTime?            @map("address_proof_issued_on") @db.Date
+
+  // --- Niveau 3 : origine des fonds ---
+  fundsSources     KycFundsSource[] @default([]) @map("funds_sources")
+  occupation       String?          @db.VarChar(100)
+  employerName     String?          @map("employer_name") @db.VarChar(200)
+  fundsExplanation String?          @map("funds_explanation") @db.VarChar(1000)
+
+  user      User          @relation("KycCaseHolder", fields: [userId], references: [id], onDelete: Restrict)
+  decider   User?         @relation("KycCaseDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+  revoker   User?         @relation("KycCaseRevoker", fields: [revokedBy], references: [id], onDelete: Restrict)
+  documents KycDocument[]
+
+  // File d'attente de l'examen : par statut, du plus ancien dépôt au plus récent.
+  @@index([status, submittedAt, id])
+  @@index([userId, level])
+  @@index([documentNumberDigest])
+  @@map("kyc_cases")
+}
+
+/// Pièce jointe à un dossier de vérification. Le fichier, chiffré, est conservé hors de la
+/// base ; cette ligne en porte la description, l'empreinte et la clé (elle-même chiffrée) :
+/// sans la ligne, le fichier est indéchiffrable.
+model KycDocument {
+  id          String          @id @db.Uuid
+  caseId      String          @map("case_id") @db.Uuid
+  kind        KycDocumentKind
+  /// Type du contenu, vérifié à la réception : `image/jpeg`, `image/png` ou `application/pdf`.
+  contentType String          @map("content_type") @db.VarChar(32)
+  byteSize    Int             @map("byte_size")
+  /// SHA-256 du fichier en clair.
+  sha256      Bytes
+  /// Emplacement du fichier chiffré dans le stockage des pièces.
+  storageKey  String          @unique @map("storage_key") @db.VarChar(128)
+  /// Clé du fichier, chiffrée par la clé maîtresse (hors de la base).
+  wrappedKey  Bytes           @map("wrapped_key")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  case KycCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+
+  @@index([caseId])
+  @@index([sha256])
+  @@map("kyc_documents")
 }

@@ -114,6 +114,7 @@ jobs:
             echo "REDIS_PASSWORD=$(openssl rand -hex 24)"
             echo "AUTH_CODE_HMAC_SECRET=$(openssl rand -hex 32)"
             echo "AUTH_SECRETS_ENCRYPTION_KEY=$(openssl rand -base64 32)"
+            echo "KYC_ENCRYPTION_KEY=$(openssl rand -base64 32)"
           } > .env
 
       - name: Valider la configuration Compose
@@ -137,7 +138,7 @@ jobs:
 
       # Le premier administrateur se crée hors de l'API, avec le rôle propriétaire de la base
       # (image de migration) ; le reste du parcours passe par Nginx comme un vrai client.
-      - name: Parcours d'identité à travers Nginx
+      - name: Parcours d'identité et de vérification d'identité à travers Nginx
         env:
           ADMIN_EMAIL: admin@ci.example
           BASE_URL: http://127.0.0.1:8080
@@ -147,6 +148,11 @@ jobs:
           docker compose --profile app run --rm --env MGX_ADMIN_PASSWORD \
             migrate node dist/cli/main.js admin:create --email "$ADMIN_EMAIL"
           infrastructure/ci/smoke-identity.sh
+
+      # Les pièces envoyées pendant le parcours sont dans le volume de l'API : chiffrées, et
+      # lisibles par son seul utilisateur.
+      - name: Pièces de vérification chiffrées dans leur volume
+        run: docker compose --profile app exec -T api sh -s < infrastructure/ci/check-kyc-storage.sh
 
       # Le parcours documenté pour un poste de développement : rôle propriétaire (sans
       # privilège de superutilisateur) et base fantôme créée par le script d'initialisation.

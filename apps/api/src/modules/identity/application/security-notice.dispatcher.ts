@@ -1,3 +1,4 @@
+import { KYC_REJECTION_REASONS, KYC_REJECTION_REASONS_MAX, kycLevelSchema } from '@mgx/contracts';
 import { localeSchema } from '@mgx/validation';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
 import { z } from 'zod';
@@ -33,6 +34,9 @@ const payloadSchema = z.object({
       device: z.string().max(64).nullable().optional(),
       remaining: z.number().int().nonnegative().optional(),
       blockedMinutes: z.number().int().positive().optional(),
+      /** Vérification d'identité : niveau concerné et motifs d'un refus. */
+      level: kycLevelSchema.optional(),
+      reasons: z.array(z.enum(KYC_REJECTION_REASONS)).max(KYC_REJECTION_REASONS_MAX).optional(),
     })
     .optional(),
 });
@@ -77,6 +81,16 @@ function contentOf(notice: SecurityNotice, details: Details, sentAt: string): No
       return { template: 'account_suspended' };
     case 'ACCOUNT_REACTIVATED':
       return { template: 'account_reactivated' };
+    case 'IDENTITY_VERIFICATION_APPROVED':
+      return { template: 'identity_verification_approved', level: details.level ?? 1 };
+    case 'IDENTITY_VERIFICATION_REJECTED':
+      return {
+        template: 'identity_verification_rejected',
+        level: details.level ?? 1,
+        reasons: details.reasons ?? ['OTHER'],
+      };
+    case 'IDENTITY_VERIFICATION_REVOKED':
+      return { template: 'identity_verification_revoked', level: details.level ?? 1 };
   }
 }
 

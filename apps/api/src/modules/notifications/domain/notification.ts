@@ -1,3 +1,4 @@
+import type { KycLevel, KycRejectionReason } from '@mgx/contracts';
 import type { SupportedLocale } from '@mgx/validation';
 
 /** Contenu d'un message : un modèle et les valeurs qu'il attend. */
@@ -37,7 +38,15 @@ export type NotificationContent =
       readonly blockedMinutes: number;
     }
   | { readonly template: 'account_suspended' }
-  | { readonly template: 'account_reactivated' };
+  | { readonly template: 'account_reactivated' }
+  | { readonly template: 'identity_verification_approved'; readonly level: KycLevel }
+  | {
+      readonly template: 'identity_verification_rejected';
+      readonly level: KycLevel;
+      /** Motifs du refus, dans l'ordre où la conformité les a donnés. */
+      readonly reasons: readonly KycRejectionReason[];
+    }
+  | { readonly template: 'identity_verification_revoked'; readonly level: KycLevel };
 
 export type NotificationTemplate = NotificationContent['template'];
 

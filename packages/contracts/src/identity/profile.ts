@@ -18,7 +18,10 @@ import { z } from 'zod';
  *
  * Les noms suivent l'usage congolais : prénom (`givenName`), nom (`familyName`) et postnom
  * (`additionalName`). Ces informations sont **déclaratives** tant que l'identité n'a pas été
- * vérifiée (KYC) ; une fois vérifiées, elles ne seront plus modifiables librement.
+ * vérifiée (KYC). Une fois l'identité vérifiée (`identityVerified`), les noms, la date et le
+ * lieu de naissance et la nationalité sont ceux du dossier accepté et ne se modifient plus ici ;
+ * il en va de même de l'adresse une fois celle-ci vérifiée (`addressVerified`). Les changer
+ * passe par un nouveau dossier de vérification.
  */
 export const profileSchema = z.object({
   givenName: z.string().nullable(),
@@ -27,12 +30,20 @@ export const profileSchema = z.object({
   additionalName: z.string().nullable(),
   /** Date de naissance : `1990-05-17`. */
   dateOfBirth: isoDateSchema.nullable(),
+  /** Lieu de naissance ; connu seulement une fois l'identité vérifiée. */
+  placeOfBirth: z.string().nullable(),
+  /** Nationalité (ISO 3166-1 alpha-2) ; connue seulement une fois l'identité vérifiée. */
+  nationality: z.string().nullable(),
+  /** Vrai si les noms et la naissance ont été vérifiés sur une pièce d'identité. */
+  identityVerified: z.boolean(),
   addressLine1: z.string().nullable(),
   addressLine2: z.string().nullable(),
   city: z.string().nullable(),
   /** Province ou région. */
   region: z.string().nullable(),
   postalCode: z.string().nullable(),
+  /** Vrai si l'adresse a été vérifiée sur un justificatif de domicile. */
+  addressVerified: z.boolean(),
   /** Langue des messages adressés à l'utilisateur. */
   locale: localeSchema,
   /** Fuseau horaire IANA, ou `null` si aucun n'a été choisi. */
@@ -43,7 +54,8 @@ export type Profile = z.infer<typeof profileSchema>;
 
 /**
  * Modification partielle : seuls les champs présents changent ; `null` efface un champ
- * (sauf `locale`, toujours renseignée).
+ * (sauf `locale`, toujours renseignée). Un champ vérifié ne se modifie pas : la requête est
+ * alors refusée (`CONFLICT`).
  */
 export const updateProfileRequestSchema = z
   .strictObject({
@@ -115,6 +127,10 @@ export const ACTIVITY_TYPES = [
   'ACCOUNT_REACTIVATED',
   'SESSIONS_CLOSED_BY_SUPPORT',
   'TWO_FACTOR_RESET_BY_SUPPORT',
+  'IDENTITY_VERIFICATION_SUBMITTED',
+  'IDENTITY_VERIFICATION_APPROVED',
+  'IDENTITY_VERIFICATION_REJECTED',
+  'IDENTITY_VERIFICATION_REVOKED',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 

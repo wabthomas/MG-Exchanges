@@ -14,6 +14,7 @@ import { ActivityService } from './application/activity.service.js';
 import { AuthenticationService } from './application/authentication.service.js';
 import { AuthorizationService } from './application/authorization.service.js';
 import { ChallengeRepository } from './application/challenge.repository.js';
+import { MaintenanceStepRegistry } from './application/maintenance-step.registry.js';
 import { MfaRepository } from './application/mfa.repository.js';
 import { MfaService } from './application/mfa.service.js';
 import { PasswordHasher } from './application/password-hasher.js';
@@ -32,6 +33,7 @@ import { SessionService } from './application/session.service.js';
 import { UserDirectory } from './application/user-directory.js';
 import { UserRepository } from './application/user.repository.js';
 import { VerificationCodeDispatcher } from './application/verification-code.dispatcher.js';
+import { VerificationStatusReader } from './application/verification-status.reader.js';
 import { VerificationService } from './application/verification.service.js';
 import { AccountMaintenanceProcessor } from './infrastructure/account-maintenance.processor.js';
 import { Argon2PasswordHasher } from './infrastructure/argon2-password-hasher.js';
@@ -43,6 +45,7 @@ import { PrismaRoleChangeRepository } from './infrastructure/prisma-role-change.
 import { PrismaSessionRepository } from './infrastructure/prisma-session.repository.js';
 import { PrismaUserDirectory } from './infrastructure/prisma-user-directory.js';
 import { PrismaUserRepository } from './infrastructure/prisma-user.repository.js';
+import { PrismaVerificationStatusReader } from './infrastructure/prisma-verification-status.reader.js';
 import { RecoveryCodes } from './infrastructure/recovery-codes.js';
 import { RedisPendingLoginStore } from './infrastructure/redis-pending-login.store.js';
 import { SecondFactorThrottle } from './infrastructure/second-factor-throttle.js';
@@ -83,6 +86,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     { provide: ProfileRepository, useClass: PrismaProfileRepository },
     { provide: UserDirectory, useClass: PrismaUserDirectory },
     { provide: RoleChangeRepository, useClass: PrismaRoleChangeRepository },
+    { provide: VerificationStatusReader, useClass: PrismaVerificationStatusReader },
     { provide: PendingLoginStore, useClass: RedisPendingLoginStore },
     { provide: Clock, useClass: SystemClock },
     {
@@ -110,6 +114,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     AuthorizationService,
     AdminUsersService,
     RoleChangeService,
+    MaintenanceStepRegistry,
     AccountMaintenanceService,
     AccountMaintenanceProcessor,
     VerificationCodeDispatcher,
@@ -117,6 +122,16 @@ import { ProfileController } from './presentation/profile.controller.js';
     { provide: APP_GUARD, useClass: AuthenticationGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
-  exports: [AuthenticationService, AuthorizationService, AccountService],
+  exports: [
+    AuthenticationService,
+    AuthorizationService,
+    AccountService,
+    // À l'usage du module de vérification d'identité, qui s'appuie sur les comptes.
+    Clock,
+    UserRepository,
+    UserDirectory,
+    VerificationStatusReader,
+    MaintenanceStepRegistry,
+  ],
 })
 export class IdentityModule {}

@@ -61,6 +61,13 @@ COPY --from=build --chown=node:node /out/package.json ./package.json
 COPY --from=build --chown=node:node /out/node_modules ./node_modules
 COPY --from=build --chown=node:node /out/dist ./dist
 
+# Pièces de vérification d'identité (chiffrées) : KYC_STORAGE_DIR désigne ce répertoire. Il est
+# créé ici, réservé à l'utilisateur de l'API, pour qu'un volume neuf en hérite le propriétaire
+# et les droits. Sans volume déclaré au lancement, Docker en crée un anonyme : les pièces ne
+# sont jamais écrites dans la couche éphémère du conteneur.
+RUN install -d -o node -g node -m 0700 /var/lib/mgx/kyc
+VOLUME ["/var/lib/mgx/kyc"]
+
 USER node
 EXPOSE 3000
 

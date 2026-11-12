@@ -24,12 +24,14 @@ import { identifierDigest } from '../domain/identifier-digest.js';
 import { SECURITY_NOTICE_REQUESTED_EVENT, type SecurityNotice } from '../domain/identity-events.js';
 import { SecondFactorThrottle } from '../infrastructure/second-factor-throttle.js';
 import type { ClientContext } from './client-context.js';
+import { effectiveProfileOf } from './effective-profile.js';
 import { MfaRepository } from './mfa.repository.js';
 import { PendingLoginStore } from './pending-login.store.js';
 import { ProfileRepository } from './profile.repository.js';
 import { SessionRepository } from './session.repository.js';
 import { type DirectoryEntry, UserDirectory } from './user-directory.js';
 import { UserRepository } from './user.repository.js';
+import { VerificationStatusReader } from './verification-status.reader.js';
 
 /** Membre du personnel à l'origine d'une action du back-office. */
 export interface StaffActor {
@@ -87,6 +89,7 @@ export class AdminUsersService {
     private readonly sessions: SessionRepository,
     private readonly pendingLogins: PendingLoginStore,
     private readonly throttle: SecondFactorThrottle,
+    private readonly verification: VerificationStatusReader,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly unitOfWork: UnitOfWork,
@@ -157,13 +160,15 @@ export class AdminUsersService {
   /** Fiche d'un compte. La consultation est journalisée. */
   async get(userId: string, actor: StaffActor): Promise<AdminUserDetail> {
     const now = this.clock.now();
-    const [entry, profile, totp, recoveryCodesRemaining, activeSessions] = await Promise.all([
-      this.directory.find(this.prisma, userId),
-      this.profiles.find(this.prisma, userId),
-      this.mfa.findTotp(this.prisma, userId),
-      this.mfa.countUnusedRecoveryCodes(this.prisma, userId),
-      this.sessions.countActive(this.prisma, userId, now),
-    ]);
+    const [entry, declared, verification, totp, recoveryCodesRemaining, activeSessions] =
+      await Promise.all([
+        this.directory.find(this.prisma, userId),
+        this.profiles.find(this.prisma, userId),
+        this.verification.read(this.prisma, userId),
+        this.mfa.findTotp(this.prisma, userId),
+        this.mfa.countUnusedRecoveryCodes(this.prisma, userId),
+        this.sessions.countActive(this.prisma, userId, now),
+      ]);
     if (entry === null) {
       throw notFound();
     }
@@ -176,23 +181,17 @@ export class AdminUsersService {
     });
 
     const enabledAt = totp?.confirmedAt ?? null;
+    const { identityVerified, addressVerified, dateOfBirth, ...profile } = effectiveProfileOf(
+      declared,
+      verification,
+    );
     return {
       ...toSummary(entry),
       locale: localeSchema.catch('fr').parse(entry.locale),
       termsAcceptedAt: entry.termsAcceptedAt.toISOString(),
       updatedAt: entry.updatedAt.toISOString(),
-      profile: {
-        givenName: profile?.givenName ?? null,
-        familyName: profile?.familyName ?? null,
-        additionalName: profile?.additionalName ?? null,
-        dateOfBirth: profile?.dateOfBirth?.toISOString().slice(0, 10) ?? null,
-        addressLine1: profile?.addressLine1 ?? null,
-        addressLine2: profile?.addressLine2 ?? null,
-        city: profile?.city ?? null,
-        region: profile?.region ?? null,
-        postalCode: profile?.postalCode ?? null,
-        timeZone: profile?.timeZone ?? null,
-      },
+      profile: { ...profile, dateOfBirth: dateOfBirth?.toISOString().slice(0, 10) ?? null },
+      verification: { level: verification.level, identityVerified, addressVerified },
       secondFactor: {
         enabled: enabledAt !== null,
         enabledAt: enabledAt?.toISOString() ?? null,

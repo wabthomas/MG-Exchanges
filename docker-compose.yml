@@ -102,6 +102,12 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+      # Vérification d'identité : facultative. Définir la clé active le stockage chiffré des
+      # pièces dans le volume monté ci-dessous ; sans clé, les deux variables restent vides
+      # (forme `${VAR:+valeur}` : « valeur si VAR est définie », comprise par Docker Compose
+      # depuis la mi-2022).
+      KYC_ENCRYPTION_KEY: ${KYC_ENCRYPTION_KEY:-}
+      KYC_STORAGE_DIR: ${KYC_ENCRYPTION_KEY:+/var/lib/mgx/kyc}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -113,6 +119,10 @@ services:
       - no-new-privileges:true
     tmpfs:
       - /tmp
+    volumes:
+      # Pièces de vérification d'identité, chiffrées : le seul emplacement inscriptible et
+      # persistant de l'API. À sauvegarder avec la base ; la clé, elle, se sauvegarde ailleurs.
+      - kyc-documents:/var/lib/mgx/kyc
 
   nginx:
     profiles: ['app']
@@ -137,3 +147,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  kyc-documents:

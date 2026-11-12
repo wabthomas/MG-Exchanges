@@ -14,6 +14,7 @@ import {
 } from '@mgx/validation';
 import { z } from 'zod';
 
+import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { permissionKeySchema } from './permissions.js';
 
 export const ACCOUNT_TYPES = ['INDIVIDUAL', 'BUSINESS'] as const;
@@ -119,6 +120,8 @@ export const currentUserSchema = z.object({
   permissions: z.array(permissionKeySchema),
   /** Vrai si la validation en deux étapes est activée. Elle est exigée pour le back-office. */
   secondFactorEnabled: z.boolean(),
+  /** Niveau de vérification d'identité atteint : de `0` (aucun) à `3`. */
+  verificationLevel: kycVerifiedLevelSchema,
   createdAt: isoDateTimeSchema,
 });
 export type CurrentUser = z.infer<typeof currentUserSchema>;

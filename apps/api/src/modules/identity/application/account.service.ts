@@ -7,6 +7,7 @@ import { PrismaService } from '../../../infrastructure/database/prisma.service.j
 import type { UserRecord } from '../domain/user.js';
 import { MfaRepository } from './mfa.repository.js';
 import { UserRepository } from './user.repository.js';
+import { VerificationStatusReader } from './verification-status.reader.js';
 
 /** Présentation d'un compte à son titulaire. */
 @Injectable()
@@ -14,6 +15,7 @@ export class AccountService {
   constructor(
     private readonly users: UserRepository,
     private readonly mfa: MfaRepository,
+    private readonly verification: VerificationStatusReader,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -26,9 +28,10 @@ export class AccountService {
   }
 
   async describe(user: UserRecord): Promise<CurrentUser> {
-    const [access, secondFactorEnabled] = await Promise.all([
+    const [access, secondFactorEnabled, verificationLevel] = await Promise.all([
       this.users.findAccess(this.prisma, user.id),
       this.mfa.isTotpEnabled(this.prisma, user.id),
+      this.verification.level(this.prisma, user.id),
     ]);
     return {
       id: user.id,
@@ -43,6 +46,7 @@ export class AccountService {
       roles: [...access.roles],
       permissions: [...access.permissions],
       secondFactorEnabled,
+      verificationLevel,
       createdAt: user.createdAt.toISOString(),
     };
   }

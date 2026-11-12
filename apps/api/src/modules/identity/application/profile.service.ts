@@ -14,51 +14,48 @@ import {
   parseCalendarDate,
 } from '../domain/profile-policy.js';
 import type { ClientContext } from './client-context.js';
+import { effectiveProfileOf, lockedProfileFields } from './effective-profile.js';
 import { type ProfileFields, ProfileRepository } from './profile.repository.js';
 import { UserRepository } from './user.repository.js';
+import { VerificationStatusReader } from './verification-status.reader.js';
 
 function unauthenticated(): AppError {
   return new AppError('UNAUTHENTICATED', 'Authentication is required.');
 }
 
 /**
- * Profil d'un compte : identité déclarée, adresse, préférences.
+ * Profil d'un compte : identité, adresse, préférences.
  *
- * Ces informations sont **déclaratives** : rien n'atteste encore qu'elles sont exactes. La
- * vérification d'identité (KYC) les confrontera aux pièces fournies, puis les figera.
+ * Ces informations sont **déclaratives** tant que la vérification d'identité (KYC) ne les a
+ * pas établies. Ce qu'un dossier de vérification accepté établit prime ensuite sur ce qui est
+ * déclaré ici, et ne se modifie plus par cette voie : en changer passe par un nouveau dossier.
  */
 @Injectable()
 export class ProfileService {
   constructor(
     private readonly profiles: ProfileRepository,
     private readonly users: UserRepository,
+    private readonly verification: VerificationStatusReader,
     private readonly unitOfWork: UnitOfWork,
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
 
   async get(userId: string): Promise<Profile> {
-    const [user, profile] = await Promise.all([
+    const [user, declared, verification] = await Promise.all([
       this.users.findById(this.prisma, userId),
       this.profiles.find(this.prisma, userId),
+      this.verification.read(this.prisma, userId),
     ]);
     if (user === null) {
       throw unauthenticated();
     }
-    const birthDate = profile?.dateOfBirth ?? null;
+    const { dateOfBirth, ...profile } = effectiveProfileOf(declared, verification);
     return {
-      givenName: profile?.givenName ?? null,
-      familyName: profile?.familyName ?? null,
-      additionalName: profile?.additionalName ?? null,
-      dateOfBirth: birthDate === null ? null : formatCalendarDate(birthDate),
-      addressLine1: profile?.addressLine1 ?? null,
-      addressLine2: profile?.addressLine2 ?? null,
-      city: profile?.city ?? null,
-      region: profile?.region ?? null,
-      postalCode: profile?.postalCode ?? null,
+      ...profile,
+      dateOfBirth: dateOfBirth === null ? null : formatCalendarDate(dateOfBirth),
       locale: localeSchema.catch('fr').parse(user.locale),
-      timeZone: profile?.timeZone ?? null,
-      updatedAt: profile?.updatedAt.toISOString() ?? null,
+      updatedAt: declared?.updatedAt.toISOString() ?? null,
     };
   }
 
@@ -68,6 +65,19 @@ export class ProfileService {
     client: ClientContext,
   ): Promise<Profile> {
     const { locale, dateOfBirth, ...text } = request;
+
+    // Ce que la vérification d'identité a établi ne se modifie plus ici.
+    const locked = lockedProfileFields(
+      request,
+      await this.verification.read(this.prisma, auth.userId),
+    );
+    if (locked.length > 0) {
+      throw new AppError(
+        'CONFLICT',
+        'Verified information cannot be changed here: submit a new identity verification instead.',
+        { errors: locked.map((path) => ({ path, message: 'Has been verified.' })) },
+      );
+    }
 
     let birthDate: Date | null | undefined;
     if (dateOfBirth !== undefined && dateOfBirth !== null) {

@@ -10,13 +10,14 @@ En développement, il est consultable de façon interactive sur `/api/docs`.
 | ---------------- | -------------------------------------------------------------------------------------------- |
 | Base             | `/api/v{n}/…` — la version figure dans le chemin ; chaque contrôleur déclare la sienne       |
 | Format           | JSON uniquement (`Content-Type: application/json`) ; les formulaires ne sont pas interprétés |
+| Fichiers         | une seule route en reçoit — l'envoi d'une pièce de vérification : le fichier est le corps    |
 | Montants         | chaînes décimales canoniques (`"12.34"`), **jamais** des nombres JSON                        |
 | Horodatages      | ISO 8601 en UTC (`2026-01-31T12:00:00.000Z`)                                                 |
 | Identifiants     | UUID                                                                                         |
 | Authentification | `Authorization: Bearer <jeton d'accès>` sur **toute** route, sauf celles dites publiques     |
 | Entrées          | validées par schéma ; les propriétés inconnues sont refusées                                 |
 | Cache            | `Cache-Control: no-store` sur toutes les réponses                                            |
-| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`)                                                  |
+| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`) ; 5 Mio pour une pièce de vérification           |
 
 ### Identifiant de requête
 
@@ -69,10 +70,10 @@ erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 | `NOT_FOUND`               | 404    | ressource ou route inexistante                            |
 | `METHOD_NOT_ALLOWED`      | 405    |                                                           |
 | `NOT_ACCEPTABLE`          | 406    |                                                           |
-| `REQUEST_TIMEOUT`         | 408    |                                                           |
+| `REQUEST_TIMEOUT`         | 408    | le corps de la requête a mis trop de temps à arriver      |
 | `CONFLICT`                | 409    | conflit avec l'état actuel                                |
 | `PAYLOAD_TOO_LARGE`       | 413    | corps trop volumineux                                     |
-| `UNSUPPORTED_MEDIA_TYPE`  | 415    |                                                           |
+| `UNSUPPORTED_MEDIA_TYPE`  | 415    | type de contenu non accepté (envoi d'une pièce)           |
 | `UNPROCESSABLE_ENTITY`    | 422    | requête comprise mais refusée par une règle métier        |
 | `COUNTRY_NOT_SUPPORTED`   | 422    | pays de résidence non desservi                            |
 | `RATE_LIMITED`            | 429    | trop de requêtes (voir `Retry-After`)                     |
@@ -84,14 +85,15 @@ Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
 
 ### Erreurs produites par le reverse proxy
 
-Nginx répond lui-même dans quatre cas, **au même format** que l'API :
+Nginx répond lui-même dans cinq cas, **au même format** que l'API :
 
-| Cas                                    | Réponse                                     |
-| -------------------------------------- | ------------------------------------------- |
-| route non relayée vers l'API           | `404 NOT_FOUND`                             |
-| corps de plus de 128 Ko                | `413 PAYLOAD_TOO_LARGE`                     |
-| limitation de débit amont dépassée     | `429 RATE_LIMITED`, `Retry-After: 1`        |
-| API injoignable, arrêtée ou trop lente | `503 SERVICE_UNAVAILABLE`, `Retry-After: 5` |
+| Cas                                                           | Réponse                                     |
+| ------------------------------------------------------------- | ------------------------------------------- |
+| route non relayée vers l'API                                  | `404 NOT_FOUND`                             |
+| corps de plus de 128 Ko (6 Mio pour l'envoi d'une pièce)      | `413 PAYLOAD_TOO_LARGE`                     |
+| limitation de débit amont dépassée                            | `429 RATE_LIMITED`, `Retry-After: 1`        |
+| plus de quatre envois de pièces simultanés depuis une adresse | `429 RATE_LIMITED`, `Retry-After: 1`        |
+| API injoignable, arrêtée ou trop lente                        | `503 SERVICE_UNAVAILABLE`, `Retry-After: 5` |
 
 Un test (`nginx-problem-details.spec.ts`) vérifie que la configuration du proxy respecte le
 contrat. Seules les erreurs de protocole détectées avant tout traitement (requête HTTP mal
@@ -294,7 +296,12 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   (`AAAA-MM-JJ`, 18 ans révolus), `addressLine1`, `addressLine2`, `city`, `region`,
   `postalCode`, `locale` (`fr` \| `en`), `timeZone` (IANA, ex. `Africa/Kinshasa`). La
   modification est partielle : seuls les champs présents changent, `null` efface (sauf
-  `locale`). Ces informations sont **déclarées** : rien ne les a vérifiées (le KYC viendra).
+  `locale`). Ces informations sont **déclarées** tant que la vérification d'identité ne les a
+  pas établies. Une fois l'identité vérifiée (`identityVerified`), les noms, la date et le
+  lieu de naissance (`placeOfBirth`) et la nationalité (`nationality`) sont ceux de la pièce ;
+  une fois l'adresse vérifiée (`addressVerified`), l'adresse est celle du justificatif.
+  Modifier un champ vérifié répond `409 CONFLICT` (champs en cause dans `errors`) : en changer
+  passe par un nouveau dossier de vérification.
 - **Téléphone.** Un code à six chiffres est envoyé par SMS ; le numéro ne devient celui du
   compte **qu'une fois confirmé** — jusque-là, un numéro déjà vérifié reste en place. Seuls
   les mobiles des pays desservis sont acceptés (RDC : `+243 8x…` et `9x…` ;
@@ -302,10 +309,95 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   heure et par numéro. Un numéro vérifié n'appartient qu'à un compte : la confirmation répond
   `409 CONFLICT` s'il l'est déjà ailleurs — ce que seul le détenteur du numéro peut apprendre.
 - **Historique.** Événements de sécurité du compte, du plus récent au plus ancien : connexions
-  (y compris échouées), mot de passe, second facteur, profil, téléphone, interventions du
-  support. La liste des types est fermée (`type`) ; chaque entrée porte `occurredAt`,
-  `outcome`, et l'adresse IP et l'appareil d'origine — sauf pour une intervention du support.
+  (y compris échouées), mot de passe, second facteur, profil, téléphone, vérification
+  d'identité (dépôt, acceptation, refus, retrait), interventions du support. La liste des
+  types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
+  l'appareil d'origine — sauf pour une intervention du personnel. Ce qu'un membre du
+  personnel fait au compte d'un client figure dans l'historique de ce client, pas dans le sien.
   Pagination par curseur : `before` = `nextCursor` de la page précédente ; `limit` ≤ 100.
+
+## Vérification d'identité (KYC)
+
+Réservée aux **particuliers**, et à la fonctionnalité `kyc` (`403 FEATURE_DISABLED` tant
+qu'elle est fermée — c'est le cas par défaut). `GET /api/v1/me` porte le niveau atteint :
+`verificationLevel`, de `0` à `3`.
+
+| Niveau | Ce qui est vérifié | Déclaration                            | Pièces (`kind`)                                            |
+| ------ | ------------------ | -------------------------------------- | ---------------------------------------------------------- |
+| 1      | identité           | `PUT /me/verification/identity`        | `IDENTITY_FRONT`, `IDENTITY_BACK` selon la pièce, `SELFIE` |
+| 2      | adresse            | `PUT /me/verification/address`         | 1 à 3 `PROOF_OF_ADDRESS`                                   |
+| 3      | origine des fonds  | `PUT /me/verification/source-of-funds` | 1 à 5 `SOURCE_OF_FUNDS`                                    |
+
+Les niveaux s'obtiennent **dans l'ordre**. Pour chacun, le titulaire prépare un dossier,
+y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
+
+| Route                                                          | Corps          | Réponse       |
+| -------------------------------------------------------------- | -------------- | ------------- |
+| `GET /api/v1/me/verification`                                  | —              | situation     |
+| `PUT /api/v1/me/verification/identity`                         | déclaration    | dossier       |
+| `PUT /api/v1/me/verification/address`                          | déclaration    | dossier       |
+| `PUT /api/v1/me/verification/source-of-funds`                  | déclaration    | dossier       |
+| `GET /api/v1/me/verification/cases/{caseId}`                   | —              | dossier       |
+| `DELETE /api/v1/me/verification/cases/{caseId}`                | —              | `204`         |
+| `POST /api/v1/me/verification/cases/{caseId}/documents?kind=…` | **le fichier** | `201` dossier |
+| `DELETE /api/v1/me/verification/cases/{caseId}/documents/{id}` | —              | dossier       |
+| `POST /api/v1/me/verification/cases/{caseId}/submit`           | —              | dossier       |
+
+- **Situation.** `level`, et pour chaque niveau : `verified`, `verifiedAt`, `available` (un
+  dossier peut être préparé ou repris maintenant) et `currentCase` (le dernier dossier, avec
+  son statut et, s'il a été refusé, les motifs).
+- **Statuts d'un dossier.** `DRAFT` (en préparation), `SUBMITTED` (déposé, en attente),
+  `APPROVED`, `REJECTED`, `SUPERSEDED` (remplacé par un dossier plus récent), `REVOKED`
+  (vérification retirée). Seul un `DRAFT` se modifie ou s'efface.
+- **Enregistrer une déclaration** crée le dossier en préparation du niveau, ou remplace sa
+  déclaration — les pièces déjà jointes sont conservées. `409 CONFLICT` tant qu'un dossier du
+  niveau attend l'examen, ou si le niveau précédent n'est pas vérifié. Au plus 30
+  enregistrements par heure.
+  - _Identité_ : `givenName`, `familyName`, `additionalName` (postnom), `dateOfBirth`,
+    `placeOfBirth`, `nationality`, et `document` : `type` (`NATIONAL_ID_CARD`, `VOTER_CARD`,
+    `PASSPORT`, `DRIVING_LICENCE`), `number`, `issuingCountry`, `issuedOn`, `issuedAt`,
+    `expiresOn`. Tout doit correspondre à la pièce. Le titulaire a 18 ans révolus ; la pièce
+    n'est pas expirée ; un passeport porte une date d'expiration ; la carte d'électeur n'est
+    acceptée que délivrée par la RDC. Le numéro est conservé chiffré et **n'est rendu que
+    masqué** (`numberMasked`).
+  - _Adresse_ : `addressLine1`, `addressLine2`, `city`, `region`, `postalCode`, `country`
+    (celui du compte), et `proof` : `type` (`UTILITY_BILL`, `BANK_STATEMENT`,
+    `RESIDENCE_CERTIFICATE`, `LEASE_AGREEMENT`, `TAX_DOCUMENT`, `OTHER`) et `issuedOn` — 92
+    jours au plus.
+  - _Origine des fonds_ : `sources` (une ou plusieurs parmi `EMPLOYMENT`, `BUSINESS`,
+    `SAVINGS`, `INVESTMENTS`, `INHERITANCE`, `SALE_OF_PROPERTY`, `FAMILY_SUPPORT`, `PENSION`,
+    `OTHER`), `occupation`, `employerName`, `explanation` (20 caractères au moins).
+- **Joindre une pièce.** Le corps de la requête est **le fichier lui-même** — pas un
+  formulaire —, avec son propre `Content-Type` : `image/jpeg`, `image/png` ou
+  `application/pdf` (un autoportrait est une image). De 1 Ko à 5 Mio. Le contenu est confronté
+  au type annoncé (`415 UNSUPPORTED_MEDIA_TYPE` s'il ne correspond pas), puis chiffré.
+  Renvoyer un recto, un verso ou un autoportrait **remplace** le précédent. Le verso est exigé
+  pour une carte d'identité, une carte d'électeur et un permis de conduire. Le dossier indique
+  ce qui manque encore (`missingDocuments`). Une pièce envoyée ne se retélécharge pas.
+
+  ```bash
+  curl -X POST "$API/me/verification/cases/$CASE/documents?kind=IDENTITY_FRONT" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: image/jpeg" --data-binary @recto.jpg
+  ```
+
+  Limites : 40 envois par heure et par compte ; le fichier entier doit arriver en deux minutes
+  (`408 REQUEST_TIMEOUT` sinon) — **compresser les photographies avant l'envoi**. Une réponse
+  `503` accompagnée de `Retry-After` signifie que trop de pièces sont en cours de réception :
+  réessayer après ce délai.
+
+- **Déposer** fige le dossier et le place dans la file d'examen. `422 UNPROCESSABLE_ENTITY`
+  s'il manque une pièce, ou si la déclaration n'est plus valable ce jour-là (pièce expirée
+  depuis, justificatif devenu trop ancien). Au plus 5 dépôts par jour.
+- **La décision** est notifiée par e-mail et figure dans l'historique du compte. Un refus
+  donne ses motifs (`rejectionReasons` : `DOCUMENT_UNREADABLE`, `DOCUMENT_EXPIRED`,
+  `DOCUMENT_NOT_ACCEPTED`, `DOCUMENT_INCOMPLETE`, `INFORMATION_MISMATCH`, `SELFIE_UNUSABLE`,
+  `SELFIE_MISMATCH`, `PROOF_TOO_OLD`, `INSUFFICIENT_EVIDENCE`, `OTHER`) ; le titulaire peut
+  alors préparer un nouveau dossier.
+- **Renouveler une pièce** : préparer et déposer un nouveau dossier du même niveau. Tant qu'il
+  n'est pas accepté, l'ancien reste en vigueur ; accepté, il le remplace.
+- Un dossier resté en préparation **30 jours** sans changement est effacé, avec ses pièces.
+- Le dossier d'un autre compte « n'existe pas » (`404`). Sans stockage chiffré configuré
+  côté serveur, tout sauf la situation répond `503 SERVICE_UNAVAILABLE`.
 
 ## Administration
 
@@ -333,9 +425,17 @@ d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les p
 | `POST /api/v1/admin/role-changes/{requestId}/approve` | `roles.manage`          | approuver — **par un second administrateur**     |
 | `POST /api/v1/admin/role-changes/{requestId}/reject`  | `roles.manage`          | refuser (`note`) — par un second administrateur  |
 | `POST /api/v1/admin/role-changes/{requestId}/cancel`  | `roles.manage`          | retirer sa propre demande                        |
+| `GET /api/v1/admin/kyc/cases`                         | `kyc.read`              | file des dossiers de vérification                |
+| `GET /api/v1/admin/kyc/cases/{caseId}`                | `kyc.read`              | fiche d'un dossier                               |
+| `GET /api/v1/admin/kyc/cases/{caseId}/documents/{id}` | `kyc.read`              | télécharger une pièce                            |
+| `POST /api/v1/admin/kyc/cases/{caseId}/approve`       | `kyc.review`            | accepter (`note?`)                               |
+| `POST /api/v1/admin/kyc/cases/{caseId}/reject`        | `kyc.review`            | refuser (`reasons`, `note`)                      |
+| `POST /api/v1/admin/kyc/cases/{caseId}/revoke`        | `kyc.revoke`            | retirer une vérification acceptée (`reason`)     |
 
-Rôles système : **`super_admin`** (toutes les permissions) et **`support`** (`users.read`,
-`users.suspend`, `users.revoke_sessions`).
+Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
+`users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `kyc.read`,
+`kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité ; la conformité n'a
+aucune prise sur les comptes.
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -359,8 +459,9 @@ et sa justification sont écrits au journal d'audit dans la même transaction.
 - **Tout accès est journalisé** : chaque recherche (critère et nombre de résultats — de
   l'identifiant saisi, seulement une empreinte), chaque page de la liste et chaque
   consultation de fiche.
-- La fiche montre le compte, le profil **déclaré**, l'état du second facteur et le nombre de
-  sessions ouvertes. Aucun secret d'authentification n'est jamais renvoyé.
+- La fiche montre le compte, son profil — vérifié ou seulement **déclaré**, ce que précise
+  `verification` (`level`, `identityVerified`, `addressVerified`) —, l'état du second facteur
+  et le nombre de sessions ouvertes. Aucun secret d'authentification n'est jamais renvoyé.
 - **Toute action est justifiée** (`reason`, 10 à 500 caractères), et la justification est
   écrite au journal d'audit dans la transaction qui applique l'action.
 - **Suspendre** n'est possible que pour un compte actif : ses sessions sont fermées, il ne peut
@@ -392,6 +493,33 @@ sur les attributions de rôles. Statuts : `PENDING`, `APPROVED`, `REJECTED`, `CA
 De deux décisions simultanées sur une même demande, une seule s'applique ; l'autre reçoit
 `409 CONFLICT`. Une demande déjà décidée répond de même.
 
+### Vérification d'identité : examen des dossiers
+
+- **La file** (`GET /admin/kyc/cases`) présente les dossiers déposés, **du dépôt le plus
+  ancien au plus récent** — par défaut ceux qui attendent (`status=SUBMITTED`). Filtres :
+  `status`, `level`, `userId` ; pagination : `after` = `nextCursor` de la page précédente,
+  `limit` ≤ 100. Un dossier en préparation n'est jamais visible du personnel.
+- **La fiche** donne la déclaration complète — y compris le **numéro entier** de la pièce —,
+  les pièces, et ce qui aide à juger : `seenOnOtherAccounts` (le même fichier déposé par
+  d'autres comptes), `sameIdentityDocument` (la même pièce d'identité présentée par d'autres
+  comptes), `replacesCaseId` (le dossier accepté que celui-ci remplacerait), `history` (les
+  autres dossiers du compte), ainsi que la décision et sa note une fois prise.
+- **Une pièce** est rendue déchiffrée, **en pièce jointe**, après vérification de son
+  intégrité. Une pièce altérée ou disparue n'est jamais rendue (`500`) et l'incident est tracé.
+- **Tout accès est journalisé** : chaque page de la file, chaque fiche, chaque téléchargement.
+- **Accepter** vérifie le niveau ; le profil du compte reprend ce que le dossier établit.
+  `409 CONFLICT` si le dossier a déjà été décidé, si le niveau précédent n'est plus vérifié,
+  ou si **un autre compte est déjà vérifié avec la même pièce d'identité**.
+- **Refuser** demande un à cinq motifs (`reasons`), communiqués au titulaire, et une note
+  interne (`note`, 10 à 500 caractères) qui ne l'est jamais.
+- **Retirer** une vérification acceptée (`reason`, interne) fait retomber le niveau du compte
+  sous ce niveau : les niveaux supérieurs, bien que toujours acceptés, ne comptent plus. Le
+  titulaire apprend seulement que la vérification a été retirée.
+- **Nul n'examine son propre dossier** (`403`), et la tentative est tracée. De deux décisions
+  simultanées, une seule s'applique ; l'autre reçoit `409 CONFLICT`.
+- Ces routes restent accessibles pendant la maintenance et lorsque la fonctionnalité `kyc`
+  est fermée aux titulaires.
+
 **Premier administrateur.** Aucune route ne permet d'obtenir un rôle sans l'accord de deux
 administrateurs : les premiers comptes d'administration se créent en ligne de commande, avec
 le rôle propriétaire de la base (voir `DEPLOYMENT.md`). Il en faut **au moins deux** pour que
@@ -416,9 +544,10 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Acceptation versionnée des conditions d'utilisation, clôture de compte, KYC/KYB et niveaux
-de vérification (fin de la phase 2) ; en-tête `Idempotency-Key` obligatoire sur toute
-opération financière (phase 3) ; webhooks entrants signés et protégés contre le rejeu (phase 4).
+Acceptation versionnée des conditions d'utilisation, clôture de compte, vérification des
+entreprises (KYB) et plafonds par niveau de vérification (fin de la phase 2 et phase 3) ;
+en-tête `Idempotency-Key` obligatoire sur toute opération financière (phase 3) ; webhooks
+entrants signés et protégés contre le rejeu (phase 4).
 
 ## Règles d'exposition de la documentation
 

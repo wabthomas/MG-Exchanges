@@ -17,6 +17,9 @@ export const PERMISSIONS = {
   'users.reset_mfa': 'Remove the two-step verification of an account that lost its authenticator.',
   'roles.read': 'View roles, their holders and role change requests.',
   'roles.manage': 'Request, approve or reject role changes, and act on staff accounts.',
+  'kyc.read': 'View identity verification cases and the documents attached to them.',
+  'kyc.review': 'Approve or reject identity verification cases.',
+  'kyc.revoke': 'Withdraw an identity verification that was approved.',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -37,11 +40,15 @@ export const ROLE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
  *
  *  - `super_admin` détient toutes les permissions du catalogue ;
  *  - `support` trouve les comptes, ferme leurs sessions et les suspend. Il ne retire pas un
- *    second facteur et n'agit pas sur les comptes du personnel.
+ *    second facteur, n'agit pas sur les comptes du personnel et ne voit aucune pièce
+ *    d'identité ;
+ *  - `compliance` examine les dossiers de vérification d'identité : il consulte les pièces,
+ *    accepte, refuse, et retire une vérification. Il n'a aucune prise sur les comptes.
  */
 export const SYSTEM_ROLES = {
   super_admin: PERMISSION_KEYS,
   support: ['users.read', 'users.suspend', 'users.revoke_sessions'],
+  compliance: ['users.read', 'kyc.read', 'kyc.review', 'kyc.revoke'],
 } as const satisfies Record<string, readonly PermissionKey[]>;
 
 export type SystemRoleKey = keyof typeof SYSTEM_ROLES;
@@ -54,3 +61,11 @@ export const SYSTEM_ROLE_KEYS = Object.keys(SYSTEM_ROLES) as [SystemRoleKey, ...
  * elle-même lorsqu'un changement de rôle est approuvé.
  */
 export const ROLE_MANAGEMENT_PERMISSION = 'roles.manage' satisfies PermissionKey;
+
+/**
+ * Permissions de la vérification d'identité que la base de données vérifie elle-même : la
+ * première lorsqu'un dossier est accepté ou refusé, la seconde lorsqu'une vérification est
+ * retirée.
+ */
+export const KYC_REVIEW_PERMISSION = 'kyc.review' satisfies PermissionKey;
+export const KYC_REVOCATION_PERMISSION = 'kyc.revoke' satisfies PermissionKey;

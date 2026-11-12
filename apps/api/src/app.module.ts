@@ -12,6 +12,7 @@ import { RedisModule } from './infrastructure/redis/redis.module.js';
 import { AuditModule } from './modules/audit/audit.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
+import { KycModule } from './modules/kyc/kyc.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { OutboxModule } from './modules/outbox/outbox.module.js';
 import { SystemSettingsModule } from './modules/system-settings/system-settings.module.js';
@@ -21,8 +22,8 @@ import { SystemSettingsModule } from './modules/system-settings/system-settings.
  *
  *  - socle technique : configuration, journalisation, PostgreSQL, Redis, files, limitation de débit ;
  *  - modules de plateforme : audit, boîte d'envoi, paramètres système, notifications, santé ;
- *  - modules métier : identité ; les suivants (portefeuilles, grand livre…) s'ajoutent ici
- *    phase après phase.
+ *  - modules métier : identité, vérification d'identité (KYC) ; les suivants (portefeuilles,
+ *    grand livre…) s'ajoutent ici phase après phase.
  *
  * L'ordre d'import fixe l'ordre des gardes globales : limitation de débit, maintenance,
  * authentification (refus par défaut), puis permissions.
@@ -40,6 +41,7 @@ import { SystemSettingsModule } from './modules/system-settings/system-settings.
     SystemSettingsModule,
     NotificationsModule,
     IdentityModule,
+    KycModule,
     HealthModule,
   ],
   providers: [

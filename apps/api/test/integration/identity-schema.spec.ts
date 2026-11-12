@@ -278,7 +278,9 @@ describe('Identité — garanties portées par la base de données', () => {
         const roles = await db.query<{ key: string; is_system: boolean }>(
           'SELECT key, is_system FROM roles ORDER BY key',
         );
-        expect(roles.rows).toEqual(SYSTEM_ROLE_KEYS.map((key) => ({ key, is_system: true })));
+        expect(roles.rows).toEqual(
+          [...SYSTEM_ROLE_KEYS].sort().map((key) => ({ key, is_system: true })),
+        );
 
         const granted = await db.query<{ permission_key: string }>(
           `SELECT rp.permission_key FROM role_permissions rp

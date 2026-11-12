@@ -15,16 +15,21 @@ comme une unité, mais découpée en modules aux frontières strictes afin qu'un
                         └─────┬─────┘
                         ┌─────▼─────┐
                         │ API NestJS│  monolithe modulaire
-                        └──┬─────┬──┘
-              ┌────────────▼┐   ┌▼───────────────┐
-              │ PostgreSQL  │   │     Redis      │
-              │ source de   │   │ limitation de  │
-              │ vérité      │   │ débit, files   │
-              └─────────────┘   └────────────────┘
+                        └──┬──┬──┬──┘
+         ┌─────────────────▼┐ │ ┌▼───────────────┐
+         │    PostgreSQL    │ │ │     Redis      │
+         │ source de vérité │ │ │ limitation de  │
+         └──────────────────┘ │ │ débit, files   │
+                ┌─────────────▼┐└────────────────┘
+                │ volume des   │
+                │ pièces (KYC) │  fichiers chiffrés
+                └──────────────┘
 ```
 
 PostgreSQL est l'unique source de vérité — sessions comprises. Redis ne contient que des
 données reconstructibles ou transitoires (compteurs, blocages temporaires, files de traitement).
+Les pièces de vérification d'identité sont des fichiers chiffrés, hors de la base, qui en
+conserve la description et la clé (ADR 0022).
 
 ## Organisation du dépôt
 
@@ -35,7 +40,7 @@ données reconstructibles ou transitoires (compteurs, blocages temporaires, file
 | `packages/validation` | schémas Zod primitifs (montant, actif, horodatage, identifiant de requête) |
 | `packages/contracts`  | contrats de l'API : formes des réponses, catalogue des codes d'erreur      |
 | `packages/config`     | préréglages TypeScript, ESLint, Jest                                       |
-| `infrastructure/`     | Docker, PostgreSQL (rôles), Nginx                                          |
+| `infrastructure/`     | Docker, PostgreSQL (rôles), Nginx, intégration continue                    |
 
 Dépendances entre paquets : `contracts → validation → shared`. Les paquets `shared`,
 `validation` et `contracts` sont destinés à être consommés tels quels par les applications
@@ -61,8 +66,20 @@ apps/api/src/
     identity/             comptes, authentification, second facteur, sessions, profil,
                           téléphone, historique, autorisations, back-office des comptes et
                           des rôles, purge périodique
+    kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
+                          examen par la conformité
   cli/                    outil d'exploitation (création des premiers administrateurs)
 ```
+
+**Sens des dépendances entre modules métier.** `kyc` dépend d'`identity` (comptes, gardes,
+permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien du module `kyc`.
+
+- Pour connaître le niveau d'un compte et son profil vérifié, elle **lit** les dossiers
+  acceptés à travers son propre port, `VerificationStatusReader` — en lecture seule : seul le
+  module `kyc` écrit un dossier.
+- Pour la purge des dossiers abandonnés, elle expose un registre, `MaintenanceStepRegistry` :
+  un module y inscrit une étape, exécutée avec la tâche horaire. Un module ajouté plus tard se
+  branche de la même façon, sans que l'identité le connaisse.
 
 ### Chaîne de traitement d'une requête
 
@@ -77,13 +94,20 @@ Quatre gardes globales s'exécutent dans cet ordre, avant toute validation du co
 
 Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
 
+**Corps des requêtes.** Seul le JSON est analysé. L'unique route qui reçoit un fichier
+(l'envoi d'une pièce de vérification) lit elle-même le corps brut de la requête
+(`common/http/raw-body.ts`), **après** les gardes et ses propres contrôles — quota, dossier —,
+borné en taille et en durée ; le nombre de réceptions simultanées est plafonné
+(`common/http/concurrency-limit.ts`). Un envoi irrecevable est donc refusé sans avoir été lu.
+
 ### Tâches de fond
 
 | Tâche                        | Cadence        | Rôle                                                              |
 | ---------------------------- | -------------- | ----------------------------------------------------------------- |
 | relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
 | traitement des événements    | à la demande   | envoi des codes et des messages de sécurité                       |
-| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés… |
+| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
+|                              |                | dossiers de vérification jamais déposés…                          |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
@@ -91,19 +115,20 @@ les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que
 ### Deux horloges, un seul port
 
 Le temps est lu à travers le port `Clock` (`common/clock.ts`) partout où un test doit pouvoir
-le maîtriser : codes TOTP, décisions du back-office, échéances des demandes de rôle, purge.
+le maîtriser : codes TOTP, décisions du back-office, échéances des demandes de rôle, purge,
+vérification d'identité (validité des pièces, ancienneté des justificatifs, décisions).
 Les sessions et les codes à usage unique lisent encore l'horloge du système directement ;
 les faire passer par ce port est une dette connue, sans effet en exécution réelle.
 
 ### Couches d'un module métier
 
-`system-settings` et `identity` servent de modèles aux modules métier à venir :
+`system-settings`, `identity` et `kyc` servent de modèles aux modules métier à venir :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
 | `domain/`         | règles et types métier purs                    | `@mgx/shared`, `@mgx/contracts`, Zod |
 | `application/`    | cas d'usage, ports (interfaces de persistance) | `domain`, services d'autres modules  |
-| `infrastructure/` | adaptateurs : implémentation Prisma des ports  | `application`, `domain`              |
+| `infrastructure/` | adaptateurs : Prisma, chiffrement, fichiers    | `application`, `domain`              |
 | `presentation/`   | contrôleurs HTTP, gardes, décorateurs          | `application`, `domain`              |
 
 Ces frontières sont **vérifiées par ESLint** : le domaine ne peut importer ni NestJS, ni
@@ -114,7 +139,8 @@ le mécanisme de persistance et s'appuient directement sur le client de base de 
 
 **Quand la règle vit dans la base.** Certaines garanties ne peuvent pas reposer sur le seul
 code applicatif — précisément celles qui doivent tenir même si ce code est fautif : journal
-d'audit en ajout seul, double validation des changements de rôle. Elles sont alors
+d'audit en ajout seul, double validation des changements de rôle, parcours d'un dossier de
+vérification d'identité. Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il

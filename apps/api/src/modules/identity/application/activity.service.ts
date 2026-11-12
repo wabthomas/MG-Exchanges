@@ -34,6 +34,10 @@ const ACTIVITY_BY_ACTION: Readonly<Record<string, ActivityType>> = {
   'user.reactivated': 'ACCOUNT_REACTIVATED',
   'user.sessions_revoked_by_admin': 'SESSIONS_CLOSED_BY_SUPPORT',
   'mfa.reset_by_admin': 'TWO_FACTOR_RESET_BY_SUPPORT',
+  'kyc_case.submitted': 'IDENTITY_VERIFICATION_SUBMITTED',
+  'user.verification_approved': 'IDENTITY_VERIFICATION_APPROVED',
+  'user.verification_rejected': 'IDENTITY_VERIFICATION_REJECTED',
+  'user.verification_revoked': 'IDENTITY_VERIFICATION_REVOKED',
 };
 
 const VISIBLE_ACTIONS = Object.keys(ACTIVITY_BY_ACTION);

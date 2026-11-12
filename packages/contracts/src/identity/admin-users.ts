@@ -9,6 +9,7 @@ import {
 import { z } from 'zod';
 
 import { ACCOUNT_TYPES, USER_STATUSES } from './auth.js';
+import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { permissionKeySchema, ROLE_KEY_PATTERN } from './permissions.js';
 
 /** Longueur minimale de la justification d'une action du back-office sur un compte. */
@@ -92,12 +93,17 @@ export const adminUserDetailSchema = adminUserSummarySchema.extend({
   locale: localeSchema,
   termsAcceptedAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
-  /** Identité et adresse **déclarées** par le titulaire ; rien ne les a encore vérifiées. */
+  /**
+   * Identité et adresse du titulaire : celles des dossiers de vérification acceptés lorsque
+   * `verification` l'indique, sinon simplement **déclarées**.
+   */
   profile: z.object({
     givenName: z.string().nullable(),
     familyName: z.string().nullable(),
     additionalName: z.string().nullable(),
     dateOfBirth: isoDateSchema.nullable(),
+    placeOfBirth: z.string().nullable(),
+    nationality: z.string().nullable(),
     addressLine1: z.string().nullable(),
     addressLine2: z.string().nullable(),
     city: z.string().nullable(),
@@ -109,6 +115,13 @@ export const adminUserDetailSchema = adminUserSummarySchema.extend({
     enabled: z.boolean(),
     enabledAt: isoDateTimeSchema.nullable(),
     recoveryCodesRemaining: z.number().int().nonnegative(),
+  }),
+  /** Vérification d'identité (KYC). */
+  verification: z.object({
+    /** Niveau vérifié : de `0` (aucun) à `3`. */
+    level: kycVerifiedLevelSchema,
+    identityVerified: z.boolean(),
+    addressVerified: z.boolean(),
   }),
   /** Sessions ouvertes en ce moment. */
   activeSessions: z.number().int().nonnegative(),

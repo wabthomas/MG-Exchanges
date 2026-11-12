@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2, lots 1 et 2)
+## En place (phases 1 et 2, lots 1 à 3)
 
 ### Configuration et secrets
 
@@ -20,8 +20,8 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 
 - Journalisation structurée avec **expurgation systématique** : toute clé au nom sensible
   (`password`, `token`, `secret`, `authorization`, `cookie`, `otp`, `pin`, `privateKey`,
-  `mnemonic`, `cardNumber`…) et tout jeton reconnaissable (`Bearer …`, JWT) sont remplacés
-  par `[REDACTED]`, à toute profondeur.
+  `encryptionKey`, `mnemonic`, `cardNumber`, `documentNumber`…) et tout jeton reconnaissable
+  (`Bearer …`, JWT) sont remplacés par `[REDACTED]`, à toute profondeur.
 - D'une requête HTTP ne sont journalisés que la méthode, le chemin (sans la chaîne de
   requête), l'adresse du client et l'agent utilisateur — ni en-têtes, ni corps.
 - Journal d'audit en ajout seul, protégé par la base elle-même (voir `DATABASE.md`) ;
@@ -37,7 +37,9 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - `Cache-Control: no-store` sur toutes les réponses.
 - CORS : liste d'origines explicite ; aucune origine autorisée par défaut.
 - API JSON uniquement : les corps de formulaire ne sont pas interprétés, ce qui écarte les
-  requêtes inter-sites forgées par un simple formulaire. Taille du corps bornée.
+  requêtes inter-sites forgées par un simple formulaire. Taille du corps bornée. Une seule
+  route reçoit un fichier — une pièce de vérification —, comme corps brut d'un type
+  qu'aucun formulaire ne peut produire (voir « Vérification d'identité »).
 - Validation systématique des entrées par schéma ; propriétés inconnues refusées.
 - Erreurs : une erreur inattendue renvoie un message générique ; pile d'appels et message
   interne restent dans les journaux, rattachés à l'identifiant de requête.
@@ -140,6 +142,70 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - **Limites** : pas de plafond global d'envoi (seules les limites par adresse IP et par
   compte s'appliquent) ; les retours de non-remise et les plaintes ne sont pas exploités.
 
+### Vérification d'identité (KYC)
+
+Les pièces d'identité sont les données les plus sensibles que la plateforme détient à ce
+jour. Décisions et limites : ADR 0022.
+
+- **Jamais en clair au repos.** Chaque fichier est chiffré (AES-256-GCM) avec une clé qui lui
+  est propre ; cette clé, chiffrée par une clé maîtresse (`KYC_ENCRYPTION_KEY`), est en base.
+  Le fichier chiffré est sur un volume distinct. Lire une pièce exige **le volume, la base et
+  la clé maîtresse** ; aucune de ces trois fuites, seule, ne livre un document. Le numéro de
+  la pièce d'identité est chiffré en base ; les doublons se détectent sur une empreinte à
+  clé, sans rien déchiffrer.
+- **Contenu lié à sa place.** L'identifiant de la pièce, son dossier et sa nature sont
+  authentifiés avec le contenu : un fichier ou une clé recopiés à la place d'un autre ne se
+  déchiffrent pas. À chaque relecture, l'empreinte du fichier reçu est vérifiée ; une pièce
+  altérée ou disparue n'est pas rendue, et l'incident est tracé.
+- **Clé dédiée.** `KYC_ENCRYPTION_KEY` doit différer de la clé des secrets de connexion (la
+  configuration refuse qu'elles soient identiques) ; chaque usage en dérive sa propre
+  sous-clé. Sans clé ou sans volume, la vérification répond `503` : il n'existe aucun mode
+  dégradé « sans chiffrement ».
+- **Envoi d'un fichier.** Type lu sur les premiers octets (JPEG, PNG, PDF) et confronté au
+  type annoncé ; taille de 1 Ko à 5 Mio. Le corps n'est lu qu'après l'authentification, le
+  quota du compte et le contrôle du dossier : le contenu d'un envoi irrecevable n'est jamais
+  gardé en mémoire. La réception est bornée en taille, en durée (2 minutes) et en nombre (8 à
+  la fois par instance, 4 par adresse IP au niveau du proxy, 40 par heure et par compte).
+- **Rien n'est servi au titulaire.** Une pièce envoyée ne se retélécharge pas par l'API
+  cliente, et le numéro de la pièce n'est rendu que masqué : une session volée ne donne pas
+  accès aux documents du compte.
+- **Examen cloisonné.** Seuls les détenteurs de `kyc.read` voient les dossiers — et
+  uniquement ceux qui ont été déposés. Le rôle `support` n'y a pas accès ; le rôle
+  `compliance` n'a aucune prise sur les comptes. **Nul n'examine son propre dossier.**
+- **Tout accès est tracé avant d'être servi** : chaque page de la file, chaque fiche, chaque
+  téléchargement, avec son auteur. Une pièce n'est rendue qu'en pièce jointe (`attachment`,
+  `nosniff`) : le navigateur d'un examinateur ne l'interprète pas comme une page.
+- **Le parcours est imposé par la base** (voir `DATABASE.md`) : un dossier déposé est une
+  preuve qui ne se modifie plus ; une décision ne vient que d'un compte actif habilité, jamais
+  du titulaire ; une même pièce d'identité ne vérifie qu'un seul compte. La même limite que
+  pour les rôles s'applique : la base vérifie la qualité de l'examinateur que l'API lui
+  désigne, pas sa présence.
+- **Le titulaire n'apprend que ce qui le concerne** : les motifs d'un refus, jamais la note
+  interne, ni l'identité de l'examinateur, ni le motif d'un retrait.
+- **Minimisation.** Un dossier jamais déposé est effacé, avec ses pièces, après trente jours.
+  Rien de la déclaration ni des pièces n'est écrit dans les journaux ni dans le journal
+  d'audit (qui retient les identifiants, la nature et le format des pièces, leur taille).
+
+> **Limites à connaître avant toute ouverture.**
+>
+> - **L'examen est entièrement humain** : rien ne lit la pièce, ne compare l'autoportrait, ni
+>   ne consulte une liste de sanctions ou de personnes politiquement exposées.
+> - **Aucune analyse antivirus.** Le contenu d'un fichier n'est contrôlé que par sa
+>   signature : un PDF ou une image piégés seraient acceptés, puis ouverts par un
+>   examinateur. Son poste doit être protégé en conséquence (visionneuse isolée, système à
+>   jour), ou une analyse ajoutée avant l'ouverture au public.
+> - **La clé maîtresse n'est ni sauvegardée ni renouvelée par l'application.** Perdue, toutes
+>   les pièces sont illisibles ; compromise avec la base et le volume, toutes sont lisibles.
+>   Elle se conserve à part des sauvegardes de la base et du volume.
+> - **Un examinateur habilité peut télécharger toutes les pièces déposées.** Chaque accès est
+>   tracé, mais rien ne plafonne ni ne signale un volume anormal de consultations.
+> - **Une pièce est tenue en mémoire, en clair, le temps de sa réception** et de son
+>   chiffrement : jusqu'à 20 Mio par envoi en cours (la pièce, sa version assemblée et ses
+>   copies chiffrées), huit envois à la fois — soit 160 Mio au plus par instance, à prévoir
+>   dans la mémoire allouée à l'API.
+> - Les métadonnées d'une image (lieu, appareil) ne sont pas retirées : la pièce est
+>   conservée telle que reçue, comme preuve.
+
 ### Téléphone
 
 - Le numéro ne devient celui du compte qu'après confirmation d'un code reçu par SMS ; un
@@ -192,8 +258,12 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 
 - Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
   terminées (90 jours après leur échéance — la plus récente de chaque compte est conservée),
-  les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), et
-  clôt les demandes de rôle échues. Chaque suppression d'inscription est tracée.
+  les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), les
+  dossiers de vérification jamais déposés (30 jours, avec leurs pièces), et clôt les demandes
+  de rôle échues. Chaque suppression d'inscription ou de dossier est tracée.
+- **Un dossier de vérification déposé n'est jamais effacé par l'application** : la loi
+  demande de conserver les pièces d'identité dix ans après la fin de la relation. L'effacement
+  à l'échéance reste à écrire, avec la clôture des comptes.
 - **Le journal d'audit n'est jamais purgé.**
 
 ### Base de données
@@ -209,6 +279,8 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - Toute fonctionnalité (inscription, KYC, dépôts, retraits, échange, P2P, transferts) est
   **désactivée par défaut**. L'ouvrir exige une modification de paramètre, tracée dans le
   journal d'audit avec son auteur et sa justification.
+- Fermer la vérification d'identité aux titulaires ne ferme pas son examen : la conformité
+  peut toujours vider la file et retirer une vérification, y compris pendant la maintenance.
 - Une valeur de paramètre corrompue en base est ignorée au profit de l'état fermé.
 - La disponibilité technique d'une fonctionnalité ne vaut pas autorisation légale : les
   exigences réglementaires de chaque pays doivent être établies avant toute ouverture.
@@ -227,7 +299,8 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 - Images d'exécution et de migration : utilisateur non privilégié ; l'image d'exécution ne
   contient que le code compilé et les dépendances de production.
 - Compose : système de fichiers en lecture seule, toutes les capacités retirées,
-  `no-new-privileges` ; PostgreSQL et Redis ne sont publiés que sur l'interface locale.
+  `no-new-privileges` ; PostgreSQL et Redis ne sont publiés que sur l'interface locale. Le
+  seul emplacement inscriptible de l'API est le volume des pièces de vérification.
 
 ### Garde-fous dans le code
 
@@ -239,12 +312,16 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
 | Sujet                                                                                      | Phase |
 | ------------------------------------------------------------------------------------------ | ----- |
 | Procédure du support pour le retrait d'un second facteur (vérification d'identité)         | 2     |
-| Rotation de la clé de chiffrement des secrets (aujourd'hui : une seule version de clé)     | 2     |
+| Rotation des clés de chiffrement — secrets de connexion, pièces de vérification            | 2     |
 | Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage          | 2+    |
 | Vérification des mots de passe contre les fuites connues                                   | 2     |
 | E-mails : exploitation des non-remises et des plaintes, plafond global d'envoi             | 2     |
 | Acceptation versionnée des conditions, clôture de compte, effacement et export des données | 2     |
-| Chiffrement applicatif des données personnelles sensibles (KYC)                            | 2     |
+| KYC : analyse antivirus des pièces, contrôle automatique des pièces et du visage           | 2+    |
+| KYC : filtrage (sanctions, personnes politiquement exposées), relance des pièces expirées  | 8     |
+| KYC : vérification des entreprises (KYB), plafonds par niveau                              | 2–3   |
+| KYC : conservation légale puis effacement des dossiers à l'échéance                        | 2     |
+| Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé         | 9     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |
 | Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)        | 7     |
 | Idempotence des opérations financières, contrôle de concurrence du grand livre             | 3     |

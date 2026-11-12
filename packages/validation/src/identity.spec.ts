@@ -4,9 +4,12 @@ import {
   countryCodeSchema,
   deviceIdSchema,
   emailSchema,
+  IDENTITY_DOCUMENT_NUMBER_PATTERN,
+  identityDocumentNumberSchema,
   isoDateSchema,
   isTimeZone,
   localeSchema,
+  normalizeIdentityDocumentNumber,
   normalizeRecoveryCode,
   passwordSchema,
   personNameSchema,
@@ -230,5 +233,41 @@ describe('profil', () => {
     for (const value of ['Mars/Olympus_Mons', 'Kinshasa', '', 'x'.repeat(65), '+01:00:00:00', 1]) {
       expect(timeZoneSchema.safeParse(value).success).toBe(false);
     }
+  });
+});
+
+describe('vérification d’identité', () => {
+  it('numéro de pièce : normalisé en majuscules, sans séparateurs', () => {
+    expect(identityDocumentNumberSchema.parse(' op-123 456.7/a ')).toBe('OP1234567A');
+    expect(identityDocumentNumberSchema.parse('OP1234567A')).toBe('OP1234567A');
+    expect(normalizeIdentityDocumentNumber('ab 12-34')).toBe('AB1234');
+    expect(identityDocumentNumberSchema.parse('OP\u00A0123\u00A04567')).toBe('OP1234567');
+    // Deux écritures du même numéro donnent la même valeur.
+    expect(identityDocumentNumberSchema.parse('0012-3456')).toBe(
+      identityDocumentNumberSchema.parse('0012 3456'),
+    );
+  });
+
+  it('numéro de pièce : 4 à 32 lettres et chiffres, rien d’autre', () => {
+    for (const valid of ['A123', 'a'.repeat(32), '12345678901']) {
+      expect(identityDocumentNumberSchema.safeParse(valid).success).toBe(true);
+    }
+    for (const invalid of [
+      '',
+      'A12',
+      'a'.repeat(33),
+      'AB_1234',
+      'ÉB1234',
+      'AB1234;DROP',
+      'AB12\n34X',
+      'AB12\t34X',
+      '- - -',
+      'x'.repeat(65),
+      1234567,
+      null,
+    ]) {
+      expect(identityDocumentNumberSchema.safeParse(invalid).success).toBe(false);
+    }
+    expect(IDENTITY_DOCUMENT_NUMBER_PATTERN.test('op1234')).toBe(false);
   });
 });

@@ -1,3 +1,4 @@
+import type { KycLevel, KycRejectionReason } from '@mgx/contracts';
 import type { SupportedLocale } from '@mgx/validation';
 
 import type {
@@ -31,6 +32,57 @@ const NOT_YOUR_CHANGE: Localized = {
 };
 
 const paragraphs = (...parts: readonly string[]): string => parts.join('\n\n');
+
+/** Ce que vérifie chaque niveau de la vérification d'identité. */
+const VERIFICATION_SUBJECTS: Readonly<Record<KycLevel, Localized>> = {
+  1: { fr: 'votre identité', en: 'your identity' },
+  2: { fr: 'votre adresse', en: 'your address' },
+  3: { fr: "l'origine de vos fonds", en: 'your source of funds' },
+};
+
+/** Motifs d'un refus, tels qu'ils sont expliqués au titulaire. */
+const REJECTION_REASONS: Readonly<Record<KycRejectionReason, Localized>> = {
+  DOCUMENT_UNREADABLE: {
+    fr: 'Une pièce est illisible (floue, sombre, coupée ou avec des reflets).',
+    en: 'A document is unreadable (blurred, dark, cropped or with glare).',
+  },
+  DOCUMENT_EXPIRED: {
+    fr: 'La pièce présentée a expiré.',
+    en: 'The document presented has expired.',
+  },
+  DOCUMENT_NOT_ACCEPTED: {
+    fr: "Ce type de pièce n'est pas accepté.",
+    en: 'This type of document is not accepted.',
+  },
+  DOCUMENT_INCOMPLETE: {
+    fr: 'Il manque une page ou une face de la pièce.',
+    en: 'A page or a side of the document is missing.',
+  },
+  INFORMATION_MISMATCH: {
+    fr: 'Les informations déclarées ne correspondent pas à celles de la pièce.',
+    en: 'The information declared does not match the document.',
+  },
+  SELFIE_UNUSABLE: {
+    fr: "L'autoportrait n'est pas exploitable (visage non visible, photo floue ou retouchée).",
+    en: 'The selfie cannot be used (face not visible, blurred or edited photo).',
+  },
+  SELFIE_MISMATCH: {
+    fr: "L'autoportrait ne correspond pas à la photographie de la pièce.",
+    en: 'The selfie does not match the photograph on the document.',
+  },
+  PROOF_TOO_OLD: {
+    fr: 'Le justificatif est trop ancien.',
+    en: 'The proof is too old.',
+  },
+  INSUFFICIENT_EVIDENCE: {
+    fr: 'Les pièces fournies ne suffisent pas à établir ce qui est déclaré.',
+    en: 'The documents provided are not enough to establish what is declared.',
+  },
+  OTHER: {
+    fr: "Le dossier ne peut pas être accepté en l'état ; contactez le support pour plus de précisions.",
+    en: 'The case cannot be accepted as it stands; contact support for details.',
+  },
+};
 
 /** `2026-11-11T20:15:42.123Z` → `2026-11-11 20:15 UTC`. */
 function formatUtc(isoDateTime: string): string {
@@ -307,6 +359,69 @@ function render(content: NotificationContent, locale: SupportedLocale): Rendered
             subject: `${PRODUCT} — your account was reactivated`,
             text: `Your ${PRODUCT} account was reactivated: you can sign in again with your usual password.`,
           };
+
+    case 'identity_verification_approved': {
+      const subject = VERIFICATION_SUBJECTS[content.level][locale];
+      const level = String(content.level);
+      return fr
+        ? {
+            subject: `${PRODUCT} — vérification acceptée (niveau ${level})`,
+            text: paragraphs(
+              `La vérification de ${subject} (niveau ${level}) a été acceptée.`,
+              `Vous pouvez suivre le niveau de vérification de votre compte ${PRODUCT} depuis l'application.`,
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — verification approved (level ${level})`,
+            text: paragraphs(
+              `The verification of ${subject} (level ${level}) was approved.`,
+              `You can follow the verification level of your ${PRODUCT} account in the app.`,
+            ),
+          };
+    }
+
+    case 'identity_verification_rejected': {
+      const subject = VERIFICATION_SUBJECTS[content.level][locale];
+      const level = String(content.level);
+      const reasons = content.reasons.map((reason) => `- ${REJECTION_REASONS[reason][locale]}`);
+      return fr
+        ? {
+            subject: `${PRODUCT} — vérification à reprendre (niveau ${level})`,
+            text: paragraphs(
+              `La vérification de ${subject} (niveau ${level}) n'a pas pu être acceptée :`,
+              reasons.join('\n'),
+              "Vous pouvez corriger ces points et déposer un nouveau dossier depuis l'application.",
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — verification to be redone (level ${level})`,
+            text: paragraphs(
+              `The verification of ${subject} (level ${level}) could not be approved:`,
+              reasons.join('\n'),
+              'You can fix these points and submit a new case in the app.',
+            ),
+          };
+    }
+
+    case 'identity_verification_revoked': {
+      const subject = VERIFICATION_SUBJECTS[content.level][locale];
+      const level = String(content.level);
+      return fr
+        ? {
+            subject: `${PRODUCT} — vérification retirée (niveau ${level})`,
+            text: paragraphs(
+              `La vérification de ${subject} (niveau ${level}) n'est plus valable : elle a été retirée de votre compte ${PRODUCT}.`,
+              "Pour en connaître la raison, contactez le support. Vous pouvez déposer un nouveau dossier depuis l'application.",
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — verification withdrawn (level ${level})`,
+            text: paragraphs(
+              `The verification of ${subject} (level ${level}) is no longer valid: it was withdrawn from your ${PRODUCT} account.`,
+              'To learn why, contact support. You can submit a new case in the app.',
+            ),
+          };
+    }
   }
 }
 

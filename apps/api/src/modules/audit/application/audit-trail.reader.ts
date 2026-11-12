@@ -35,16 +35,22 @@ export interface AuditTrailPage {
 @Injectable()
 export class AuditTrailReader {
   /**
-   * Entrées concernant un compte — celles dont il est l'auteur et celles dont il est l'objet —,
-   * de la plus récente à la plus ancienne. Les identifiants (UUID v7) suivent l'ordre du
-   * temps : ils servent de curseur.
+   * Entrées concernant un compte, de la plus récente à la plus ancienne : celles dont il est
+   * l'objet, et celles dont il est l'auteur — **sauf** lorsqu'elles portent sur le compte d'un
+   * autre. Ce qu'un membre du personnel fait au compte d'un client appartient à l'histoire de
+   * ce client, pas à la sienne. Les identifiants (UUID v7) suivent l'ordre du temps : ils
+   * servent de curseur.
    */
   listForUser(db: DbClient, userId: string, page: AuditTrailPage): Promise<AuditRecord[]> {
     return db.auditLog.findMany({
       where: {
         OR: [
-          { actorType: 'USER', actorId: userId },
           { resourceType: 'user', resourceId: userId },
+          {
+            actorType: 'USER',
+            actorId: userId,
+            NOT: { resourceType: 'user', resourceId: { not: userId } },
+          },
         ],
         ...(page.actions === undefined ? {} : { action: { in: [...page.actions] } }),
         ...(page.before === undefined ? {} : { id: { lt: page.before } }),

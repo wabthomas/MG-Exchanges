@@ -3,6 +3,52 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 2, lot 3 : vérification d'identité (KYC) des particuliers
+
+### Ajouté
+
+- **Vérification d'identité en trois niveaux**, obtenus dans l'ordre : identité (pièce et
+  autoportrait), adresse (justificatif de domicile), origine des fonds. Pour chaque niveau, le
+  titulaire prépare un dossier, y joint ses pièces et le dépose : `GET /me/verification`,
+  `PUT /me/verification/{identity,address,source-of-funds}`, `…/cases/{id}`,
+  `…/cases/{id}/documents`, `…/cases/{id}/submit`. Fonctionnalité `kyc`, fermée par défaut.
+- **Envoi des pièces** : le fichier est le corps de la requête (JPEG, PNG ou PDF, de 1 Ko à
+  5 Mio), contrôlé sur son contenu. Réception bornée en taille, en durée et en nombre, après
+  tous les contrôles qui peuvent refuser l'envoi.
+- **Pièces chiffrées au repos** (AES-256-GCM, une clé par fichier, clé maîtresse
+  `KYC_ENCRYPTION_KEY`), écrites hors de la base dans `KYC_STORAGE_DIR` ; numéro de la pièce
+  d'identité chiffré en base, rendu masqué au titulaire. Sans ces deux variables, la
+  vérification répond `503`.
+- **Examen par la conformité** : file des dossiers déposés, fiche, téléchargement d'une pièce,
+  acceptation, refus motivé, retrait d'une vérification (`/admin/kyc/cases/…`). Permissions
+  `kyc.read`, `kyc.review`, `kyc.revoke` ; rôle système `compliance`. Chaque consultation est
+  journalisée ; nul n'examine son propre dossier. La fiche signale un même fichier ou une même
+  pièce d'identité présentés par d'autres comptes.
+- **Règles portées par la base** (erreur `MGX03`) : un dossier déposé ne se modifie plus ; une
+  décision ne vient que d'un compte actif habilité, jamais du titulaire ; les niveaux se
+  suivent ; une même pièce d'identité ne vérifie qu'un seul compte.
+- Le titulaire est prévenu par e-mail de chaque décision, et la retrouve dans son historique
+  (`IDENTITY_VERIFICATION_SUBMITTED`, `…_APPROVED`, `…_REJECTED`, `…_REVOKED`).
+- Purge horaire des dossiers restés en préparation trente jours, avec leurs pièces.
+- Nginx : route d'envoi dédiée (6 Mio, transmission au fil de l'eau sans copie sur disque,
+  quatre envois simultanés par adresse). Compose et image : volume `kyc-documents`.
+- ADR 0022. Migration `20261112102342_kyc`. Aucune dépendance nouvelle.
+
+### Modifié — à prendre en compte par un client du lot 2
+
+- `GET /me` porte `verificationLevel` (0 à 3).
+- Le profil porte `placeOfBirth`, `nationality`, `identityVerified`, `addressVerified`. Une
+  fois l'identité ou l'adresse vérifiées, les champs correspondants sont ceux du dossier
+  accepté, et **`PATCH /me/profile` répond `409 CONFLICT`** si l'on tente de les modifier.
+- La fiche d'un compte au back-office porte `verification` ; son profil est le profil vérifié
+  lorsqu'il existe.
+- Historique : les actions d'un membre du personnel sur le compte d'un client figurent dans
+  l'historique de ce client, **plus dans celui du membre du personnel**.
+- `GET /admin/roles` liste un troisième rôle système, `compliance` ; le catalogue compte onze
+  permissions.
+- Les journaux expurgent aussi les clés nommées `encryptionKey`, `masterKey` et
+  `documentNumber`.
+
 ## [Non publié] — Phase 2 : envoi réel des e-mails
 
 ### Ajouté

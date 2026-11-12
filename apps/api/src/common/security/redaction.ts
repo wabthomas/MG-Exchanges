@@ -12,9 +12,13 @@ const SENSITIVE_FRAGMENTS = [
   'cookie',
   'apikey',
   'privatekey',
+  'encryptionkey',
+  'masterkey',
   'mnemonic',
   'credential',
   'cardnumber',
+  // Numéro d'une pièce d'identité (vérification d'identité).
+  'documentnumber',
   'sessionid',
   'signature',
 ] as const;

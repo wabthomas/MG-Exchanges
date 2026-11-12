@@ -7,6 +7,7 @@ import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
 import { ChallengeRepository } from './challenge.repository.js';
 import { MAINTENANCE_BATCH_SIZE, RETENTION } from './identity-policy.js';
+import { MaintenanceStepRegistry } from './maintenance-step.registry.js';
 import { MfaRepository } from './mfa.repository.js';
 import { RoleChangeRepository } from './role-change.repository.js';
 import { SessionRepository } from './session.repository.js';
@@ -19,6 +20,8 @@ export interface MaintenanceReport {
   readonly expiredChallenges: number;
   readonly unconfirmedTotpEnrollments: number;
   readonly expiredRoleChanges: number;
+  /** Étapes fournies par les autres modules (voir `MaintenanceStepRegistry`), par nom. */
+  readonly otherSteps: Readonly<Record<string, number>>;
   readonly failures: number;
 }
 
@@ -39,6 +42,7 @@ export class AccountMaintenanceService {
     private readonly challenges: ChallengeRepository,
     private readonly mfa: MfaRepository,
     private readonly roleChanges: RoleChangeRepository,
+    private readonly otherSteps: MaintenanceStepRegistry,
     private readonly audit: AuditService,
     private readonly unitOfWork: UnitOfWork,
     private readonly prisma: PrismaService,
@@ -88,12 +92,18 @@ export class AccountMaintenanceService {
       this.mfa.deleteStalePendingTotp(this.prisma, before(RETENTION.unconfirmedTotpMs)),
     );
 
+    const otherSteps: Record<string, number> = {};
+    for (const other of this.otherSteps.steps()) {
+      otherSteps[other.name] = await step(other.name, () => other.run(now));
+    }
+
     const report: MaintenanceReport = {
       unverifiedRegistrations,
       endedSessions,
       expiredChallenges,
       unconfirmedTotpEnrollments,
       expiredRoleChanges,
+      otherSteps,
       failures,
     };
     this.logger.info(report, 'Account maintenance completed');

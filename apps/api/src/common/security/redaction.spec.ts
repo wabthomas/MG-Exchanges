@@ -32,6 +32,13 @@ describe('isSensitiveKey', () => {
     'webhookSignature',
     'sessionId',
     'credentials',
+    'encryptionKey',
+    'secretsEncryptionKey',
+    'KYC_ENCRYPTION_KEY',
+    'masterKey',
+    'documentNumber',
+    'document_number',
+    'identityDocumentNumber',
   ])('considère %j comme sensible', (key) => {
     expect(isSensitiveKey(key)).toBe(true);
   });
@@ -51,6 +58,12 @@ describe('isSensitiveKey', () => {
     'keyboard',
     'publicKey',
     'requestId',
+    'documentId',
+    'documents',
+    'documentType',
+    'storageKey',
+    'encryption',
+    'number',
   ])('ne considère pas %j comme sensible', (key) => {
     expect(isSensitiveKey(key)).toBe(false);
   });

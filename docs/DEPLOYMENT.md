@@ -45,6 +45,8 @@ Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env
 | `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                             |
 | `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                          |
 | `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                              |
+| `KYC_STORAGE_DIR`             | pour le KYC           | répertoire (chemin absolu) des pièces de vérification chiffrées — un **volume persistant**                       |
+| `KYC_ENCRYPTION_KEY`          | pour le KYC           | clé maîtresse des pièces (32 octets en base64), distincte de la précédente — secret, **à sauvegarder à part**    |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
@@ -108,9 +110,50 @@ Cette clé chiffre le secret du second facteur de chaque compte. Générer :
 **Tâches planifiées.** L'API exécute elle-même, par BullMQ (un planificateur partagé par
 toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **purge des
 données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
-expirés, enrôlements abandonnés, demandes de rôle échues — durées dans `DATABASE.md`). Un
-échec est journalisé (`Account maintenance step failed`) et visible dans la file
-`account-maintenance` ; l'exécution suivante réessaie.
+expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
+déposés — durées dans `DATABASE.md`). Un échec est journalisé
+(`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
+l'exécution suivante réessaie.
+
+## Vérification d'identité : stockage des pièces
+
+La vérification d'identité (ADR 0022) n'est utilisable que si **deux** variables sont
+définies ; sans elles l'API démarre, mais tout ce qui touche à un dossier répond `503`.
+
+```bash
+KYC_STORAGE_DIR=/var/lib/mgx/kyc          # chemin absolu, sur un volume persistant
+KYC_ENCRYPTION_KEY=…                      # openssl rand -base64 32 — gestionnaire de secrets
+```
+
+- **Le volume.** Les pièces y sont écrites chiffrées, une par fichier, réparties dans 256
+  sous-répertoires. Au démarrage, l'API crée le répertoire s'il manque et vérifie qu'elle
+  peut y écrire (utilisateur `node` dans l'image, qui prévoit `/var/lib/mgx/kyc` avec les bons
+  droits) : **elle refuse de démarrer** si ce n'est pas le cas. Compter jusqu'à 5 Mio par
+  pièce, et de quatre à onze pièces pour un compte vérifié aux trois niveaux.
+- **Journal de démarrage.** La ligne `Verification document storage is ready` confirme que
+  le stockage est utilisable ; `Identity verification is unavailable…` signale que les deux
+  variables manquent.
+- **Plusieurs instances** de l'API doivent partager ce volume (système de fichiers réseau) :
+  une pièce reçue par l'une est relue par une autre. Un stockage objet demandera une autre
+  implémentation du port `DocumentStorage`.
+- **Sauvegardes : trois éléments, dont un à part.** La base et le volume se sauvegardent
+  ensemble (une ligne sans fichier, ou l'inverse, donne une pièce illisible). **La clé se
+  conserve ailleurs** : une sauvegarde de la base et du volume sans elle ne contient aucune
+  pièce lisible ; avec elle, elle les contient toutes.
+- **Perdre la clé rend toutes les pièces illisibles, définitivement** — et avec elles les
+  numéros de pièce d'identité. Les vérifications acceptées restent acquises, mais plus aucune
+  pièce ne peut être produite à une autorité.
+- **Changer la clé a le même effet** : la rotation n'est pas outillée (le format réserve un
+  octet de version pour l'introduire).
+- **Rôle `compliance`.** Les examinateurs le reçoivent comme tout rôle, par une demande
+  approuvée par un second administrateur (`POST /api/v1/admin/role-changes`), et doivent
+  activer la validation en deux étapes. La fonctionnalité s'ouvre ensuite aux titulaires :
+  `PUT /api/v1/admin/system-settings/features.kyc`.
+- **Poste des examinateurs.** Les fichiers ne sont pas analysés par un antivirus : ils
+  doivent être ouverts sur un poste à jour, dans une visionneuse isolée (voir `SECURITY.md`).
+
+Avec Docker Compose, définir `KYC_ENCRYPTION_KEY` dans `.env` suffit : le volume
+`kyc-documents` est monté sur `/var/lib/mgx/kyc` et `KYC_STORAGE_DIR` en découle.
 
 ## Premiers comptes d'administration
 
@@ -215,6 +258,12 @@ attribution de `X-Request-Id` et transmission de l'adresse réelle du client (un
 `X-Forwarded-For` fourni par le client est écrasé). Seuls `/api/` et `/health/live` sont
 relayés ; `/health/ready` est réservée au réseau interne.
 
+Les corps sont bornés à 128 Ko, sauf sur **une** route : l'envoi d'une pièce de vérification
+(6 Mio). Le fichier y est transmis à l'API au fil de l'eau, **sans copie sur le disque du
+proxy** — une pièce d'identité n'y est jamais écrite en clair —, avec au plus quatre envois
+simultanés par adresse. Un proxy ou un répartiteur placé devant Nginx doit admettre des
+corps de 6 Mio sur cette route, et ne pas les mettre en tampon sur disque.
+
 Les erreurs que Nginx produit lui-même (route non relayée, corps trop volumineux, limitation
 de débit, API injoignable) sont renvoyées au format d'erreur de l'API (voir `API.md`). Leur
 horodatage suppose que Nginx tourne en UTC, ce que fixe le fichier Compose (`TZ=UTC`).
@@ -248,9 +297,12 @@ Il s'exécute ensuite à chaque demande de fusion et sur `main` :
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
    à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
    activation de sa validation en deux étapes, ouverture de l'inscription, inscription,
-   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office),
-   puis contrôle de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme
-   créée par le script d'initialisation.
+   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office,
+   **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
+   maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
+   acceptation), contrôle que le volume ne contient que des pièces chiffrées, puis contrôle
+   de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme créée par le
+   script d'initialisation.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.
@@ -258,5 +310,6 @@ sera jamais déployée sans validation explicite.
 ## Reste à faire (phase 9)
 
 TLS, gestion des secrets par environnement, sauvegardes automatiques chiffrées et
-restauration testée, supervision (OpenTelemetry, Grafana), alertes, journaux centralisés,
-analyse des images, procédure de gestion d'incident, déploiement progressif.
+restauration testée (base, volume des pièces, clés), stockage objet des pièces, supervision
+(OpenTelemetry, Grafana), alertes, journaux centralisés, analyse des images, procédure de
+gestion d'incident, déploiement progressif.
