@@ -599,6 +599,17 @@ describe('Grand livre — règles portées par la base de données', () => {
         // Un autre actif, un autre titulaire : d'autres comptes.
         expect(await opening(db, 'user_available', 'CDF', user)).toBeUndefined();
         expect(await opening(db, 'user_available', 'USD', other)).toBeUndefined();
+        // L'unicité porte sur le type et sur l'actif ensemble : dans un actif neuf, la plateforme
+        // ouvre un compte de chaque type, alors qu'elle en tient déjà en dollars.
+        expect(
+          await attempt(db, async () => {
+            await registerAssetInSql(db, 'XTS', 2, { registered_by: admin });
+            await db.query(
+              `INSERT INTO ledger_accounts (type_key, asset_code, user_id)
+               VALUES ('platform_custody', 'XTS', NULL), ('platform_fees', 'XTS', NULL)`,
+            );
+          }),
+        ).toBeUndefined();
         // Ouvrir un compte qui existe ne fait rien, et rend le même.
         expect(await openLedgerAccount(db, 'user_available', 'USD', user)).toBe(account);
         expect(await openLedgerAccount(db, 'platform_custody', 'USD')).toBe(custody);
