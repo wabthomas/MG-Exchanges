@@ -1,14 +1,6 @@
 # Intégration continue de MG-Exchange (GitHub Actions).
 #
-# EMPLACEMENT PROVISOIRE — GitHub n'exécute que les fichiers du dossier `.github/workflows/`,
-# et l'outil qui a préparé ce dépôt n'est pas autorisé à y écrire. Pour activer la CI,
-# déplacer ce fichier (puis retirer ce bandeau) :
-#
-#   git mv infrastructure/ci/ci.yml .github/workflows/ci.yml
-#   git commit -m "ci: activer l'intégration continue" && git push
-#
-# Sur github.com : ouvrir ce fichier, « Edit », remplacer son chemin par
-# `.github/workflows/ci.yml`, puis valider sur la branche de la demande de fusion.
+# Exécutée sur chaque push vers main et sur chaque demande de fusion.
 name: CI
 
 on:
