@@ -3,6 +3,17 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Intégration continue activée
+
+### Modifié
+
+- Le workflow de CI a quitté `infrastructure/ci/ci.yml` pour `.github/workflows/ci.yml` : il
+  s'exécute désormais sur chaque demande de fusion et sur `main`. Sa première exécution
+  (2026-11-13) est passée au vert sans correction — premières exécutions réelles de la
+  construction des images, de la pile Docker Compose, du parcours à travers le conteneur
+  Nginx et du moteur de migration natif de Prisma. Les scripts qu'il appelle restent dans
+  `infrastructure/ci/`.
+
 ## [Non publié] — Phase 2, lot 4 : clôture de compte, conservation légale, effacement, copie des données
 
 ### Ajouté

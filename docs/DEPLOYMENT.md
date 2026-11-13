@@ -1,11 +1,11 @@
 # Déploiement
 
-> **Avertissement.** L'environnement de développement ne disposait pas de Docker : l'image,
-> la pile Compose et Nginx **n'ont jamais été exécutés par Docker**. Leur contenu a été
-> exécuté hors Docker avec les vrais logiciels (détail dans `PROJECT_STATUS.md`), et la CI
-> les construit et les teste — mais **elle n'est pas encore activée** (voir « Intégration
-> continue »). Considérer ce document comme à confirmer tant qu'elle n'est pas passée au
-> vert. Le déploiement en production est l'objet de la phase 9.
+> **Avertissement.** L'environnement de développement ne disposait pas de Docker : le contenu
+> de l'image, de la pile Compose et de Nginx y est exécuté hors Docker, avec les vrais
+> logiciels (détail dans `PROJECT_STATUS.md`). **L'intégration continue, elle, les construit
+> et les teste avec Docker à chaque modification** — au vert depuis sa première exécution, le
+> 2026-11-13 (voir « Intégration continue »). Rien de tout cela n'a encore servi en
+> production : le déploiement est l'objet de la phase 9.
 
 ## Environnements
 
@@ -358,16 +358,8 @@ configuration TLS en phase 9.
 
 ## Intégration continue
 
-Le workflow GitHub Actions est fourni dans `infrastructure/ci/ci.yml`. **Il n'est pas
-encore actif** : GitHub n'exécute que les fichiers de `.github/workflows/`, dossier dans lequel
-l'outil qui a préparé le dépôt n'était pas autorisé à écrire. Pour l'activer :
-
-```bash
-git mv infrastructure/ci/ci.yml .github/workflows/ci.yml
-git commit -m "ci: activer l'intégration continue" && git push
-```
-
-Il s'exécute ensuite à chaque demande de fusion et sur `main` :
+Le workflow GitHub Actions (`.github/workflows/ci.yml`) s'exécute à chaque demande de fusion
+et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
 
 1. **verify** — installation figée, mise en forme, build, lint, types, cohérence
    migrations/schéma, tous les tests sur PostgreSQL 18 et Redis 8 réels, audit des dépendances ;

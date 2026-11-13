@@ -31,8 +31,9 @@ packages/
 infrastructure/
   docker/              image de l'API, initialisation de PostgreSQL (rôles et privilèges)
   nginx/               reverse proxy
-  ci/                  workflow GitHub Actions — à déplacer dans .github/workflows/ pour l'activer —
-                       et parcours de bout en bout rejoué sur la pile conteneurisée
+  ci/                  scripts de l'intégration continue : parcours de bout en bout rejoué
+                       sur la pile conteneurisée, contrôle du volume des pièces
+.github/workflows/     intégration continue (GitHub Actions)
 docs/                  architecture, base de données, API, sécurité, déploiement, décisions (ADR)
 docker-compose.yml     environnement local
 ```
