@@ -3,6 +3,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { NextFunction, Request, Response } from 'express';
 import { Logger } from 'nestjs-pino';
 
+import { isParsedGlobally } from '../common/http/deferred-json-body.js';
 import { sendProblem } from '../common/http/problem-details.filter.js';
 import { REQUEST_ID_HEADER, requestIdMiddleware } from '../common/http/request-id.middleware.js';
 import { AppConfig } from '../config/app-config.js';
@@ -59,7 +60,9 @@ export function configureApp(app: NestExpressApplication): void {
 
   // API JSON uniquement : les formulaires (`x-www-form-urlencoded`, `multipart`) ne sont pas
   // analysés, ce qui écarte les requêtes inter-sites « simples » forgées par un formulaire.
-  app.useBodyParser('json', { limit: config.http.bodyLimitBytes });
+  // Les rares routes dont le corps dépasse la limite commune le lisent elles-mêmes, après
+  // l'authentification (voir `deferred-json-body.ts`).
+  app.useBodyParser('json', { limit: config.http.bodyLimitBytes, type: isParsedGlobally });
 
   if (config.http.corsAllowedOrigins.length > 0) {
     app.enableCors({

@@ -61,7 +61,7 @@ describe('Back-office — double validation des rôles portée par la base de do
     // Un compte ne naît pas clôturé : il est créé actif, puis clôturé.
     const created = status === 'CLOSED' ? 'ACTIVE' : status;
     const result = await db.query<{ id: string }>(
-      `INSERT INTO users (email, country_code, terms_accepted_at, status, email_verified_at)
+      `INSERT INTO users (email, country_code, registered_at, status, email_verified_at)
        VALUES ($1, 'CD', now(), $2::user_status, CASE WHEN $2 = 'PENDING_VERIFICATION' THEN NULL ELSE now() END)
        RETURNING id`,
       [`backoffice${String(sequence)}@example.cd`, created],
@@ -804,7 +804,7 @@ describe('Back-office — double validation des rôles portée par la base de do
           /UNIQUE INDEX .* \(user_id, role_id\) WHERE \(status = 'PENDING'::role_change_status\)/,
         );
         expect(definitions['users_pending_registration_idx']).toMatch(
-          /\(terms_accepted_at\) WHERE \(status = 'PENDING_VERIFICATION'::user_status\)/,
+          /\(registered_at\) WHERE \(status = 'PENDING_VERIFICATION'::user_status\)/,
         );
       });
     });

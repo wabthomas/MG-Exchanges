@@ -774,7 +774,7 @@ describe('Back-office des comptes — bout en bout', () => {
       await http
         .post('/api/v1/auth/register')
         .set(from(newClientIp()))
-        .send({ email, password: PASSWORD, countryCode: 'CD', acceptTerms: true })
+        .send({ email, password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 })
         .expect(202);
       const pending = await prisma.user.findUniqueOrThrow({ where: { email } });
       const refused = await post(alice.accessToken, `/admin/users/${pending.id}/suspend`, {

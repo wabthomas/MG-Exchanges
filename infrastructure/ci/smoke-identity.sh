@@ -3,11 +3,14 @@
 #
 #   1. l'administrateur se connecte ; le back-office lui est fermé tant qu'il n'a pas activé la
 #      validation en deux étapes ; il l'active (secret TOTP, premier code, codes de secours) ;
-#   2. il ouvre l'inscription ;
-#   3. un utilisateur s'inscrit, reçoit son code dans la boîte de développement, vérifie son
-#      adresse avec son mot de passe, se connecte, consulte son compte, n'a aucun droit
-#      d'administration, renouvelle sa session, complète son profil ;
-#   4. l'administrateur se reconnecte en deux étapes (code de secours) ;
+#   2. il ouvre l'inscription, puis publie les conditions d'utilisation — un texte de plusieurs
+#      centaines de kilo-octets, à travers le proxy — : avant cela nul ne peut s'inscrire ;
+#      le texte se relit sans compte, à l'octet près ;
+#   3. un utilisateur s'inscrit en acceptant la version en vigueur, reçoit son code dans la boîte
+#      de développement, vérifie son adresse avec son mot de passe, se connecte, consulte son
+#      compte, n'a aucun droit d'administration, renouvelle sa session, complète son profil ;
+#   4. l'administrateur se reconnecte en deux étapes (code de secours), puis publie une nouvelle
+#      version, à accepter : le compte de l'utilisateur lui est fermé jusqu'à ce qu'il l'accepte ;
 #   5. vérification d'identité : l'administrateur ouvre la fonctionnalité ; l'utilisateur déclare
 #      son identité, envoie ses pièces — des fichiers de plusieurs centaines de kilo-octets, puis
 #      de la taille maximale, à travers le proxy —, dépose son dossier ; l'administrateur le
@@ -24,7 +27,10 @@
 #     être rejoué avec le même compte ;
 #   - la remise des notifications en mémoire (environnement local) ;
 #   - le stockage chiffré des pièces configuré (KYC_ENCRYPTION_KEY) ;
-#   - curl, jq, openssl et python3 (calcul du code TOTP, dates).
+#   - curl, jq, openssl, sha256sum et python3 (calcul du code TOTP, dates, textes).
+#
+# Le script publie deux versions des conditions d'utilisation (définitives, comme toute
+# publication) : il est fait pour une pile de test, pas pour une plateforme en service.
 #
 #   BASE_URL=http://127.0.0.1:8080 ADMIN_EMAIL=… MGX_ADMIN_PASSWORD=… ./smoke-identity.sh
 set -euo pipefail
@@ -131,20 +137,109 @@ recovery_code="$(jq -r '.recoveryCodes[0]' "$BODY")"
 request 200 PUT /admin/system-settings/features.registration \
   '{"value": true, "reason": "Smoke test of the containerised stack"}' "$admin_token"
 
-# --- 3. Utilisateur ----------------------------------------------------------------------------
 email="smoke-$(date +%s)-$RANDOM@example.cd"
 password="smoke-test-$(openssl rand -hex 8)"
 credentials="$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p}')"
+
+# --- 2 bis. Conditions d'utilisation -----------------------------------------------------------
+# Sur une pile neuve, aucune version n'est publiée ; sur une pile déjà utilisée, le script
+# publie la suivante.
+status="$(curl --silent --output "$BODY" --write-out '%{http_code}' "$API/terms/current")"
+case "$status" in
+  404)
+    terms_version=1
+    # Tant qu'aucune version n'est publiée, nul ne s'inscrit — dès que l'inscription est
+    # ouverte (visible en quelques secondes au plus sur chaque instance).
+    for _ in $(seq 1 20); do
+      status="$(curl --silent --output "$BODY" --write-out '%{http_code}' --header 'Content-Type: application/json' \
+        --data "$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: 1}')" \
+        "$API/auth/register")"
+      [ "$status" = "503" ] && break
+      sleep 0.5
+    done
+    [ "$status" = "503" ] || { echo "FAIL  POST /auth/register before any terms -> $status (expected 503)" >&2; cat "$BODY" >&2; exit 1; }
+    echo "ok    POST /auth/register -> 503 (no terms of use published yet)"
+    ;;
+  200)
+    terms_version="$(($(jq -r .number "$BODY") + 1))"
+    ;;
+  *)
+    echo "FAIL  GET /terms/current -> $status (expected 200 or 404)" >&2; cat "$BODY" >&2; exit 1
+    ;;
+esac
+
+# Un texte de 180 000 caractères environ (la limite est de 200 000) — fins de ligne mêlées,
+# tabulation, accents, guillemets —, soit plus de 180 kilo-octets : au-delà de la limite commune
+# des corps de requête (128 Ko au proxy, 100 Ko à l'API). Seule la route de publication l'admet.
+python3 - "$WORK/terms-fr.md" <<'PYTHON'
+import sys
+
+text = (
+    "# Conditions d’utilisation\r\n\r\nArticle 1 — Objet.  \n\t« Œuvre » de test.\n\n"
+    + "Clause de remplissage, sans portée. " * 5000
+    + "\nFin.\n"
+)
+with open(sys.argv[1], "w", encoding="utf-8", newline="") as file:
+    file.write(text)
+PYTHON
+terms_digest="$(sha256sum "$WORK/terms-fr.md" | cut -d ' ' -f 1)"
+# publication <fichier JSON> <numéro> <true|false : version à accepter> <fichier du texte>
+publication() {
+  jq -n --argjson n "$2" --argjson r "$3" --rawfile body "$4" '{
+    number: $n, requiresAcceptance: $r, reason: "Smoke test of the containerised stack",
+    fr: {summary: "Version de test.", body: $body}}' > "$1"
+}
+publication "$WORK/terms.json" "$terms_version" true "$WORK/terms-fr.md"
+
+# Sans jeton, la publication est refusée — avant que son contenu ne soit lu.
+upload 401 /admin/terms/versions application/json "$WORK/terms.json"
+# Au-delà d'un mébioctet, l'API refuse ; au-delà de la limite du proxy pour cette route, le
+# proxy refuse sans rien transmettre.
+head -c 1060000 /dev/zero | tr '\0' 'x' > "$WORK/filler.txt"
+publication "$WORK/terms-too-large.json" "$terms_version" true "$WORK/filler.txt"
+upload 413 /admin/terms/versions application/json "$WORK/terms-too-large.json" "$admin_token"
+check 'beyond one mebibyte the API refuses the publication' \
+  '.code == "PAYLOAD_TOO_LARGE" and (.detail | contains("1048576"))'
+head -c 1300000 /dev/zero | tr '\0' 'x' > "$WORK/filler.txt"
+publication "$WORK/terms-too-large.json" "$terms_version" true "$WORK/filler.txt"
+upload 413 /admin/terms/versions application/json "$WORK/terms-too-large.json" "$admin_token"
+check 'beyond the limit of this route the request is refused' '.code == "PAYLOAD_TOO_LARGE"'
+
+upload 201 /admin/terms/versions application/json "$WORK/terms.json" "$admin_token"
+check 'the version is published and its digest is that of the file' \
+  ".number == $terms_version and .current == true and .requiresAcceptance == true and .fr.sha256 == \"$terms_digest\" and .acceptances == 0"
+# Une publication ne se rejoue pas.
+upload 409 /admin/terms/versions application/json "$WORK/terms.json" "$admin_token"
+
+# Le texte se lit sans compte, tel qu'il a été publié : à l'octet près, à travers le proxy.
+request 200 GET /terms/current
+check 'the version in force is the one just published' \
+  ".number == $terms_version and .locale == \"fr\" and .sha256 == \"$terms_digest\""
+jq -j .body "$BODY" > "$WORK/terms-read.md"
+if ! cmp -s "$WORK/terms-read.md" "$WORK/terms-fr.md"; then
+  echo "FAIL  the text read back differs from the published file" >&2
+  exit 1
+fi
+echo "ok    the text read back is the published file, byte for byte ($(wc -c < "$WORK/terms-fr.md") bytes)"
+request 200 GET "/terms/versions/$terms_version?locale=en"
+check 'without a translation the French text is served' '.locale == "fr" and .locales == ["fr"]'
+
+# --- 3. Utilisateur ----------------------------------------------------------------------------
 # L'ouverture d'une fonctionnalité est visible en quelques secondes au plus sur chaque instance.
 for _ in $(seq 1 20); do
   status="$(curl --silent --output "$BODY" --write-out '%{http_code}' --header 'Content-Type: application/json' \
-    --data "$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p, countryCode: "CD", acceptTerms: true}')" \
+    --data "$(jq -n --arg e "$email" --arg p "$password" --argjson v "$terms_version" '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: $v}')" \
     "$API/auth/register")"
   [ "$status" = "202" ] && break
   sleep 0.5
 done
 [ "$status" = "202" ] || { echo "FAIL  POST /auth/register -> $status" >&2; cat "$BODY" >&2; exit 1; }
 echo "ok    POST /auth/register -> 202"
+# S'inscrire, c'est accepter la version en vigueur : une autre est refusée, quelle que soit
+# l'adresse.
+request 409 POST /auth/register "$(jq -n --arg e "autre-$email" --arg p "$password" --argjson v "$((terms_version + 1))" \
+  '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: $v}')"
+check 'registration names the version in force' '.code == "TERMS_VERSION_NOT_CURRENT"'
 
 # Le code est émis par un traitement asynchrone (boîte d'envoi, puis file de traitement).
 code=""
@@ -170,6 +265,11 @@ user_id="$(jq -r .user.id "$BODY")"
 request 200 GET /me '' "$user_token"
 check 'the account is active and has no permission' \
   ".email == \"$email\" and .status == \"ACTIVE\" and .permissions == [] and .secondFactorEnabled == false"
+check 'having accepted the terms in force when signing up, the account has nothing to accept' \
+  '.termsAcceptanceRequired == false'
+request 200 GET /me/terms '' "$user_token"
+check 'the acceptance was recorded with the account' \
+  ".accepted.number == $terms_version and .current.number == $terms_version and .acceptanceRequired == false"
 request 403 GET /admin/system-settings '' "$user_token"
 request 403 GET /admin/users '' "$user_token"
 request 200 POST /auth/refresh "$(jq -n --arg t "$refresh_token" '{refreshToken: $t}')"
@@ -188,6 +288,30 @@ request 200 POST /auth/mfa/verify "$(jq -n --arg t "$mfa_token" --arg c "$recove
 admin_token="$(jq -r .tokens.accessToken "$BODY")"
 # Le jeton de la connexion en cours ne sert qu'une fois.
 request 401 POST /auth/mfa/verify "$(jq -n --arg t "$mfa_token" --arg c "$recovery_code" '{mfaToken: $t, recoveryCode: $c}')"
+
+# --- 4 bis. Une nouvelle version des conditions, à accepter -------------------------------------
+printf 'Conditions d’utilisation — version suivante.\n' > "$WORK/terms-next.md"
+publication "$WORK/terms-next.json" "$((terms_version + 1))" true "$WORK/terms-next.md"
+upload 201 /admin/terms/versions application/json "$WORK/terms-next.json" "$admin_token"
+request 200 GET /admin/terms/versions '' "$admin_token"
+check 'the back office follows the versions and their acceptances' \
+  ".versions[0].number == $((terms_version + 1)) and .versions[0].current == true and .versions[1].number == $terms_version and .versions[1].acceptances >= 1"
+
+# Le compte de l'utilisateur lui est fermé — sauf l'essentiel — jusqu'à ce qu'il accepte.
+request 403 GET /me/profile '' "$user_token"
+check 'the account must accept the new version before continuing' '.code == "TERMS_ACCEPTANCE_REQUIRED"'
+request 200 GET /me '' "$user_token"
+check 'the account is told so' '.termsAcceptanceRequired == true'
+request 200 GET /me/sessions '' "$user_token"
+# On n'accepte que la version en vigueur : celle qu'on a pu lire.
+request 409 POST /me/terms/acceptance "$(jq -n --argjson v "$terms_version" '{version: $v}')" "$user_token"
+check 'a superseded version cannot be accepted' '.code == "TERMS_VERSION_NOT_CURRENT"'
+request 200 POST /me/terms/acceptance "$(jq -n --argjson v "$((terms_version + 1))" '{version: $v}')" "$user_token"
+check 'the acceptance is recorded' \
+  ".accepted.number == $((terms_version + 1)) and .acceptanceRequired == false"
+request 200 GET /me/profile '' "$user_token"
+request 200 GET /me/activity '' "$user_token"
+check 'the activity shows both acceptances' '[.entries[] | select(.type == "TERMS_ACCEPTED")] | length == 2'
 
 # --- 5. Vérification d'identité, pièces comprises, à travers le proxy ---------------------------
 request 200 PUT /admin/system-settings/features.kyc \
@@ -317,7 +441,7 @@ request 400 POST /me/data-export '{}' "$user_token"
 request 401 POST /me/data-export '{"currentPassword": "not-the-password-1"}' "$user_token"
 request 200 POST /me/data-export "$holder_proof" "$user_token"
 check 'the copy holds the account, its verified identity and its history' \
-  ".formatVersion == 1 and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0"
+  ".formatVersion == 2 and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0 and ([.terms.acceptances[].version] == [$((terms_version + 1)), $terms_version])"
 check 'the copy never holds the full number of the identity document' \
   "tostring | contains(\"$document_number\") | not"
 

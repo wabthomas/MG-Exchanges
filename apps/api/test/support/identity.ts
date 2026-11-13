@@ -201,6 +201,10 @@ export async function registerVerifiedUser(
 ): Promise<RegisteredUser> {
   const user = { email: overrides.email ?? newEmail(), password: overrides.password ?? PASSWORD };
   const ip = newClientIp();
+  // S'inscrire, c'est accepter la version en vigueur des conditions d'utilisation.
+  const terms = await testApp.app
+    .get(PrismaService)
+    .termsVersion.aggregate({ _max: { number: true } });
   // L'adresse a pu servir à un compte clôturé depuis : seul un code reçu après compte.
   const codesBefore = mailbox(testApp)
     .messagesFor(user.email)
@@ -208,7 +212,7 @@ export async function registerVerifiedUser(
   await http
     .post('/api/v1/auth/register')
     .set(from(ip))
-    .send({ ...user, countryCode: 'CD', acceptTerms: true })
+    .send({ ...user, countryCode: 'CD', acceptedTermsVersion: terms._max.number })
     .expect(202);
   const code = codeIn(
     await nextMessageOf(testApp, user.email, 'email_verification_code', codesBefore + 1),

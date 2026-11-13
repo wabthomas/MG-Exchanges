@@ -10,13 +10,18 @@ import { ACCOUNT_TYPES, USER_STATUSES } from './auth.js';
 import { kycCaseSchema } from './kyc.js';
 import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { activityEntrySchema } from './profile.js';
+import { termsExportSchema } from './terms.js';
 
 export const dataExportRequestSchema = z
   .strictObject(holderProofShape)
   .refine(atMostOneSecondFactor, AT_MOST_ONE_SECOND_FACTOR);
 export type DataExportRequest = z.infer<typeof dataExportRequestSchema>;
 
-export const DATA_EXPORT_FORMAT_VERSION = 1;
+/**
+ * Version du format de la copie. `2` : les conditions d'utilisation acceptées figurent dans
+ * `terms` ; `account.termsAcceptedAt` a disparu.
+ */
+export const DATA_EXPORT_FORMAT_VERSION = 2;
 
 /** Nombre maximal d'événements d'activité inclus dans une copie (les plus récents). */
 export const DATA_EXPORT_ACTIVITY_MAX_ENTRIES = 2000;
@@ -47,7 +52,6 @@ export const dataExportSchema = z.object({
     accountType: z.enum(ACCOUNT_TYPES),
     status: z.enum(USER_STATUSES),
     createdAt: isoDateTimeSchema,
-    termsAcceptedAt: isoDateTimeSchema,
     /** Rôles du back-office (vide pour un client). */
     roles: z.array(z.string()),
   }),
@@ -97,5 +101,7 @@ export const dataExportSchema = z.object({
     level: kycVerifiedLevelSchema,
     cases: z.array(kycCaseSchema),
   }),
+  /** Conditions d'utilisation : les versions que le compte a acceptées. */
+  terms: termsExportSchema,
 });
 export type DataExport = z.infer<typeof dataExportSchema>;

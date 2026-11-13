@@ -19,7 +19,6 @@ const ENTRY_FIELDS = {
   accountType: true,
   status: true,
   createdAt: true,
-  termsAcceptedAt: true,
   updatedAt: true,
   roles: { select: { role: { select: { key: true } } } },
   totp: { select: { confirmedAt: true } },

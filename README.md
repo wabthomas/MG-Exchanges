@@ -6,11 +6,13 @@ République démocratique du Congo ; l'architecture est prévue pour s'étendre 
 
 > **État : phase 2 en cours — comptes, authentification, validation en deux étapes, profil,
 > vérification du téléphone, routes d'administration des comptes, vérification d'identité des
-> particuliers (KYC, examen manuel), clôture de compte, copie et effacement des données sont
-> livrés ; la vérification des entreprises et l'acceptation versionnée des conditions
-> d'utilisation restent à faire.**
+> particuliers (KYC, examen manuel), clôture de compte, copie et effacement des données,
+> conditions d'utilisation versionnées (publication, acceptation) sont livrés ; la
+> vérification des entreprises reste à faire.**
 > Aucune fonctionnalité financière n'existe : ni paiement, ni transfert, ni retrait.
-> L'inscription et la vérification d'identité sont fermées par défaut. Les e-mails partent par
+> L'inscription et la vérification d'identité sont fermées par défaut, et personne ne
+> s'inscrit tant qu'aucune version des conditions d'utilisation n'est publiée — **leur texte
+> n'est pas fourni par ce dépôt**. Les e-mails partent par
 > le serveur SMTP du prestataire configuré au déploiement ; aucun SMS ne part (aucun
 > prestataire SMS n'est branché).
 > Ce dépôt contient une **API** : l'application web, les applications mobiles et l'interface
@@ -74,6 +76,12 @@ pnpm dev:api
 #    pour que les rôles puissent ensuite évoluer par l'API (double validation)
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
 pnpm admin:create --email admin@example.com
+
+# 5. Conditions d'utilisation : sans version publiée, personne ne peut s'inscrire.
+#    DÉFINITIF — une version publiée ne se modifie ni ne se retire (voir docs/DEPLOYMENT.md)
+pnpm terms:publish --number 1 --requires-acceptance yes \
+  --reason "Texte de travail pour le développement" \
+  --fr ./conditions-fr.md --fr-summary "Première version."
 ```
 
 Un administrateur doit **activer la validation en deux étapes** avant toute action du
@@ -122,6 +130,7 @@ curl http://localhost:8080/api/v1/system/status
 | `pnpm db:migrate:dev`          | crée et applique une migration en développement                                         |
 | `pnpm db:migrate:deploy`       | applique les migrations en attente                                                      |
 | `pnpm admin:create --email …`  | crée un compte d'administration (rôle propriétaire de la base)                          |
+| `pnpm terms:publish …`         | publie une version des conditions d'utilisation à partir de fichiers — définitif        |
 | `pnpm db:check-drift`          | vérifie que les migrations correspondent au schéma Prisma (exige `SHADOW_DATABASE_URL`) |
 | `pnpm audit:deps`              | vulnérabilités connues des dépendances de production                                    |
 | `pnpm verify`                  | mise en forme, lint, build, types et tests                                              |

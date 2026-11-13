@@ -88,6 +88,8 @@ export class PrismaAccountClosureRepository extends AccountClosureRepository {
       await tx.userCredential.deleteMany({ where: { userId } });
       await tx.verificationChallenge.deleteMany({ where: { userId } });
       await tx.userProfile.deleteMany({ where: { userId } });
+      // Ses acceptations des conditions d'utilisation aussi : leur trace reste au journal d'audit.
+      await tx.termsAcceptance.deleteMany({ where: { userId } });
       const sessions = await tx.userSession.deleteMany({ where: { userId } });
       // Enfin le compte lui-même : il perd son adresse et son numéro, pour toujours.
       const closed = await tx.user.updateMany({

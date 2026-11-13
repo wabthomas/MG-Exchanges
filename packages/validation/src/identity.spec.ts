@@ -17,6 +17,7 @@ import {
   presentedPasswordSchema,
   RECOVERY_CODE_ALPHABET,
   recoveryCodeSchema,
+  textBlockSchema,
   textLineSchema,
   timeZoneSchema,
   totpCodeSchema,
@@ -222,6 +223,43 @@ describe('profil', () => {
       7,
     ]) {
       expect(line.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('bloc de texte : plusieurs lignes, borné, non vide, conservé tel quel', () => {
+    const block = textBlockSchema(40);
+    // Rien n'est retouché : ni les espaces de tête, ni le saut de ligne final.
+    for (const value of [
+      '  Article 1\n\n\tObjet.\r\n',
+      'x'.repeat(40),
+      'Conditions générales — « É » œ',
+      'emoji 😀 hors du plan de base',
+      'x',
+      // Ailleurs qu'en tête, ce caractère est une espace insécable sans chasse : il passe.
+      'mot\uFEFFcomposé',
+    ]) {
+      expect(block.parse(value)).toBe(value);
+    }
+    for (const value of [
+      '',
+      '   ',
+      '\n\t\r\n',
+      'x'.repeat(41),
+      'nul\u0000',
+      'sonnerie\u0007',
+      'saut de page\u000c',
+      'tabulation verticale\u000b',
+      'échappement\u001b[0m',
+      'suppression\u007f',
+      'contrôle C1\u0085',
+      'demi-paire haute \ud83d isolée',
+      'demi-paire basse \ude00 isolée',
+      // Marque d'ordre des octets laissée en tête par un éditeur : elle fausserait l'empreinte.
+      '\uFEFF# Conditions',
+      7,
+      null,
+    ]) {
+      expect(block.safeParse(value).success).toBe(false);
     }
   });
 

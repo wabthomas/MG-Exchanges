@@ -3,6 +3,81 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 2, lot 5 : conditions d'utilisation versionnées
+
+Le texte des conditions n'est pas fourni par ce lot, et la règle — faut-il accepter de nouveau
+à chaque changement ? — n'y est pas tranchée : le texte se publie comme une donnée, et la
+règle se choisit à chaque publication (ADR 0024).
+
+### Ajouté
+
+- **Versions publiées** : chaque version des conditions porte un numéro (1, 2, 3…), un texte
+  en français — il fait foi — et, facultativement, sa traduction anglaise, un résumé de ce
+  qui change, et sa règle `requiresAcceptance` : à accepter par chaque compte, ou seulement
+  signalée. La version en vigueur est la plus récente. **Une version publiée ne change plus
+  et ne se retire pas.**
+- **Lecture publique** : `GET /terms/current`, `GET /terms/versions`,
+  `GET /terms/versions/{number}` (`?locale=fr|en` ; le français est servi si la traduction
+  manque). Le texte est rendu à l'octet près, avec son empreinte SHA-256.
+- **Acceptation** : `GET /me/terms` dit où en est le compte ; `POST /me/terms/acceptance`
+  accepte la version en vigueur — et elle seule (`409 TERMS_VERSION_NOT_CURRENT` sinon).
+  L'acceptation est datée par la base, inscrite à l'historique et au journal d'audit avec
+  l'empreinte du texte.
+- **Accès conditionné, refus par défaut** : tant qu'un compte doit accepter, ses routes
+  répondent `403 TERMS_ACCEPTANCE_REQUIRED`, sauf celles qui déclarent rester ouvertes
+  (`@AllowBeforeTermsAcceptance()`) : voir son compte, accepter, se déconnecter, mot de passe,
+  sessions, validation en deux étapes, historique, **copie des données et clôture**. Le
+  back-office n'est pas concerné. Une route ajoutée plus tard est fermée d'office.
+- **Publication par le back-office** : `POST /admin/terms/versions` (définitif ; le numéro
+  publié est désigné par la requête, une publication ne se rejoue pas) et
+  `GET /admin/terms/versions` (auteur, règle, empreintes, nombre d'acceptations). Permission
+  nouvelle `terms.publish`, détenue par `super_admin` seul.
+- **Publication en ligne de commande** : `pnpm terms:publish`, à partir de fichiers, avec le
+  rôle propriétaire de la base — pour installer la première version avant l'ouverture.
+- **Règles portées par la base** (erreurs `MGX06` et `MGX07`) : numérotation sans trou ni
+  doublon, publications sérialisées ; versions immuables ; empreinte recalculée et comparée ;
+  seul publie un compte actif détenant `terms.publish`, ou le rôle propriétaire ; on n'accepte
+  que la version en vigueur ; une acceptation ne se modifie pas et ne s'efface qu'avec le
+  compte ; un compte ne se clôt pas en gardant une acceptation ; dates lues à l'horloge de la
+  base.
+- **Corps JSON volumineux lu après les gardes** : la publication admet un mébioctet ; son
+  corps n'est lu qu'après l'authentification et le contrôle des droits
+  (`common/http/deferred-json-body.ts`). La limite commune (100 Ko) vaut toujours ailleurs.
+- Reverse proxy : limite propre à la route de publication (1 100 Ko), corps transmis au fil
+  de l'eau.
+- CI : le parcours à travers Nginx publie un texte de 185 Ko et le relit à l'octet près,
+  vérifie les refus au-delà des limites, l'inscription liée à la version en vigueur, puis une
+  nouvelle version à accepter : compte arrêté, acceptation, reprise.
+- ADR 0024. Migration `20261113043000_terms_of_use`. Aucune dépendance nouvelle.
+
+### Modifié — incompatible avec un client des lots précédents
+
+- **Inscription** : `acceptedTermsVersion` (numéro de la version lue) remplace
+  `acceptTerms: true`. `409 TERMS_VERSION_NOT_CURRENT` si ce n'est pas la version en vigueur ;
+  **`503 SERVICE_UNAVAILABLE` tant qu'aucune version n'est publiée**. Ces réponses sont les
+  mêmes que l'adresse soit libre ou déjà prise — y compris quand une version est publiée
+  pendant la demande.
+- **Comptes existants** : aucun n'a accepté de version. Dès la publication de la version 1,
+  chacun doit l'accepter avant de continuer — personnel compris, hors back-office.
+- Les routes du profil, du téléphone et de la vérification d'identité peuvent répondre
+  `403 TERMS_ACCEPTANCE_REQUIRED`.
+- `GET /me` et la réponse de connexion portent `termsAcceptanceRequired`.
+- Copie des données : `formatVersion` passe à `2` — `terms.acceptances` ajouté,
+  `account.termsAcceptedAt` retiré.
+- Fiche d'un compte au back-office : `terms` (`accepted`, `acceptanceRequired`) remplace
+  `termsAcceptedAt`.
+- Historique : type nouveau `TERMS_ACCEPTED`. Codes d'erreur nouveaux :
+  `TERMS_ACCEPTANCE_REQUIRED` (403), `TERMS_VERSION_NOT_CURRENT` (409).
+- `GET /admin/roles` : le catalogue compte treize permissions.
+- Base : la colonne `users.terms_accepted_at` est **renommée** `registered_at` (elle ne datait
+  que la demande d'inscription). **Cette migration n'est pas compatible avec la version
+  précédente de l'API : l'arrêter avant de migrer** (`DEPLOYMENT.md`).
+
+### Non réalisé
+
+- Aucun e-mail n'annonce une nouvelle version : le titulaire l'apprend à sa prochaine
+  connexion. Ni brouillon, ni date d'effet différée, ni double validation d'une publication.
+
 ## [Non publié] — Intégration continue activée
 
 ### Modifié

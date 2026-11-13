@@ -11,7 +11,7 @@ export interface NewUser {
   readonly accountType: AccountType;
   readonly status: UserStatus;
   readonly emailVerifiedAt: Date | null;
-  readonly termsAcceptedAt: Date;
+  readonly registeredAt: Date;
   readonly passwordHash: string;
 }
 
@@ -20,7 +20,7 @@ export interface PendingRegistration {
   readonly phone: string | null;
   readonly countryCode: string;
   readonly locale: string;
-  readonly termsAcceptedAt: Date;
+  readonly registeredAt: Date;
   readonly passwordHash: string;
 }
 

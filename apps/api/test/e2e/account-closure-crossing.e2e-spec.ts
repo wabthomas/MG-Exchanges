@@ -40,6 +40,7 @@ import {
   RequestCrossing,
   RequestCrossingModule,
 } from '../support/request-crossing.module.js';
+import { publishTermsAsOperator } from '../support/terms.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
 
 interface Member extends RegisteredUser {
@@ -200,6 +201,7 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
       challenges: await prisma.verificationChallenge.count(where),
       profiles: await prisma.userProfile.count(where),
       sessions: await prisma.userSession.count(where),
+      termsAcceptances: await prisma.termsAcceptance.count(where),
       unexaminedCases: await prisma.kycCase.count({
         where: { userId, status: { in: ['DRAFT', 'SUBMITTED'] } },
       }),
@@ -212,6 +214,7 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     challenges: 0,
     profiles: 0,
     sessions: 0,
+    termsAcceptances: 0,
     unexaminedCases: 0,
   };
 
@@ -233,6 +236,20 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
       prepare: async (m) => () => get(m, '/me/sessions'),
     },
     { route: 'GET /me/mfa', expected: [200, null], prepare: async (m) => () => get(m, '/me/mfa') },
+    {
+      route: 'GET /me/terms',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/terms'),
+    },
+    {
+      route: 'POST /me/terms/acceptance',
+      expected: [409, 409],
+      prepare: async (m) => {
+        // Une nouvelle version, que le compte doit accepter.
+        const { number } = await publishTermsAsOperator(testApp.database);
+        return () => post(m, '/me/terms/acceptance', { version: number });
+      },
+    },
     {
       route: 'GET /me/verification',
       expected: [200, null],

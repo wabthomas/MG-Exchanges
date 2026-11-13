@@ -82,6 +82,15 @@ docker build -f infrastructure/docker/api.Dockerfile --target migrator -t mgx-ap
 Les migrations doivent donc rester compatibles avec la version précédente du code le temps
 de la bascule (schéma « étendre, migrer, contracter »).
 
+> **Exception : la migration `terms_of_use` (conditions d'utilisation).** Elle **renomme**
+> une colonne de `users` (`terms_accepted_at` devient `registered_at`) : une fois appliquée,
+> la version précédente de l'API ne lit plus aucun compte. **Arrêter l'API avant de migrer**,
+> puis démarrer la nouvelle version — une courte interruption, admise parce qu'aucun
+> environnement n'est encore en service. Pour la même raison, **revenir à l'image
+> précédente n'est plus possible une fois cette migration appliquée**, sauf à restaurer la
+> base. Sans objet pour une base neuve. La règle ci-dessus vaut de nouveau pour les
+> migrations suivantes.
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -257,9 +266,69 @@ production, quel que soit l'environnement.
 se connecter, puis `POST /api/v1/me/mfa/totp/enroll` et `POST /api/v1/me/mfa/totp/confirm`
 (voir `API.md`). Tant que ce n'est pas fait, toute route du back-office répond
 `403 MFA_ENROLLMENT_REQUIRED`. Conserver les codes de secours en lieu sûr. Le compte peut
-ensuite ouvrir les fonctionnalités
+ensuite publier les conditions d'utilisation (section suivante), ouvrir les fonctionnalités
 (`PUT /api/v1/admin/system-settings/features.registration`…) et demander l'attribution du
 rôle `support` aux agents (`POST /api/v1/admin/role-changes`).
+
+## Conditions d'utilisation
+
+**Avant d'ouvrir l'inscription, publier la version 1.** Tant qu'aucune version n'est publiée,
+`POST /auth/register` répond `503` ; dès qu'elle l'est, **tout compte existant doit
+l'accepter** avant de continuer — personnel compris, pour ses routes de client (le back-office,
+lui, reste ouvert). Le texte n'est pas fourni par le dépôt : il revient au propriétaire et à
+son conseil.
+
+**Publier est définitif.** Une version ne se modifie pas et ne se retire pas ; une erreur se
+corrige en publiant la version suivante. Relire le fichier avant de lancer la commande.
+
+Deux moyens, mêmes règles (`API.md`, « Conditions d'utilisation : publication ») :
+
+- le **back-office**, `POST /api/v1/admin/terms/versions`, par un administrateur ;
+- l'**outil en ligne de commande**, sur le serveur, avec le **rôle propriétaire** de la base —
+  le rôle même qui a exécuté les migrations. Il sert à installer la première version avant
+  l'ouverture, ou à publier sans back-office. Avec le rôle de l'API, la base refuse.
+
+```bash
+sha256sum conditions-fr.md        # à comparer avec l'empreinte que l'outil affichera
+
+# poste de développement (DATABASE_MIGRATION_URL lue dans apps/api/.env)
+pnpm build && pnpm terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr ./conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+
+# pile conteneurisée : le dossier des textes est monté en lecture seule dans l'image de migration
+docker compose --profile app run --rm --volume "$PWD/conditions:/terms:ro" \
+  migrate node dist/cli/main.js terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr /terms/conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+```
+
+- `--number` : le numéro de la version en vigueur plus un (`1` pour la première). Tout autre
+  numéro est refusé, et l'outil rappelle celui qui est attendu : une commande relancée par
+  mégarde ne publie pas deux fois.
+- `--requires-acceptance yes|no` : la règle de cette version — `yes`, chaque compte doit
+  l'accepter ; `no`, elle est seulement signalée. La version 1 exige `yes`.
+- `--fr <fichier>` et `--fr-summary <texte>` sont obligatoires ; `--en <fichier>` et
+  `--en-summary <texte>` vont ensemble ou pas du tout. Texte brut ou Markdown, **en UTF-8** :
+  un fichier dans un autre encodage est refusé. 200 000 caractères au plus par texte.
+- Un chemin relatif s'entend depuis le dossier où la commande est lancée (avec
+  `pnpm --dir <dossier>`, depuis ce dossier-là). Si un fichier est introuvable, l'outil nomme
+  le chemin complet qu'il a cherché, et ne publie rien.
+- `--reason` : la justification, écrite au journal d'audit (10 à 500 caractères).
+- L'outil affiche le numéro publié, l'heure et **l'empreinte SHA-256 de chaque texte
+  conservé** : elle doit être celle de `sha256sum`. Si le fichier commençait par une marque
+  d'ordre des octets (certains éditeurs Windows en placent une), l'outil la retire et le dit :
+  l'empreinte affichée est alors celle du texte sans ces trois octets.
+- Codes de sortie : `0` publié ; `1` rien n'a été publié, la commande est à corriger (option,
+  fichier, numéro, rôle de base) ; `2` échec technique (base injoignable…) — vérifier avec
+  `GET /api/v1/terms/current` avant de relancer.
+- Dans la pile conteneurisée, le dossier monté et ses fichiers doivent être lisibles par
+  l'utilisateur de l'image (`node`, uid 1000) : `chmod -R a+rX conditions`.
+- Vérifier ensuite : `curl -s https://…/api/v1/terms/current | jq '{number, sha256}'`.
+
+> La commande `pnpm terms:publish` et l'outil dans l'image de migration ont été exécutés hors
+> Docker (voir l'avertissement en tête). La commande `docker compose run --volume …`
+> ci-dessus, elle, n'a pas été exécutée.
 
 ## Notifications
 
@@ -278,7 +347,8 @@ Définir `SMTP_HOST` suffit à activer l'envoi. La connexion est toujours chiffr
 pré-production et en production, et le certificat du serveur toujours vérifié (un relais
 interne signé par une autorité privée se déclare à Node.js par `NODE_EXTRA_CA_CERTS`).
 
-Avant d'ouvrir l'inscription :
+Avant d'ouvrir l'inscription (et après avoir publié la version 1 des conditions
+d'utilisation, voir plus haut) :
 
 1. **Autoriser le domaine expéditeur** chez le prestataire (enregistrements SPF et DKIM, puis
    DMARC). Sans cela, les messages partent mais finissent en indésirables.
@@ -330,17 +400,21 @@ attribution de `X-Request-Id` et transmission de l'adresse réelle du client (un
 `X-Forwarded-For` fourni par le client est écrasé). Seuls `/api/` et `/health/live` sont
 relayés ; `/health/ready` est réservée au réseau interne.
 
-Les corps sont bornés à 128 Ko, sauf sur **une** route : l'envoi d'une pièce de vérification
-(6 Mio). Le fichier y est transmis à l'API au fil de l'eau, **sans copie sur le disque du
-proxy**, avec au plus quatre envois simultanés par adresse.
+Les corps sont bornés à 128 Ko, sauf sur **deux** routes, où ils sont transmis à l'API au fil
+de l'eau, **sans copie sur le disque du proxy** — une requête sans droit est ainsi refusée
+par l'API avant que son contenu n'ait été reçu :
+
+- l'envoi d'une pièce de vérification (6 Mio), avec au plus quatre envois simultanés par
+  adresse ;
+- la publication des conditions d'utilisation (1 100 Ko ; l'API, elle, s'arrête à 1 Mio).
 
 **Aucune réponse de l'API n'est copiée sur le disque du proxy non plus**
 (`proxy_max_temp_file_size 0`) : une réponse plus grande que ses tampons — une pièce
 téléchargée par un examinateur, la copie des données d'un compte — est relayée au rythme du
 client, depuis la mémoire. Une pièce d'identité ne passe donc en clair par aucun fichier
 temporaire, dans un sens comme dans l'autre. Un proxy ou un répartiteur placé devant Nginx
-doit admettre des corps de 6 Mio sur la route d'envoi, et ne rien mettre en tampon sur
-disque — ni les envois, ni les réponses.
+doit admettre des corps de 6 Mio sur la route d'envoi et de 1 100 Ko sur la route de
+publication, et ne rien mettre en tampon sur disque — ni les envois, ni les réponses.
 
 Les erreurs que Nginx produit lui-même (route non relayée, corps trop volumineux, limitation
 de débit, API injoignable) sont renvoyées au format d'erreur de l'API (voir `API.md`). Leur
@@ -366,13 +440,17 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
 2. **docker** — validation de la configuration Compose, construction des images, démarrage
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
    à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
-   activation de sa validation en deux étapes, ouverture de l'inscription, inscription,
-   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office,
+   activation de sa validation en deux étapes, ouverture de l'inscription, **publication
+   des conditions d'utilisation** — un texte de 185 Ko relu à l'octet près à travers le
+   proxy, refus au-delà des limites —, inscription, vérification, connexion, contrôle des
+   droits, connexion en deux étapes, back-office, **nouvelle version à accepter** — le
+   compte est arrêté, accepte, reprend —,
    **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
    maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
-   acceptation), contrôle que le volume ne contient que des pièces chiffrées, puis contrôle
-   de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme créée par le
-   script d'initialisation.
+   acceptation, puis copie des données et clôture du compte), contrôle que le volume
+   ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
+   sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
+   propriétaire et la base fantôme créée par le script d'initialisation.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.

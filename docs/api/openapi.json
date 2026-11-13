@@ -220,7 +220,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -400,7 +400,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -453,7 +453,7 @@
     },
     "/api/v1/auth/register": {
       "post": {
-        "description": "Creates an individual account and e-mails a 6-digit verification code. The account cannot sign in until the address is verified. Signing up again with an address whose sign-up was never completed replaces it entirely. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account. Requires the `registration` feature to be open.",
+        "description": "Creates an individual account and e-mails a 6-digit verification code. The account cannot sign in until the address is verified. Signing up again with an address whose sign-up was never completed replaces it entirely. The answer is the same whether or not an account exists for this address, so that the endpoint cannot be used to find out who has an account.\n\nSigning up accepts the terms of use in force: `acceptedTermsVersion` is the `number` of the version the person was shown (`GET /terms/current`). If another version has been published since, the request is refused (`409 TERMS_VERSION_NOT_CURRENT`): show the current version and try again. Until a first version is published, nobody can sign up (`503 SERVICE_UNAVAILABLE`).\n\nRequires the `registration` feature to be open.",
         "operationId": "AuthController_register_v1",
         "parameters": [],
         "requestBody": {
@@ -486,18 +486,17 @@
                       "en"
                     ]
                   },
-                  "acceptTerms": {
-                    "type": "boolean",
-                    "enum": [
-                      true
-                    ]
+                  "acceptedTermsVersion": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 999999999
                   }
                 },
                 "required": [
                   "email",
                   "password",
                   "countryCode",
-                  "acceptTerms"
+                  "acceptedTermsVersion"
                 ],
                 "additionalProperties": false
               }
@@ -545,7 +544,17 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -651,7 +660,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -742,7 +751,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -935,7 +944,8 @@
                                   "roles.manage",
                                   "kyc.read",
                                   "kyc.review",
-                                  "kyc.revoke"
+                                  "kyc.revoke",
+                                  "terms.publish"
                                 ]
                               }
                             },
@@ -970,6 +980,9 @@
                                 }
                               ]
                             },
+                            "termsAcceptanceRequired": {
+                              "type": "boolean"
+                            },
                             "createdAt": {
                               "type": "string",
                               "format": "date-time",
@@ -990,6 +1003,7 @@
                             "permissions",
                             "secondFactorEnabled",
                             "verificationLevel",
+                            "termsAcceptanceRequired",
                             "createdAt"
                           ],
                           "additionalProperties": false
@@ -1065,7 +1079,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1241,7 +1255,8 @@
                               "roles.manage",
                               "kyc.read",
                               "kyc.review",
-                              "kyc.revoke"
+                              "kyc.revoke",
+                              "terms.publish"
                             ]
                           }
                         },
@@ -1276,6 +1291,9 @@
                             }
                           ]
                         },
+                        "termsAcceptanceRequired": {
+                          "type": "boolean"
+                        },
                         "createdAt": {
                           "type": "string",
                           "format": "date-time",
@@ -1296,6 +1314,7 @@
                         "permissions",
                         "secondFactorEnabled",
                         "verificationLevel",
+                        "termsAcceptanceRequired",
                         "createdAt"
                       ],
                       "additionalProperties": false
@@ -1735,7 +1754,7 @@
     },
     "/api/v1/me": {
       "get": {
-        "description": "The signed-in account, with its back-office roles and permissions if any.",
+        "description": "The signed-in account, with its back-office roles and permissions if any. `termsAcceptanceRequired` tells whether the account must accept the terms of use in force before continuing (see `GET /me/terms`).",
         "operationId": "MeController_me_v1",
         "parameters": [],
         "responses": {
@@ -1812,7 +1831,8 @@
                           "roles.manage",
                           "kyc.read",
                           "kyc.review",
-                          "kyc.revoke"
+                          "kyc.revoke",
+                          "terms.publish"
                         ]
                       }
                     },
@@ -1847,6 +1867,9 @@
                         }
                       ]
                     },
+                    "termsAcceptanceRequired": {
+                      "type": "boolean"
+                    },
                     "createdAt": {
                       "type": "string",
                       "format": "date-time",
@@ -1867,6 +1890,7 @@
                     "permissions",
                     "secondFactorEnabled",
                     "verificationLevel",
+                    "termsAcceptanceRequired",
                     "createdAt"
                   ],
                   "additionalProperties": false
@@ -2314,7 +2338,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2414,7 +2438,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2504,7 +2528,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2610,7 +2634,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2749,6 +2773,16 @@
           },
           "401": {
             "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -2990,6 +3024,16 @@
               }
             }
           },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "429": {
             "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
             "content": {
@@ -3087,8 +3131,18 @@
               }
             }
           },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3188,8 +3242,18 @@
               }
             }
           },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3297,7 +3361,8 @@
                               "IDENTITY_VERIFICATION_REVOKED",
                               "DATA_EXPORTED",
                               "DATA_EXPORT_FAILED",
-                              "ACCOUNT_CLOSURE_FAILED"
+                              "ACCOUNT_CLOSURE_FAILED",
+                              "TERMS_ACCEPTED"
                             ]
                           },
                           "occurredAt": {
@@ -3436,7 +3501,7 @@
                     "formatVersion": {
                       "type": "number",
                       "enum": [
-                        1
+                        2
                       ]
                     },
                     "generatedAt": {
@@ -3496,11 +3561,6 @@
                           "format": "date-time",
                           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                         },
-                        "termsAcceptedAt": {
-                          "type": "string",
-                          "format": "date-time",
-                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                        },
                         "roles": {
                           "type": "array",
                           "items": {
@@ -3519,7 +3579,6 @@
                         "accountType",
                         "status",
                         "createdAt",
-                        "termsAcceptedAt",
                         "roles"
                       ],
                       "additionalProperties": false
@@ -3726,7 +3785,8 @@
                                   "IDENTITY_VERIFICATION_REVOKED",
                                   "DATA_EXPORTED",
                                   "DATA_EXPORT_FAILED",
-                                  "ACCOUNT_CLOSURE_FAILED"
+                                  "ACCOUNT_CLOSURE_FAILED",
+                                  "TERMS_ACCEPTED"
                                 ]
                               },
                               "occurredAt": {
@@ -4165,6 +4225,38 @@
                         "cases"
                       ],
                       "additionalProperties": false
+                    },
+                    "terms": {
+                      "type": "object",
+                      "properties": {
+                        "acceptances": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 999999999
+                              },
+                              "acceptedAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "version",
+                              "acceptedAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "acceptances"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -4175,7 +4267,8 @@
                     "security",
                     "sessions",
                     "activity",
-                    "verification"
+                    "verification",
+                    "terms"
                   ],
                   "additionalProperties": false
                 }
@@ -4341,7 +4434,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4379,6 +4472,634 @@
         "summary": "Close my account",
         "tags": [
           "Account"
+        ]
+      }
+    },
+    "/api/v1/terms/current": {
+      "get": {
+        "description": "The latest published version, with its text exactly as it was published and the SHA-256 digest of that text. Its `number` is what registration (`acceptedTermsVersion`) and `POST /me/terms/acceptance` (`version`) expect. Answers `404` until a first version is published.",
+        "operationId": "TermsController_current_v1",
+        "parameters": [
+          {
+            "name": "locale",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fr",
+                "en"
+              ],
+              "default": "fr"
+            },
+            "description": "Language wanted. A version that was not published in this language is served in French — the French text prevails; `locale` in the response tells which one was served."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 999999999
+                    },
+                    "publishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "requiresAcceptance": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "locales": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "fr",
+                          "en"
+                        ]
+                      }
+                    },
+                    "locale": {
+                      "type": "string",
+                      "enum": [
+                        "fr",
+                        "en"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "publishedAt",
+                    "requiresAcceptance",
+                    "current",
+                    "locales",
+                    "locale",
+                    "summary",
+                    "body",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Read the terms of use in force",
+        "tags": [
+          "Terms of use"
+        ]
+      }
+    },
+    "/api/v1/terms/versions": {
+      "get": {
+        "description": "Most recent first, without their text: number, publication date, whether the version had to be accepted, and the summary of what it changed. At most the 100 most recent versions.",
+        "operationId": "TermsController_list_v1",
+        "parameters": [
+          {
+            "name": "locale",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fr",
+                "en"
+              ],
+              "default": "fr"
+            },
+            "description": "Language wanted. A version that was not published in this language is served in French — the French text prevails; `locale` in the response tells which one was served."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 999999999
+                          },
+                          "publishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "requiresAcceptance": {
+                            "type": "boolean"
+                          },
+                          "current": {
+                            "type": "boolean"
+                          },
+                          "locales": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "fr",
+                                "en"
+                              ]
+                            }
+                          },
+                          "locale": {
+                            "type": "string",
+                            "enum": [
+                              "fr",
+                              "en"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "number",
+                          "publishedAt",
+                          "requiresAcceptance",
+                          "current",
+                          "locales",
+                          "locale",
+                          "summary"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "versions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "summary": "List the published versions of the terms of use",
+        "tags": [
+          "Terms of use"
+        ]
+      }
+    },
+    "/api/v1/terms/versions/{number}": {
+      "get": {
+        "description": "A version, in force or superseded, with its text. A published version never changes: what an account accepted remains readable here.",
+        "operationId": "TermsController_version_v1",
+        "parameters": [
+          {
+            "name": "number",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^[1-9]\\d{0,8}$"
+            }
+          },
+          {
+            "name": "locale",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "fr",
+                "en"
+              ],
+              "default": "fr"
+            },
+            "description": "Language wanted. A version that was not published in this language is served in French — the French text prevails; `locale` in the response tells which one was served."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 999999999
+                    },
+                    "publishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "requiresAcceptance": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "locales": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "fr",
+                          "en"
+                        ]
+                      }
+                    },
+                    "locale": {
+                      "type": "string",
+                      "enum": [
+                        "fr",
+                        "en"
+                      ]
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "publishedAt",
+                    "requiresAcceptance",
+                    "current",
+                    "locales",
+                    "locale",
+                    "summary",
+                    "body",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Read one version of the terms of use",
+        "tags": [
+          "Terms of use"
+        ]
+      }
+    },
+    "/api/v1/me/terms": {
+      "get": {
+        "description": "The version in force, the latest version the account accepted, and whether it must accept the version in force before continuing (`acceptanceRequired`). While it must, most routes of the account answer `403 TERMS_ACCEPTANCE_REQUIRED`: only signing out, reading `GET /me`, the security settings (password, sessions, two-step verification), the activity history, the copy of the data, closing the account and these two routes remain available.",
+        "operationId": "MyTermsController_status_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999999999
+                        },
+                        "acceptedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "acceptedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "acceptanceRequired": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999999999
+                        },
+                        "publishedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "requiresAcceptance": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "publishedAt",
+                        "requiresAcceptance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "accepted",
+                    "acceptanceRequired",
+                    "current"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Where my account stands with the terms of use",
+        "tags": [
+          "Terms of use"
+        ]
+      }
+    },
+    "/api/v1/me/terms/acceptance": {
+      "post": {
+        "description": "`version` is the number of the text the holder was shown (`GET /terms/current`). It must be the version in force: otherwise `409 TERMS_VERSION_NOT_CURRENT` — read the current version, show it, and try again. Accepting the same version twice changes nothing: the first acceptance and its date stand. The acceptance is recorded in the activity history with the digest of the accepted text.",
+        "operationId": "MyTermsController_accept_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 999999999
+                  }
+                },
+                "required": [
+                  "version"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accepted": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999999999
+                        },
+                        "acceptedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "acceptedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "acceptanceRequired": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "number": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 999999999
+                        },
+                        "publishedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        },
+                        "requiresAcceptance": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "number",
+                        "publishedAt",
+                        "requiresAcceptance"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "accepted",
+                    "acceptanceRequired",
+                    "current"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accept the terms of use in force",
+        "tags": [
+          "Terms of use"
         ]
       }
     },
@@ -4540,7 +5261,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4712,7 +5433,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4824,11 +5545,6 @@
                         "fr",
                         "en"
                       ]
-                    },
-                    "termsAcceptedAt": {
-                      "type": "string",
-                      "format": "date-time",
-                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
                     },
                     "updatedAt": {
                       "type": "string",
@@ -4980,6 +5696,40 @@
                       "minimum": 0,
                       "maximum": 9007199254740991
                     },
+                    "terms": {
+                      "type": "object",
+                      "properties": {
+                        "accepted": {
+                          "nullable": true,
+                          "type": "object",
+                          "properties": {
+                            "number": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 999999999
+                            },
+                            "acceptedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                            }
+                          },
+                          "required": [
+                            "number",
+                            "acceptedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "acceptanceRequired": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "accepted",
+                        "acceptanceRequired"
+                      ],
+                      "additionalProperties": false
+                    },
                     "closure": {
                       "nullable": true,
                       "type": "object",
@@ -5053,12 +5803,12 @@
                     "secondFactorEnabled",
                     "createdAt",
                     "locale",
-                    "termsAcceptedAt",
                     "updatedAt",
                     "profile",
                     "secondFactor",
                     "verification",
                     "activeSessions",
+                    "terms",
                     "closure"
                   ],
                   "additionalProperties": false
@@ -5087,7 +5837,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5268,7 +6018,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5288,7 +6038,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5455,7 +6205,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5475,7 +6225,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5586,7 +6336,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5689,7 +6439,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5709,7 +6459,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5879,7 +6629,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5899,7 +6649,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -5976,7 +6726,8 @@
                                 "roles.manage",
                                 "kyc.read",
                                 "kyc.review",
-                                "kyc.revoke"
+                                "kyc.revoke",
+                                "terms.publish"
                               ]
                             }
                           },
@@ -6017,7 +6768,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6273,7 +7024,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6513,7 +7264,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6523,7 +7274,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6745,7 +7496,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -6986,7 +7737,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7006,7 +7757,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7239,7 +7990,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7259,7 +8010,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7471,7 +8222,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7491,7 +8242,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -7517,6 +8268,468 @@
           }
         ],
         "summary": "Cancel my role change request",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/terms/versions": {
+      "get": {
+        "description": "Most recent first (at most 100), without their text: who published each version and when, its rule, the length and SHA-256 digest of each text, and how many open accounts accepted it. `publishedBy` is `null` for a version installed from the command line of the server. The texts themselves are public: `GET /terms/versions/{number}`. Requires `terms.publish`.",
+        "operationId": "AdminTermsController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "versions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "number": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 999999999
+                          },
+                          "publishedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "publishedBy": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "requiresAcceptance": {
+                            "type": "boolean"
+                          },
+                          "current": {
+                            "type": "boolean"
+                          },
+                          "fr": {
+                            "type": "object",
+                            "properties": {
+                              "summary": {
+                                "type": "string"
+                              },
+                              "length": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "summary",
+                              "length",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "en": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "summary": {
+                                "type": "string"
+                              },
+                              "length": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "exclusiveMinimum": true,
+                                "maximum": 9007199254740991
+                              },
+                              "sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "summary",
+                              "length",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "acceptances": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "number",
+                          "publishedAt",
+                          "publishedBy",
+                          "requiresAcceptance",
+                          "current",
+                          "fr",
+                          "en",
+                          "acceptances"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "versions"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the versions of the terms of use",
+        "tags": [
+          "Administration"
+        ]
+      },
+      "post": {
+        "description": "**Permanent.** A published version is never changed nor withdrawn: correcting a text means publishing the next version. It is in force at once.\n\n`number` must be the number of the version in force plus one (`1` for the first): a request sent twice, or prepared from an outdated state, is refused (`409`) instead of creating one version too many. `requiresAcceptance` is the rule of this version: `true` — every account must accept it before continuing (see `GET /me/terms`); `false` — it is only shown as the version in force, and accounts that accepted an earlier version are not interrupted. The first version always requires acceptance, and a new registration always accepts the version in force.\n\nThe French text is mandatory and prevails; `en` is an optional translation. Texts are plain text or Markdown — the API does not interpret them — and are stored exactly as received, at most 200000 characters each, in a request of at most 1048576 bytes of valid UTF-8. The response gives the SHA-256 digest of each stored text: compare it with the digest of the file that was meant to be published. No e-mail is sent to account holders.\n\nThe mandatory `reason` is written to the audit log. Requires `terms.publish`.",
+        "operationId": "AdminTermsController_publish_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 999999999
+                  },
+                  "requiresAcceptance": {
+                    "type": "boolean"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  },
+                  "fr": {
+                    "type": "object",
+                    "properties": {
+                      "summary": {
+                        "type": "string",
+                        "maxLength": 1000,
+                        "allOf": [
+                          {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[\\n\\r\\t]|[^\\p{Cc}\\p{Cs}])*$"
+                          }
+                        ]
+                      },
+                      "body": {
+                        "type": "string",
+                        "maxLength": 200000,
+                        "allOf": [
+                          {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[\\n\\r\\t]|[^\\p{Cc}\\p{Cs}])*$"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "summary",
+                      "body"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "en": {
+                    "type": "object",
+                    "properties": {
+                      "summary": {
+                        "type": "string",
+                        "maxLength": 1000,
+                        "allOf": [
+                          {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[\\n\\r\\t]|[^\\p{Cc}\\p{Cs}])*$"
+                          }
+                        ]
+                      },
+                      "body": {
+                        "type": "string",
+                        "maxLength": 200000,
+                        "allOf": [
+                          {
+                            "type": "string",
+                            "pattern": "\\S"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^(?:[\\n\\r\\t]|[^\\p{Cc}\\p{Cs}])*$"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "summary",
+                      "body"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "number",
+                  "requiresAcceptance",
+                  "reason",
+                  "fr"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "number": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 999999999
+                    },
+                    "publishedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "publishedBy": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "requiresAcceptance": {
+                      "type": "boolean"
+                    },
+                    "current": {
+                      "type": "boolean"
+                    },
+                    "fr": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "length": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "length",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "en": {
+                      "nullable": true,
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string"
+                        },
+                        "length": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "exclusiveMinimum": true,
+                          "maximum": 9007199254740991
+                        },
+                        "sha256": {
+                          "type": "string",
+                          "pattern": "^[0-9a-f]{64}$"
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "length",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "acceptances": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "number",
+                    "publishedAt",
+                    "publishedBy",
+                    "requiresAcceptance",
+                    "current",
+                    "fr",
+                    "en",
+                    "acceptances"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "The request body took too long to arrive (`REQUEST_TIMEOUT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The request body is too large (`PAYLOAD_TOO_LARGE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The content type of the request body is not accepted (`UNSUPPORTED_MEDIA_TYPE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Publish a new version of the terms of use",
         "tags": [
           "Administration"
         ]
@@ -7695,7 +8908,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8217,7 +9430,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8227,7 +9440,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8750,7 +9963,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -8760,7 +9973,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9245,7 +10458,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9255,7 +10468,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9694,7 +10907,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9784,7 +10997,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9804,7 +11017,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10281,7 +11494,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10311,7 +11524,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10790,7 +12003,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -10810,7 +12023,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11249,7 +12462,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11269,7 +12482,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11511,7 +12724,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -12191,7 +13404,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -12313,7 +13526,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13042,7 +14255,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13062,7 +14275,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13794,7 +15007,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13814,7 +15027,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -14525,7 +15738,7 @@
             }
           },
           "403": {
-            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`).",
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -14545,7 +15758,7 @@
             }
           },
           "409": {
-            "description": "The request conflicts with the current state of the resource (`CONFLICT`).",
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -14918,11 +16131,13 @@
               "EMAIL_NOT_VERIFIED",
               "ACCOUNT_DISABLED",
               "MFA_ENROLLMENT_REQUIRED",
+              "TERMS_ACCEPTANCE_REQUIRED",
               "NOT_FOUND",
               "METHOD_NOT_ALLOWED",
               "NOT_ACCEPTABLE",
               "REQUEST_TIMEOUT",
               "CONFLICT",
+              "TERMS_VERSION_NOT_CURRENT",
               "PAYLOAD_TOO_LARGE",
               "UNSUPPORTED_MEDIA_TYPE",
               "UNPROCESSABLE_ENTITY",

@@ -85,7 +85,7 @@ describe('Vérification d’identité — règles portées par la base de donné
   async function insertUser(db: pg.Client, status = 'ACTIVE'): Promise<string> {
     sequence += 1;
     const result = await db.query<{ id: string }>(
-      `INSERT INTO users (email, country_code, terms_accepted_at, status, email_verified_at)
+      `INSERT INTO users (email, country_code, registered_at, status, email_verified_at)
        VALUES ($1, 'CD', now(), $2::user_status, now())
        RETURNING id`,
       [`kyc${String(sequence)}@example.cd`, status],

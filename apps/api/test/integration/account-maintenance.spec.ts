@@ -69,7 +69,7 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
         email: `maintenance${String(sequence)}@example.cd`,
         countryCode: 'CD',
         status,
-        termsAcceptedAt: registeredAt,
+        registeredAt: registeredAt,
         emailVerifiedAt: status === 'PENDING_VERIFICATION' ? null : registeredAt,
         credential: { create: { passwordHash: ARGON2_HASH } },
       },
@@ -144,7 +144,12 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
     expect(await exists.session(session)).toBe(true);
   });
 
-  it('une inscription jamais vérifiée disparaît après sept jours, avec son secret et ses codes ; un compte, jamais', async () => {
+  /** L'acceptation des conditions d'utilisation qu'enregistre toute inscription. */
+  const acceptTerms = (userId: string) =>
+    prisma.termsAcceptance.create({ data: { userId, versionNumber: 1 } });
+  const acceptances = (userId: string) => prisma.termsAcceptance.count({ where: { userId } });
+
+  it('une inscription jamais vérifiée disparaît après sept jours, avec son secret, ses codes et son acceptation des conditions ; un compte, jamais', async () => {
     const limit = RETENTION.unverifiedRegistrationMs;
     expect(limit).toBe(7 * DAY_MS);
     const abandoned = await createUser('PENDING_VERIFICATION', ago(limit + MINUTE_MS));
@@ -152,6 +157,9 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
     const recent = await createUser('PENDING_VERIFICATION', ago(limit - MINUTE_MS));
     const oldAccount = await createUser('ACTIVE', ago(400 * DAY_MS));
     const oldSuspended = await createUser('SUSPENDED', ago(400 * DAY_MS));
+    for (const user of [abandoned, recent, oldAccount]) {
+      await acceptTerms(user);
+    }
 
     const report = await maintenance.run();
     expect(report).toMatchObject({ unverifiedRegistrations: 1, failures: 0 });
@@ -159,6 +167,9 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
     expect(await exists.user(abandoned)).toBe(false);
     expect(await prisma.userCredential.count({ where: { userId: abandoned } })).toBe(0);
     expect(await exists.challenge(abandonedCode)).toBe(false);
+    expect(await acceptances(abandoned)).toBe(0);
+    expect(await acceptances(recent)).toBe(1);
+    expect(await acceptances(oldAccount)).toBe(1);
     expect(await exists.user(recent)).toBe(true);
     expect(await exists.user(oldAccount)).toBe(true);
     expect(await exists.user(oldSuspended)).toBe(true);
@@ -186,7 +197,7 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
   it('une nouvelle inscription sur la même adresse repousse l’échéance', async () => {
     const limit = RETENTION.unverifiedRegistrationMs;
     const renewed = await createUser('PENDING_VERIFICATION', ago(limit + DAY_MS));
-    await prisma.user.update({ where: { id: renewed }, data: { termsAcceptedAt: ago(DAY_MS) } });
+    await prisma.user.update({ where: { id: renewed }, data: { registeredAt: ago(DAY_MS) } });
 
     expect((await maintenance.run()).unverifiedRegistrations).toBe(0);
     expect(await exists.user(renewed)).toBe(true);
@@ -197,6 +208,7 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
     const stuck = await createUser('PENDING_VERIFICATION', ago(limit + 2 * DAY_MS));
     // Donnée inattendue rattachée à une inscription : la clé étrangère interdit la suppression.
     await prisma.userProfile.create({ data: { userId: stuck, givenName: 'Inattendu' } });
+    await acceptTerms(stuck);
     const purgeable = await createUser('PENDING_VERIFICATION', ago(limit + DAY_MS));
 
     const report = await maintenance.run();
@@ -204,6 +216,7 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
     expect(await exists.user(stuck)).toBe(true);
     // Rien n'a été supprimé à moitié.
     expect(await prisma.userCredential.count({ where: { userId: stuck } })).toBe(1);
+    expect(await acceptances(stuck)).toBe(1);
     expect(await exists.user(purgeable)).toBe(false);
     expect(
       await prisma.auditLog.count({
@@ -549,7 +562,7 @@ describe('Purge périodique des données d’identité (PostgreSQL réel)', () =
         email: `erasure-batch-${String(index)}@example.cd`,
         countryCode: 'CD',
         status: 'ACTIVE' as const,
-        termsAcceptedAt: testClock.now(),
+        registeredAt: testClock.now(),
         emailVerifiedAt: testClock.now(),
       })),
       select: { id: true },

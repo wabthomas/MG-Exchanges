@@ -25,11 +25,21 @@ export const ERROR_CODES = {
   ACCOUNT_DISABLED: { status: 403, title: 'Forbidden' },
   /** Le back-office exige la validation en deux étapes : l'activer, puis réessayer. */
   MFA_ENROLLMENT_REQUIRED: { status: 403, title: 'Forbidden' },
+  /**
+   * Le compte doit accepter la version en vigueur des conditions d'utilisation avant de
+   * continuer : la lire (`GET /terms/current`), puis l'accepter (`POST /me/terms/acceptance`).
+   */
+  TERMS_ACCEPTANCE_REQUIRED: { status: 403, title: 'Forbidden' },
   NOT_FOUND: { status: 404, title: 'Not Found' },
   METHOD_NOT_ALLOWED: { status: 405, title: 'Method Not Allowed' },
   NOT_ACCEPTABLE: { status: 406, title: 'Not Acceptable' },
   REQUEST_TIMEOUT: { status: 408, title: 'Request Timeout' },
   CONFLICT: { status: 409, title: 'Conflict' },
+  /**
+   * La version des conditions d'utilisation désignée n'est pas — ou n'est plus — celle en
+   * vigueur : relire `GET /terms/current`, présenter ce texte, puis recommencer.
+   */
+  TERMS_VERSION_NOT_CURRENT: { status: 409, title: 'Conflict' },
   PAYLOAD_TOO_LARGE: { status: 413, title: 'Content Too Large' },
   UNSUPPORTED_MEDIA_TYPE: { status: 415, title: 'Unsupported Media Type' },
   UNPROCESSABLE_ENTITY: { status: 422, title: 'Unprocessable Content' },

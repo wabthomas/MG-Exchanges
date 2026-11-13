@@ -14,26 +14,32 @@ import {
 } from '../modules/identity/application/administrator-bootstrap.js';
 import { Argon2PasswordHasher } from '../modules/identity/infrastructure/argon2-password-hasher.js';
 import { PrismaUserRepository } from '../modules/identity/infrastructure/prisma-user.repository.js';
+import { publishTermsCommand, TERMS_PUBLISH_USAGE } from './terms-publish.command.js';
 
 /**
  * Outil d'exploitation en ligne de commande — distinct de l'API, qu'il ne démarre pas.
  *
- * `admin:create` crée le premier compte d'administration. Il se connecte avec le **rôle
- * propriétaire** de la base (`DATABASE_MIGRATION_URL`), seul autorisé à attribuer un rôle :
- * l'API, elle, ne le peut pas.
+ * `admin:create` crée le premier compte d'administration ; `terms:publish` publie une version
+ * des conditions d'utilisation à partir de fichiers (voir `terms-publish.command.ts`). Tous
+ * deux se connectent avec le **rôle propriétaire** de la base (`DATABASE_MIGRATION_URL`), seul
+ * autorisé à attribuer un rôle ou à publier sans passer par le back-office : l'API, elle, ne
+ * le peut pas.
  */
-const USAGE = `Usage: node dist/cli/main.js admin:create --email <address> [--country <ISO code>]
+const USAGE = `Usage: node dist/cli/main.js <command> [options]
 
-Creates an administrator account (role "super_admin").
+admin:create --email <address> [--country <ISO code>]
 
-Environment:
-  DATABASE_MIGRATION_URL   PostgreSQL URL of the schema owner role (required)
-  MGX_ADMIN_PASSWORD       password of the new account (required, at least 10 characters)
+  Creates an administrator account (role "super_admin").
 
-Example:
-  read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
-  node dist/cli/main.js admin:create --email admin@example.com
-`;
+  Environment:
+    DATABASE_MIGRATION_URL   PostgreSQL URL of the schema owner role (required)
+    MGX_ADMIN_PASSWORD       password of the new account (required, at least 10 characters)
+
+  Example:
+    read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
+    node dist/cli/main.js admin:create --email admin@example.com
+
+${TERMS_PUBLISH_USAGE}`;
 
 const EXIT_OK = 0;
 const EXIT_USAGE = 1;
@@ -121,6 +127,16 @@ async function main(argv: string[]): Promise<number> {
   const [command, ...args] = argv;
   if (command === 'admin:create') {
     return createAdmin(args);
+  }
+  if (command === 'terms:publish') {
+    return publishTermsCommand(args, {
+      env: process.env,
+      // Lancé par `pnpm --filter`, l'outil s'exécute dans le dossier du paquet : un chemin
+      // relatif s'entend depuis le dossier où la commande a été tapée.
+      cwd: process.env['INIT_CWD'] ?? process.cwd(),
+      out: (line) => process.stdout.write(`${line}\n`),
+      err: (line) => process.stderr.write(`${line}\n`),
+    });
   }
   return fail(USAGE, command === undefined || command === '--help' ? EXIT_OK : EXIT_USAGE);
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  acceptTermsRequestSchema,
   ACCOUNT_CLOSURE_PERMISSION,
   ACTIVITY_TYPES,
   activityQuerySchema,
@@ -50,6 +51,7 @@ import {
   permissionKeySchema,
   PERMISSIONS,
   problemDetailsSchema,
+  publishTermsVersionRequestSchema,
   registerRequestSchema,
   rejectKycCaseRequestSchema,
   rejectRoleChangeRequestSchema,
@@ -61,6 +63,12 @@ import {
   SYSTEM_ROLE_KEYS,
   SYSTEM_ROLES,
   systemStatusSchema,
+  TERMS_BODY_MAX_LENGTH,
+  TERMS_PUBLICATION_MAX_BYTES,
+  TERMS_PUBLICATION_PERMISSION,
+  TERMS_SUMMARY_MAX_LENGTH,
+  termsLocaleQuerySchema,
+  termsVersionNumberParamSchema,
   totpDisableRequestSchema,
   updateProfileRequestSchema,
   updateSystemSettingRequestSchema,
@@ -137,16 +145,26 @@ describe('systemStatusSchema', () => {
 });
 
 describe('contrats d’identité', () => {
-  it('l’inscription exige l’acceptation explicite des conditions et refuse toute propriété inconnue', () => {
+  it('l’inscription exige le numéro de la version des conditions acceptée et refuse toute propriété inconnue', () => {
     const valid = {
       email: ' Jean@Example.com ',
       password: 'correct horse battery',
       countryCode: 'CD',
-      acceptTerms: true,
+      acceptedTermsVersion: 3,
     };
     expect(registerRequestSchema.parse(valid)).toEqual({ ...valid, email: 'jean@example.com' });
 
-    expect(registerRequestSchema.safeParse({ ...valid, acceptTerms: false }).success).toBe(false);
+    const { acceptedTermsVersion: _version, ...withoutVersion } = valid;
+    expect(registerRequestSchema.safeParse(withoutVersion).success).toBe(false);
+    // Une case cochée ne dit pas quel texte a été accepté : seul un numéro de version le dit.
+    expect(registerRequestSchema.safeParse({ ...withoutVersion, acceptTerms: true }).success).toBe(
+      false,
+    );
+    for (const version of [0, -1, 1.5, '3', true, null, 1_000_000_000]) {
+      expect(
+        registerRequestSchema.safeParse({ ...valid, acceptedTermsVersion: version }).success,
+      ).toBe(false);
+    }
     expect(registerRequestSchema.safeParse({ ...valid, role: 'super_admin' }).success).toBe(false);
     expect(registerRequestSchema.safeParse({ ...valid, status: 'ACTIVE' }).success).toBe(false);
     expect(registerRequestSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
@@ -327,6 +345,12 @@ describe('contrats du back-office', () => {
     }
     expect(KYC_REVIEW_PERMISSION).toBe('kyc.review');
     expect(KYC_REVOCATION_PERMISSION).toBe('kyc.revoke');
+    // Publier les conditions d'utilisation engage la plateforme : super_admin seulement.
+    expect(TERMS_PUBLICATION_PERMISSION).toBe('terms.publish');
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.includes(TERMS_PUBLICATION_PERMISSION)).toBe(key === 'super_admin');
+    }
   });
 
   it('la recherche d’un compte prend exactement un identifiant, complet', () => {
@@ -758,5 +782,145 @@ describe('contrats de la vérification d’identité', () => {
   it('délais : justificatif de trois mois au plus, brouillon effacé après trente jours', () => {
     expect(KYC_ADDRESS_PROOF_MAX_AGE_DAYS).toBe(92);
     expect(KYC_DRAFT_RETENTION_DAYS).toBe(30);
+  });
+});
+
+describe('contrats des conditions d’utilisation', () => {
+  const REASON = 'Version validée par le conseil le 12 novembre';
+  const fr = { summary: 'Première version.', body: '# Conditions\n\nArticle 1 — Objet.\n' };
+  const publication = {
+    number: 1,
+    requiresAcceptance: true,
+    reason: REASON,
+    fr,
+  };
+
+  it('une publication désigne son numéro, sa règle et sa justification', () => {
+    expect(publishTermsVersionRequestSchema.parse(publication)).toEqual(publication);
+    const en = { summary: 'First version.', body: '# Terms\n\nArticle 1 — Purpose.\n' };
+    expect(publishTermsVersionRequestSchema.parse({ ...publication, en })).toEqual({
+      ...publication,
+      en,
+    });
+    // La justification est débarrassée de ses espaces superflus ; le texte, jamais.
+    expect(
+      publishTermsVersionRequestSchema.parse({
+        ...publication,
+        reason: `  ${REASON} `,
+        fr: { summary: ' Résumé \n', body: '\n  Texte.  \n\n' },
+      }),
+    ).toEqual({ ...publication, fr: { summary: ' Résumé \n', body: '\n  Texte.  \n\n' } });
+
+    for (const field of ['number', 'requiresAcceptance', 'reason', 'fr']) {
+      const { [field]: _omitted, ...incomplete } = publication as Record<string, unknown>;
+      expect(publishTermsVersionRequestSchema.safeParse(incomplete).success).toBe(false);
+    }
+    for (const override of [
+      { number: 0 },
+      { number: 1.5 },
+      { number: '1' },
+      { requiresAcceptance: 'true' },
+      { requiresAcceptance: 1 },
+      // L'annonce par e-mail n'existe pas : la demander est une erreur, pas un oubli silencieux.
+      { notifyHolders: true },
+      // Neuf caractères : un de moins que le minimum.
+      { reason: 'trop bref' },
+      { reason: 'x'.repeat(501) },
+      { fr: { summary: 'Résumé.' } },
+      { fr: { body: 'Texte.' } },
+      { fr: { summary: '   ', body: 'Texte.' } },
+      { fr: { summary: 'Résumé.', body: ' \n\t ' } },
+      { fr: { summary: 'Résumé.', body: 'nul\u0000' } },
+      { fr: { summary: 'sonnerie\u0007', body: 'Texte.' } },
+      { fr: { summary: 'Résumé.', body: 'Texte.', title: 'Conditions' } },
+      { en: { summary: 'Summary.' } },
+      { en: null },
+      // Une langue que la plateforme ne connaît pas.
+      { sw: fr },
+      { publishedAt: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      expect(
+        publishTermsVersionRequestSchema.safeParse({ ...publication, ...override }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('la première version exige toujours d’être acceptée ; les suivantes, au choix', () => {
+    const informative = { ...publication, requiresAcceptance: false };
+    const refused = publishTermsVersionRequestSchema.safeParse({ ...informative, number: 1 });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues.map((issue) => issue.path.join('.'))).toEqual([
+      'requiresAcceptance',
+    ]);
+    expect(publishTermsVersionRequestSchema.safeParse({ ...publication, number: 1 }).success).toBe(
+      true,
+    );
+    for (const number of [2, 3, 40]) {
+      for (const requiresAcceptance of [true, false]) {
+        expect(
+          publishTermsVersionRequestSchema.safeParse({ ...publication, number, requiresAcceptance })
+            .success,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('le texte et son résumé sont bornés ; la requête entière aussi', () => {
+    expect(TERMS_BODY_MAX_LENGTH).toBe(200_000);
+    expect(TERMS_SUMMARY_MAX_LENGTH).toBe(1000);
+    expect(TERMS_PUBLICATION_MAX_BYTES).toBe(1_048_576);
+
+    const atLimit = { summary: 's'.repeat(1000), body: 'b'.repeat(200_000) };
+    expect(
+      publishTermsVersionRequestSchema.safeParse({ ...publication, fr: atLimit, en: atLimit })
+        .success,
+    ).toBe(true);
+    for (const text of [
+      { ...atLimit, summary: 's'.repeat(1001) },
+      { ...atLimit, body: 'b'.repeat(200_001) },
+    ]) {
+      expect(publishTermsVersionRequestSchema.safeParse({ ...publication, fr: text }).success).toBe(
+        false,
+      );
+      expect(publishTermsVersionRequestSchema.safeParse({ ...publication, en: text }).success).toBe(
+        false,
+      );
+    }
+    // Deux textes de la longueur maximale tiennent dans une requête. Ceux-ci sont sans
+    // caractère accentué : un caractère y vaut un octet.
+    const { reason: _reason, ...fixed } = publication;
+    const largest = { ...fixed, reason: 'r'.repeat(500), fr: atLimit, en: atLimit };
+    expect(JSON.stringify(largest).length).toBeLessThan(TERMS_PUBLICATION_MAX_BYTES / 2);
+  });
+
+  it('une acceptation désigne la version lue, par son numéro', () => {
+    expect(acceptTermsRequestSchema.parse({ version: 2 })).toEqual({ version: 2 });
+    for (const body of [
+      {},
+      { version: 0 },
+      { version: '2' },
+      { version: 2.5 },
+      { version: 2, accept: true },
+      { number: 2 },
+    ]) {
+      expect(acceptTermsRequestSchema.safeParse(body).success).toBe(false);
+    }
+  });
+
+  it('un numéro de version, dans une adresse, s’écrit en chiffres sans zéro de tête', () => {
+    expect(termsVersionNumberParamSchema.parse('1')).toBe(1);
+    expect(termsVersionNumberParamSchema.parse('42')).toBe(42);
+    expect(termsVersionNumberParamSchema.parse('999999999')).toBe(999_999_999);
+    for (const value of ['0', '01', '-1', '1.0', '1e3', ' 1', '1 ', 'current', '', '1000000000']) {
+      expect(termsVersionNumberParamSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('la langue demandée est le français, sauf mention contraire', () => {
+    expect(termsLocaleQuerySchema.parse({})).toEqual({ locale: 'fr' });
+    expect(termsLocaleQuerySchema.parse({ locale: 'en' })).toEqual({ locale: 'en' });
+    for (const query of [{ locale: 'sw' }, { locale: 'FR' }, { locale: 'fr', version: '1' }]) {
+      expect(termsLocaleQuerySchema.safeParse(query).success).toBe(false);
+    }
   });
 });

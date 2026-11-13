@@ -41,7 +41,9 @@ attribution (`user_roles`) ne change que de deux façons : l'outil d'amorçage e
 commande, exécuté avec le rôle propriétaire ; ou l'**approbation d'une demande de changement
 de rôle**, que la base applique elle-même (voir `role_change_requests`). L'API n'écrit donc
 jamais directement une attribution : chacune résulte d'une demande approuvée, qui en reste la
-trace ineffaçable. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
+trace ineffaçable. De même, une version des conditions d'utilisation **sans auteur** ne
+s'écrit qu'avec le rôle propriétaire (outil `terms:publish`) : l'API, elle, doit désigner un
+membre du personnel habilité, que la base vérifie. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
 elle ne peut pas vérifier que ce sont bien eux qui agissent (limite décrite dans l'ADR 0018).
 
 En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
@@ -110,16 +112,16 @@ sert la file du relais.
 
 ### `users` — comptes
 
-| Colonne                      | Type           | Notes                                                              |
-| ---------------------------- | -------------- | ------------------------------------------------------------------ |
-| `id`                         | `uuid`         | UUID v7                                                            |
-| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                           |
-| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`            |
-| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion |
-| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement               |
-| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                             |
-| `locale`                     | `varchar(10)`  | langue des messages                                                |
-| `terms_accepted_at`          | `timestamptz`  | acceptation des conditions d'utilisation                           |
+| Colonne                      | Type           | Notes                                                                                                                                                                                                    |
+| ---------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                         | `uuid`         | UUID v7                                                                                                                                                                                                  |
+| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                                                                                                                                                                 |
+| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`                                                                                                                                                  |
+| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion                                                                                                                                       |
+| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement                                                                                                                                                     |
+| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                                                                                                                                                                   |
+| `locale`                     | `varchar(10)`  | langue des messages                                                                                                                                                                                      |
+| `registered_at`              | `timestamptz`  | date de la demande d'inscription — c'est elle que lit la purge des inscriptions jamais vérifiées. (Avant la migration `terms_of_use` : `terms_accepted_at` ; les acceptations ont désormais leur table.) |
 
 Contraintes : adresse normalisée et bien formée, téléphone E.164, code pays en majuscules,
 **un compte `ACTIVE` a toujours une adresse vérifiée**. Un compte n'est jamais supprimé :
@@ -138,10 +140,13 @@ un compte, est supprimée après 7 jours avec son secret et ses codes.
   (`account_closures`), **sans rôle**, et une fois supprimés son secret, son second facteur,
   ses codes, ses sessions et son profil (`MGX04`) ; **clôturé, il ne se modifie plus**
   (`MGX05`) ;
+- déclencheur `users_closure_leaves_no_terms_acceptance` (fonction
+  `mgx_forbid_closure_with_terms_acceptance()`) : il ne se clôt pas davantage en gardant une
+  acceptation des conditions d'utilisation (`MGX04`) ;
 - déclencheurs `<table>_account_open` (fonction `mgx_forbid_closed_account_rows()`) sur
   `user_credentials`, `user_totp_credentials`, `user_recovery_codes`, `user_sessions`,
-  `verification_challenges`, `user_profiles`, `user_roles` et `kyc_cases` : **rien ne s'ajoute
-  à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
+  `verification_challenges`, `user_profiles`, `user_roles`, `kyc_cases` et
+  `terms_acceptances` : **rien ne s'ajoute à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
   `FOR KEY SHARE` ; la clôture la verrouille en `FOR UPDATE`. Les deux s'excluent : une ligne
   est écrite avant la clôture — qui l'efface, ou échoue — ou attend la clôture et est
   refusée. Le verrou est le plus faible qui convienne : il ne gêne aucune autre écriture du
@@ -272,6 +277,64 @@ Une ligne par compte clôturé, écrite dans la transaction de la clôture.
   entière ou n'est pas** — une trace n'existe que pour un compte clôturé, et un compte
   clôturé n'a plus de dossier de vérification en préparation, en attente ou en vigueur.
 
+### `terms_versions`, `terms_acceptances` — conditions d'utilisation
+
+Les versions publiées des conditions d'utilisation, et qui a accepté laquelle (ADR 0024).
+
+| `terms_versions`                          | Notes                                                                                            |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `number`                                  | clé primaire : 1, 2, 3…, **sans trou** ; la version en vigueur est la plus grande                |
+| `requires_acceptance`                     | la règle de la version : `true`, chaque compte doit l'accepter ; `false`, elle est signalée      |
+| `summary_fr`, `body_fr`, `body_fr_sha256` | résumé, texte et empreinte SHA-256 (hexadécimal) du texte encodé en UTF-8 — le français fait foi |
+| `summary_en`, `body_en`, `body_en_sha256` | traduction anglaise : entière, ou absente (`NULL`)                                               |
+| `published_by`                            | le membre du personnel qui a publié ; `NULL` : publiée par l'outil d'exploitation                |
+| `published_at`                            | **heure de la base**, lue après le verrou de publication : elle croît avec le numéro             |
+
+| `terms_acceptances`         | Notes                                                    |
+| --------------------------- | -------------------------------------------------------- |
+| `user_id`, `version_number` | clé primaire : une acceptation par compte et par version |
+| `accepted_at`               | **heure de la base** au moment de l'écriture             |
+
+- contraintes de `terms_versions` : `number >= 1` ; **la version 1 exige d'être acceptée**
+  (`terms_versions_first_requires_acceptance_check` — nul n'a pu accepter un texte qui
+  n'existait pas) ; textes bornés (résumé 1 000 caractères, texte 200 000), non blancs, sans
+  caractère de contrôle autre que saut de ligne, retour chariot et tabulation, sans marque
+  d'ordre des octets en tête (`terms_versions_fr_text_check`, `…_en_text_check`, fonction
+  `mgx_is_terms_text()`) ; **l'empreinte conservée est celle du texte conservé**
+  (`…_fr_digest_check`, `…_en_digest_check`) : un texte altéré entre l'API et la base ne se
+  publie pas ;
+- déclencheur `terms_versions_enforce` (fonction `mgx_enforce_terms_version()`) :
+  - une publication à la fois (verrou consultatif de transaction) ; **seul le numéro suivant
+    se publie** — ni doublon, ni trou, ni retour en arrière (`MGX07`) ;
+  - **qui publie** : un compte **actif détenant `terms.publish`**, relu au moment de publier
+    (`MGX06`) ; sans auteur (`published_by` `NULL`), seulement le **rôle propriétaire** de la
+    table — celui de l'outil `terms:publish`, jamais celui de l'API (`MGX06`) ;
+  - l'heure de publication est celle de la base, quelle que soit celle qu'on lui donne ;
+- **une version publiée ne change plus** : ni `UPDATE`, ni `DELETE`, ni `TRUNCATE`
+  (déclencheurs `terms_versions_immutable_row`, `…_immutable_truncate`, erreur `MGX01`) — même
+  pour le propriétaire du schéma ; le rôle applicatif n'en a d'ailleurs pas le privilège ;
+- déclencheur `terms_acceptances_enforce` (fonction `mgx_enforce_terms_acceptance()`) :
+  - **on n'accepte que la version en vigueur** (`MGX07`) ; n'accepte qu'un compte en cours
+    d'inscription ou actif (`MGX06`) ; l'heure est celle de la base ;
+  - **une acceptation est une preuve** : elle ne s'efface qu'avec le compte — inscription
+    jamais vérifiée (purgée, ou remplacée par une nouvelle inscription), ou clôture **dont la
+    trace est déjà écrite** (`account_closures`) ; dans tout autre cas : `MGX06` ;
+- elle ne se modifie pas et la table ne se vide pas (`terms_acceptances_no_update`,
+  `…_no_truncate`, `MGX01`) ; le rôle applicatif n'a ni `UPDATE` ni `TRUNCATE` ;
+- `terms_acceptances_account_open` : rien ne s'ajoute à un compte clôturé (`MGX05`), comme
+  pour ses autres lignes ; ce déclencheur s'exécute avant `terms_acceptances_enforce` (ordre
+  alphabétique des noms) ;
+- les quatre fonctions ont un **chemin de recherche figé** sur le schéma de l'application,
+  `pg_temp` en dernier : une table temporaire homonyme (`users`, `terms_versions`…) placée par
+  une session ne peut pas répondre à la place des vraies ;
+- index : `terms_acceptances (version_number)` — décompte des acceptations d'une version ;
+- clés étrangères `ON DELETE RESTRICT` : supprimer une inscription jamais vérifiée exige
+  d'effacer d'abord son acceptation.
+
+La règle « ce compte doit-il accepter ? » n'est pas stockée : elle se calcule à chaque requête
+(une lecture, `PrismaTermsRepository.standingOf`) — le compte est ouvert, une version exigeant
+l'acceptation existe, et la dernière version qu'il a acceptée lui est antérieure.
+
 ## Tables (phase 2 — vérification d'identité)
 
 ### `kyc_cases` — dossiers de vérification
@@ -392,32 +455,45 @@ Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** 
 | données initiales : permissions `kyc.read`, `kyc.review`, `kyc.revoke`, rôle `compliance`                                                                                                                                                                                              | `permissions`, `roles`, `role_permissions`               |
 | valeur `ACCOUNT_CLOSED` du type `kyc_case_status` (migration séparée : PostgreSQL interdit d'utiliser une valeur dans la transaction qui l'ajoute)                                                                                                                                     | `kyc_cases`                                              |
 | `users_closed_is_anonymous_check`, `users_reserved_email_domain_check` ; fonction `mgx_enforce_user_closure()`, déclencheur `users_enforce_closure`                                                                                                                                    | `users`                                                  |
-| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                      | huit tables rattachées à un compte (voir `users`)        |
+| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                      | neuf tables rattachées à un compte (voir `users`)        |
 | `account_closures_author_check`, `…_email_check`, `…_phone_check`, `…_schedule_check`, `…_erasure_check`                                                                                                                                                                               | `account_closures`                                       |
 | fonctions `mgx_enforce_account_closure()`, `mgx_check_closure_applied()` ; déclencheurs `account_closures_enforce`, `account_closures_no_truncate`, déclencheur de contrainte différé `account_closures_applied` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires       | `account_closures`                                       |
 | fonction `mgx_kyc_case_erasable()` ; `kyc_cases_lifecycle_check`, `mgx_enforce_kyc_case()` et `mgx_enforce_kyc_document()` **remplacées** (fin d'une vérification à la clôture, effacement)                                                                                            | `kyc_cases`, `kyc_documents`                             |
 | données initiales : permission `users.close`, attribuée à `super_admin` et `compliance`                                                                                                                                                                                                | `permissions`, `role_permissions`, `roles`               |
+| colonne `terms_accepted_at` **renommée** `registered_at` (`RENAME COLUMN`, sans perte : Prisma proposerait de la supprimer puis de la recréer)                                                                                                                                         | `users`                                                  |
+| fonction `mgx_is_terms_text()` ; `terms_versions_number_check`, `…_first_requires_acceptance_check`, `…_fr_text_check`, `…_en_text_check`, `…_fr_digest_check`, `…_en_digest_check`                                                                                                    | `terms_versions`                                         |
+| fonction `mgx_enforce_terms_version()` ; déclencheurs `terms_versions_enforce`, `terms_versions_immutable_row`, `terms_versions_immutable_truncate` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                          | `terms_versions`                                         |
+| fonction `mgx_enforce_terms_acceptance()` ; déclencheurs `terms_acceptances_account_open`, `terms_acceptances_enforce`, `terms_acceptances_no_update`, `terms_acceptances_no_truncate` ; retrait de `UPDATE` et `TRUNCATE` aux rôles non propriétaires                                 | `terms_acceptances`                                      |
+| fonction `mgx_forbid_closure_with_terms_acceptance()` ; déclencheur `users_closure_leaves_no_terms_acceptance`                                                                                                                                                                         | `users`                                                  |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des quatre fonctions de la migration `terms_of_use`                                                                                                                                                                       | —                                                        |
+| données initiales : permission `terms.publish`, attribuée à `super_admin`                                                                                                                                                                                                              | `permissions`, `role_permissions`                        |
 
 Leur présence et leur effet sont vérifiés par les tests d'intégration
 `database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
-`back-office-schema.spec.ts`, `kyc-schema.spec.ts` et `account-closure-schema.spec.ts` (dans
-`apps/api/test/integration/`).
+`back-office-schema.spec.ts`, `kyc-schema.spec.ts`, `account-closure-schema.spec.ts` et
+`terms-schema.spec.ts` (dans `apps/api/test/integration/`).
 
 **Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
 
-| Code    | Signification                                                   |
-| ------- | --------------------------------------------------------------- |
-| `MGX01` | modification ou suppression interdite d'une table en ajout seul |
-| `MGX02` | règle de la double validation d'un changement de rôle enfreinte |
-| `MGX03` | règle du parcours d'un dossier de vérification enfreinte        |
-| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte        |
-| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`    |
+| Code    | Signification                                                                                                                                          |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `MGX01` | modification ou suppression interdite d'une table en ajout seul                                                                                        |
+| `MGX02` | règle de la double validation d'un changement de rôle enfreinte                                                                                        |
+| `MGX03` | règle du parcours d'un dossier de vérification enfreinte                                                                                               |
+| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte                                                                                               |
+| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`                                                                                           |
+| `MGX06` | règle des conditions d'utilisation enfreinte : auteur non habilité à publier, compte qui ne peut pas accepter, acceptation effacée hors des cas permis |
+| `MGX07` | numéro de version qui n'est pas — ou plus — celui attendu : à la publication, le suivant ; à l'acceptation, celui en vigueur                           |
 
 `MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
 une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
 soucier. Les autres sont interceptés par le dépôt (_repository_) du module concerné : les
 contrôles du service auraient dû écarter le cas, de sorte que la réponse est un `409 CONFLICT`
-et l'incident est journalisé.
+et l'incident est journalisé. `MGX07`, lui, est un cas **attendu** — une version publiée
+entre la lecture et l'écriture : l'API répond `409 TERMS_VERSION_NOT_CURRENT` (acceptation,
+inscription) ou `409 CONFLICT` (publication), et le client recommence avec la version en
+vigueur. `MGX06` à la publication signifie que l'auteur a perdu son droit entre le contrôle de
+l'API et l'écriture : `403 FORBIDDEN`.
 
 ## Migrations
 
@@ -470,6 +546,8 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 | `user_totp_credentials`      | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                                                                  |
 | `role_change_requests`       | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                                                         |
 | `user_profiles`              | conservés tant que le compte est ouvert ; **supprimés à la clôture**, comme les sessions, les codes et le second facteur                                                                                                                                        |
+| `terms_versions`             | conservées **indéfiniment** : une version publiée ne se modifie ni ne se retire                                                                                                                                                                                 |
+| `terms_acceptances`          | conservées tant que le compte est ouvert ; **supprimées à la clôture** et avec une inscription jamais vérifiée. La trace de chaque acceptation (version, empreinte du texte, date, adresse IP) reste dans `audit_logs`                                          |
 | `kyc_cases`, `kyc_documents` | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces |
 
 La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file

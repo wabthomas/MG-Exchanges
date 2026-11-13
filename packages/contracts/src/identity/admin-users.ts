@@ -12,6 +12,7 @@ import { ACCOUNT_CLOSURE_GROUNDS, adminAccountClosureSchema } from './account-li
 import { ACCOUNT_TYPES, USER_STATUSES } from './auth.js';
 import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { permissionKeySchema, ROLE_KEY_PATTERN } from './permissions.js';
+import { accountTermsSchema } from './terms.js';
 
 /** Longueur minimale de la justification d'une action du back-office sur un compte. */
 export const ADMIN_ACTION_REASON_MIN_LENGTH = 10;
@@ -92,7 +93,6 @@ export type AdminUserLookupResult = z.infer<typeof adminUserLookupResultSchema>;
 
 export const adminUserDetailSchema = adminUserSummarySchema.extend({
   locale: localeSchema,
-  termsAcceptedAt: isoDateTimeSchema,
   updatedAt: isoDateTimeSchema,
   /**
    * Identité et adresse du titulaire : celles des dossiers de vérification acceptés lorsque
@@ -126,6 +126,8 @@ export const adminUserDetailSchema = adminUserSummarySchema.extend({
   }),
   /** Sessions ouvertes en ce moment. */
   activeSessions: z.number().int().nonnegative(),
+  /** Conditions d'utilisation : dernière version acceptée, et s'il en reste une à accepter. */
+  terms: accountTermsSchema,
   /** Clôture du compte ; `null` tant qu'il n'est pas clôturé. */
   closure: adminAccountClosureSchema.nullable(),
 });

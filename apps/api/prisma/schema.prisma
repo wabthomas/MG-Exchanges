@@ -167,8 +167,9 @@ model User {
   countryCode     String      @map("country_code") @db.Char(2)
   /// Langue des messages adressés à l'utilisateur.
   locale          String      @default("fr") @db.VarChar(10)
-  /// Acceptation des conditions d'utilisation.
-  termsAcceptedAt DateTime    @map("terms_accepted_at") @db.Timestamptz(6)
+  /// Date de la demande d'inscription — la dernière, si une inscription restée inachevée a
+  /// été remplacée. Les conditions d'utilisation acceptées sont dans « terms_acceptances ».
+  registeredAt    DateTime    @map("registered_at") @db.Timestamptz(6)
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -191,6 +192,9 @@ model User {
 
   closure        AccountClosure?  @relation("ClosedAccount")
   closedAccounts AccountClosure[] @relation("AccountCloser")
+
+  termsAcceptances       TermsAcceptance[]
+  publishedTermsVersions TermsVersion[]
 
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
@@ -242,6 +246,60 @@ model AccountClosure {
   // Effacements à faire, par échéance.
   @@index([erasureDueAt])
   @@map("account_closures")
+}
+
+/// Version publiée des conditions d'utilisation.
+///
+/// Les versions se numérotent 1, 2, 3… sans trou ; la plus récente est en vigueur. Une version
+/// publiée est **immuable** : ni modifiée, ni retirée (corriger un texte, c'est publier la
+/// version suivante). La base l'impose elle-même, ainsi que la numérotation, l'heure de la
+/// publication, l'empreinte de chaque texte et le droit de publier — voir la migration
+/// « terms_of_use » et docs/DATABASE.md.
+model TermsVersion {
+  number             Int      @id
+  /// Vrai si chaque titulaire doit accepter cette version avant de continuer à utiliser son
+  /// compte ; faux si elle lui est seulement signalée. La version 1 l'exige toujours.
+  requiresAcceptance Boolean  @map("requires_acceptance")
+  /// Ce qui change dans cette version, en quelques phrases (français).
+  summaryFr          String   @map("summary_fr")
+  /// Texte français : il fait foi. Conservé tel qu'il a été publié, à l'octet près.
+  bodyFr             String   @map("body_fr")
+  /// Empreinte SHA-256 (hexadécimal) du texte français encodé en UTF-8, vérifiée par la base.
+  bodyFrSha256       String   @map("body_fr_sha256") @db.Char(64)
+  /// Traduction anglaise, facultative : résumé, texte et empreinte vont ensemble.
+  summaryEn          String?  @map("summary_en")
+  bodyEn             String?  @map("body_en")
+  bodyEnSha256       String?  @map("body_en_sha256") @db.Char(64)
+  /// Membre du personnel qui a publié la version ; NULL si elle l'a été par l'outil
+  /// d'exploitation en ligne de commande (rôle propriétaire de la base).
+  publishedBy        String?  @map("published_by") @db.Uuid
+  /// Heure de la publication, lue à l'horloge de la base.
+  publishedAt        DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
+
+  publisher   User?             @relation(fields: [publishedBy], references: [id], onDelete: Restrict)
+  acceptances TermsAcceptance[]
+
+  @@map("terms_versions")
+}
+
+/// Acceptation d'une version des conditions d'utilisation par un compte.
+///
+/// On n'accepte que la version en vigueur, et une acceptation ne se modifie pas. Elle ne
+/// s'efface qu'avec le compte : inscription jamais vérifiée, ou clôture (la trace de
+/// l'acceptation reste alors dans le journal d'audit).
+model TermsAcceptance {
+  userId        String   @map("user_id") @db.Uuid
+  versionNumber Int      @map("version_number")
+  /// Heure de l'acceptation, lue à l'horloge de la base.
+  acceptedAt    DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  version TermsVersion @relation(fields: [versionNumber], references: [number], onDelete: Restrict)
+
+  @@id([userId, versionNumber])
+  // Nombre d'acceptations d'une version (back-office).
+  @@index([versionNumber])
+  @@map("terms_acceptances")
 }
 
 /// Profil déclaré par l'utilisateur : identité, adresse, préférences. Ces informations sont

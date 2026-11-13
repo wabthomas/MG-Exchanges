@@ -22,6 +22,7 @@ export const PERMISSIONS = {
   'kyc.read': 'View identity verification cases and the documents attached to them.',
   'kyc.review': 'Approve or reject identity verification cases.',
   'kyc.revoke': 'Withdraw an identity verification that was approved.',
+  'terms.publish': 'Publish a new version of the terms of use and follow its acceptance.',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -78,3 +79,9 @@ export const KYC_REVOCATION_PERMISSION = 'kyc.revoke' satisfies PermissionKey;
  * membre du personnel clôt un compte.
  */
 export const ACCOUNT_CLOSURE_PERMISSION = 'users.close' satisfies PermissionKey;
+
+/**
+ * Permission de publier une version des conditions d'utilisation. La base de données la
+ * vérifie elle-même à chaque publication.
+ */
+export const TERMS_PUBLICATION_PERMISSION = 'terms.publish' satisfies PermissionKey;

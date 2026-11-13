@@ -12,7 +12,7 @@ import {
 import { Body, Controller, Header, HttpCode, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
-import { CurrentUser } from '../../../common/auth/auth.decorators.js';
+import { AllowBeforeTermsAcceptance, CurrentUser } from '../../../common/auth/auth.decorators.js';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import {
   ApiProblemResponses,
@@ -27,9 +27,14 @@ const HOLDER_PROOF =
   'Requires the current password and — if two-step verification is enabled on the account ' +
   '(`422` otherwise) — `code` or `recoveryCode`: an open session is not enough.';
 
-/** Copie des données du compte et clôture, par son titulaire. */
+/**
+ * Copie des données du compte et clôture, par son titulaire. Ces deux droits ne dépendent pas
+ * de l'acceptation des conditions d'utilisation : qui refuse une nouvelle version doit pouvoir
+ * emporter ses données et partir.
+ */
 @ApiTags('Account')
 @ApiBearerAuth()
+@AllowBeforeTermsAcceptance()
 @Controller({ path: 'me', version: '1' })
 export class AccountLifecycleController {
   constructor(

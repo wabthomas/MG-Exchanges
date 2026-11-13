@@ -134,6 +134,7 @@ export const ACTIVITY_TYPES = [
   'DATA_EXPORTED',
   'DATA_EXPORT_FAILED',
   'ACCOUNT_CLOSURE_FAILED',
+  'TERMS_ACCEPTED',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 

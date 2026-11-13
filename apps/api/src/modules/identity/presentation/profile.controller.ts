@@ -26,7 +26,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { CurrentUser } from '../../../common/auth/auth.decorators.js';
+import { AllowBeforeTermsAcceptance, CurrentUser } from '../../../common/auth/auth.decorators.js';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import {
   ApiProblemResponses,
@@ -61,7 +61,7 @@ export class ProfileController {
       'verified them yet.',
   })
   @ApiOkResponse({ schema: toOpenApiSchema(profileSchema) })
-  @ApiProblemResponses(401, 429)
+  @ApiProblemResponses(401, 403, 429)
   getProfile(@CurrentUser() user: AuthenticatedUser): Promise<Profile> {
     return this.profiles.get(user.userId);
   }
@@ -75,7 +75,7 @@ export class ProfileController {
   })
   @ApiBody({ schema: toOpenApiInputSchema(updateProfileRequestSchema) })
   @ApiOkResponse({ schema: toOpenApiSchema(profileSchema) })
-  @ApiProblemResponses(400, 401, 429)
+  @ApiProblemResponses(400, 401, 403, 429)
   updateProfile(
     @CurrentUser() user: AuthenticatedUser,
     @Body({ schema: updateProfileRequestSchema }) body: UpdateProfileRequest,
@@ -99,7 +99,7 @@ export class ProfileController {
   })
   @ApiBody({ schema: toOpenApiInputSchema(phoneVerificationRequestSchema) })
   @ApiAcceptedResponse({ schema: toOpenApiSchema(phoneVerificationPendingSchema) })
-  @ApiProblemResponses(400, 401, 409, 422, 429, 503)
+  @ApiProblemResponses(400, 401, 403, 409, 422, 429, 503)
   requestPhoneVerification(
     @CurrentUser() user: AuthenticatedUser,
     @Body({ schema: phoneVerificationRequestSchema }) body: PhoneVerificationRequest,
@@ -120,7 +120,7 @@ export class ProfileController {
   })
   @ApiBody({ schema: toOpenApiInputSchema(verifyPhoneRequestSchema) })
   @ApiNoContentResponse({ description: 'Phone number verified.' })
-  @ApiProblemResponses(400, 401, 409, 429)
+  @ApiProblemResponses(400, 401, 403, 409, 429)
   async verifyPhone(
     @CurrentUser() user: AuthenticatedUser,
     @Body({ schema: verifyPhoneRequestSchema }) body: VerifyPhoneRequest,
@@ -132,6 +132,7 @@ export class ProfileController {
   // --- Historique d'activité ------------------------------------------------------------------
 
   @Get('activity')
+  @AllowBeforeTermsAcceptance()
   @ApiOperation({
     summary: 'My account activity',
     description:

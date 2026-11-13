@@ -25,6 +25,7 @@ import { AccountDataRegistry, type ExportedSections } from './account-data.regis
 import { ActivityService } from './activity.service.js';
 import type { ClientContext } from './client-context.js';
 import { HolderProofService } from './holder-proof.service.js';
+import { TermsService } from './terms.service.js';
 
 /** Copies des données remises à un même compte : `DATA_EXPORTS_PER_DAY` par vingt-quatre heures. */
 export const DATA_EXPORTS_PER_ACCOUNT: RateLimitRule = {
@@ -52,6 +53,7 @@ export class DataExportService {
     private readonly holders: AccountDataRegistry,
     private readonly activity: ActivityService,
     private readonly proof: HolderProofService,
+    private readonly terms: TermsService,
     private readonly limiter: RedisRateLimiter,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
@@ -80,6 +82,7 @@ export class DataExportService {
       throw new AppError('UNAUTHENTICATED', 'Authentication is required.');
     }
     const activity = await this.activity.collect(user.id, DATA_EXPORT_ACTIVITY_MAX_ENTRIES);
+    const terms = await this.terms.exportOf(this.prisma, user.id);
     const others: ExportedSections = {};
     for (const holder of this.holders.holders()) {
       Object.assign(others, await holder.exportData(this.prisma, user.id));
@@ -97,6 +100,7 @@ export class DataExportService {
           sessions: data.sessions.length,
           activityEntries: activity.entries.length,
           verificationCases: others.verification?.cases.length ?? 0,
+          termsAcceptances: terms.acceptances.length,
         },
       });
       await this.outbox.append(tx, {
@@ -127,7 +131,6 @@ export class DataExportService {
         accountType: account.accountType,
         status: account.status,
         createdAt: iso(account.createdAt),
-        termsAcceptedAt: iso(account.termsAcceptedAt),
         roles: [...account.roles],
       },
       profile:
@@ -164,6 +167,7 @@ export class DataExportService {
       })),
       activity,
       verification: others.verification ?? { level: 0, cases: [] },
+      terms,
     };
   }
 }

@@ -5,7 +5,6 @@ import type { UserRecord } from '../domain/user.js';
 
 /** Compte tel que le présente l'annuaire du back-office. */
 export interface DirectoryEntry extends UserRecord {
-  readonly termsAcceptedAt: Date;
   readonly updatedAt: Date;
   /** Rôles du back-office détenus par le compte. */
   readonly roles: readonly string[];

@@ -97,7 +97,7 @@ export class PrismaUserRepository extends UserRepository {
     }
     await tx.userCredential.update({
       where: { userId },
-      data: { passwordHash, passwordChangedAt: registration.termsAcceptedAt },
+      data: { passwordHash, passwordChangedAt: registration.registeredAt },
     });
     return true;
   }
@@ -167,8 +167,8 @@ export class PrismaUserRepository extends UserRepository {
     limit: number,
   ): Promise<string[]> {
     const rows = await db.user.findMany({
-      where: { status: 'PENDING_VERIFICATION', termsAcceptedAt: { lt: registeredBefore } },
-      orderBy: { termsAcceptedAt: 'asc' },
+      where: { status: 'PENDING_VERIFICATION', registeredAt: { lt: registeredBefore } },
+      orderBy: { registeredAt: 'asc' },
       take: limit,
       select: { id: true },
     });
@@ -187,7 +187,7 @@ export class PrismaUserRepository extends UserRepository {
       FROM users
       WHERE id = ${userId}::uuid
         AND status = 'PENDING_VERIFICATION'
-        AND terms_accepted_at < ${registeredBefore}
+        AND registered_at < ${registeredBefore}
       FOR UPDATE
     `);
     if (locked.length === 0) {
@@ -195,6 +195,7 @@ export class PrismaUserRepository extends UserRepository {
     }
     await tx.verificationChallenge.deleteMany({ where: { userId } });
     await tx.userCredential.deleteMany({ where: { userId } });
+    await tx.termsAcceptance.deleteMany({ where: { userId } });
     await tx.user.delete({ where: { id: userId } });
     return true;
   }

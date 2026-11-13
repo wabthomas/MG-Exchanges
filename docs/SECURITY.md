@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2, lots 1 à 4)
+## En place (phases 1 et 2, lots 1 à 5)
 
 ### Configuration et secrets
 
@@ -40,6 +40,12 @@ Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme
   requêtes inter-sites forgées par un simple formulaire. Taille du corps bornée. Une seule
   route reçoit un fichier — une pièce de vérification —, comme corps brut d'un type
   qu'aucun formulaire ne peut produire (voir « Vérification d'identité »).
+- **Le corps d'une requête JSON est lu avant l'authentification** — par l'analyseur commun,
+  d'où sa limite basse (100 Ko). Une seule route JSON reçoit davantage : la publication des
+  conditions d'utilisation (1 Mio). Pour elle, l'analyseur commun ne lit rien ; la route lit
+  elle-même son corps **après** l'authentification, le contrôle des droits et les quotas,
+  avec une limite de taille et un délai. Un appelant sans droit n'y fait donc lire aucun
+  octet de plus qu'ailleurs.
 - Validation systématique des entrées par schéma ; propriétés inconnues refusées.
 - Erreurs : une erreur inattendue renvoie un message générique ; pile d'appels et message
   interne restent dans les journaux, rattachés à l'identifiant de requête.
@@ -313,6 +319,72 @@ Décisions et limites : ADR 0023.
 > - **L'échéance d'effacement d'un compte sans conservation légale se lit à l'horloge de
 >   l'application** : seule la conservation légale est relue par la base.
 
+### Conditions d'utilisation
+
+Décisions et limites : ADR 0024.
+
+- **Une version publiée ne change plus.** Ni modification, ni suppression, ni vidage de la
+  table : la base le refuse, même au propriétaire du schéma. Ce qu'un compte a accepté reste
+  lisible tel quel, par son numéro.
+- **Le texte conservé est le texte soumis, à l'octet près.** Rien n'est retouché — ni espaces,
+  ni fins de ligne. L'API calcule l'empreinte SHA-256 du texte reçu ; la base la recalcule sur
+  le texte qu'elle conserve et refuse la publication si elles diffèrent. Un texte mal encodé
+  (UTF-8 invalide) est refusé, non « réparé ». L'empreinte est rendue à qui publie, pour être
+  comparée à celle du fichier approuvé, et servie avec le texte à qui le lit.
+- **La numérotation est tenue par la base** : une publication à la fois, seul le numéro
+  suivant se publie. Une requête rejouée, ou préparée sur un état dépassé, est refusée au lieu
+  de créer une version de trop.
+- **Qui publie** : un membre du personnel actif détenant `terms.publish` — permission que seul
+  `super_admin` détient —, avec la validation en deux étapes, comme pour tout le back-office.
+  La base relit ce droit au moment de publier. Une version **sans auteur** ne s'écrit qu'avec
+  le rôle propriétaire de la base (outil d'exploitation `terms:publish`) : l'API, elle, ne le
+  peut pas. Dans les deux cas l'acte est au journal d'audit, avec sa justification et les
+  empreintes, dans la transaction de la publication.
+- **On n'accepte que la version en vigueur, celle qu'on a pu lire.** L'inscription et
+  l'acceptation désignent le numéro du texte présenté ; la base refuse tout autre numéro, y
+  compris quand une version est publiée entre la lecture et l'écriture. Une inscription que
+  croise une publication est refusée (`409`) de la même façon que l'adresse soit libre, en
+  attente de vérification ou déjà prise : la réponse ne dit toujours rien de l'existence
+  d'un compte.
+- **Une acceptation est une preuve** : datée par la base, elle ne se modifie pas et ne
+  s'efface qu'avec le compte (inscription jamais vérifiée, clôture). Le journal d'audit garde,
+  pour chaque acceptation, la version, l'empreinte du texte en vigueur, la date, l'adresse IP
+  et l'appareil — y compris après la clôture.
+- **Refus par défaut.** Tant qu'un compte doit accepter, toute route authentifiée lui est
+  fermée (`403 TERMS_ACCEPTANCE_REQUIRED`), sauf celles qui déclarent explicitement rester
+  ouvertes : voir où il en est, accepter, sécuriser son compte, emporter ses données, le
+  clore. Une route ajoutée demain est fermée sans qu'il faille y penser ; un test échoue tant
+  que chaque route d'un titulaire n'est pas classée d'un côté ou de l'autre.
+- **Refuser les conditions ne retient personne** : la copie des données et la clôture restent
+  ouvertes.
+- La règle est recalculée **à chaque requête**, sans cache : une publication vaut aussitôt,
+  pour toutes les sessions ouvertes.
+- La lecture des textes est publique (on doit pouvoir lire avant de s'inscrire), bornée à 60
+  requêtes par minute et par client.
+
+> **Limites à connaître.**
+>
+> - **Le texte et la règle ne sont pas décidés ici.** Aucun texte n'est fourni : il revient au
+>   propriétaire et à son conseil. Faut-il exiger une nouvelle acceptation à chaque
+>   changement ? L'API applique la règle choisie à chaque publication (`requiresAcceptance`) ;
+>   elle ne dit pas laquelle est juridiquement requise.
+> - **Une personne habilitée suffit à publier**, définitivement : pas de double validation.
+>   Une publication erronée ne se retire pas ; elle se corrige par la version suivante.
+> - **Une acceptation prouve qu'une requête authentifiée a désigné la version en vigueur** —
+>   pas que la personne a lu le texte. C'est au client (web, mobile) de l'afficher avant de
+>   proposer de l'accepter.
+> - **Aucun e-mail n'annonce une nouvelle version** : le titulaire l'apprend à sa prochaine
+>   connexion. Si la loi ou le texte lui-même impose un préavis, il reste à organiser.
+> - **Le personnel n'est pas arrêté dans le back-office** s'il n'a pas accepté lui-même : il y
+>   agit pour la plateforme. Ses propres routes de client, elles, lui sont fermées comme à tous.
+> - **La base vérifie la qualité de l'auteur que l'API lui désigne**, non que c'est bien lui
+>   qui agit : même limite que pour les rôles (ADR 0018).
+> - **Comptes existants.** Les comptes ouverts avant ce lot n'ont accepté aucune version : dès
+>   la publication de la version 1, tous devront l'accepter — personnel compris, pour ses
+>   routes de client. La date d'« acceptation » qu'ils portaient jusque-là n'était que celle de
+>   leur inscription (case cochée, sans texte) : elle est conservée comme date d'inscription,
+>   pas comme acceptation.
+
 ### Conservation et purge
 
 - Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
@@ -320,7 +392,8 @@ Décisions et limites : ADR 0023.
   les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), les
   dossiers de vérification jamais déposés (30 jours, avec leurs pièces), les événements
   publiés de la boîte d'envoi (30 jours), et clôt les demandes de rôle échues. Chaque
-  suppression d'inscription ou de dossier est tracée.
+  suppression d'inscription ou de dossier est tracée. Une inscription supprimée emporte
+  l'acceptation des conditions qu'elle portait.
 - **Comptes clôturés** : à l'échéance (trente jours après la clôture, ou dix ans si des
   dossiers de vérification sont conservés), la même tâche efface les dossiers conservés et
   leurs pièces, puis l'adresse et le numéro que gardait la trace de la clôture — 200 comptes
@@ -381,7 +454,8 @@ Décisions et limites : ADR 0023.
 | Clés d'accès (WebAuthn / passkeys) comme second facteur résistant à l'hameçonnage         | 2+    |
 | Vérification des mots de passe contre les fuites connues                                  | 2     |
 | E-mails : exploitation des non-remises et des plaintes, plafond global d'envoi            | 2     |
-| Acceptation versionnée des conditions d'utilisation                                       | 2     |
+| Conditions d'utilisation : texte et règle (propriétaire, conseil juridique)               | —     |
+| Conditions d'utilisation : annonce d'une version par e-mail, préavis, double validation   | 2+    |
 | Données personnelles : validation juridique des durées, formalités auprès de l'autorité   | 8     |
 | Remise au titulaire des fichiers de ses pièces ; double validation d'une clôture          | 2+    |
 | Durée de conservation du journal d'audit, des sauvegardes et des journaux applicatifs     | 8–9   |

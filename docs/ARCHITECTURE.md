@@ -55,7 +55,8 @@ apps/api/src/
   bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests
   config/                 schéma des variables d'environnement, configuration typée
   common/                 transverse : erreurs, filtre global, validation, expurgation,
-                          décorateurs d'accès (@Public, @RequirePermissions, @CurrentUser)
+                          décorateurs d'accès (@Public, @RequirePermissions,
+                          @AllowBeforeTermsAcceptance, @CurrentUser)
   infrastructure/         PostgreSQL (Prisma), Redis, files (BullMQ), journalisation, débit
   modules/
     health/               sondes de vivacité et de disponibilité
@@ -65,10 +66,12 @@ apps/api/src/
     notifications/        messages aux utilisateurs (port d'envoi, modèles, envoi SMTP, boîte de développement)
     identity/             comptes, authentification, second facteur, sessions, profil,
                           téléphone, historique, autorisations, back-office des comptes et
-                          des rôles, clôture, effacement et copie des données, purge périodique
+                          des rôles, conditions d'utilisation, clôture, effacement et copie
+                          des données, purge périodique
     kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
                           examen par la conformité
-  cli/                    outil d'exploitation (création des premiers administrateurs)
+  cli/                    outil d'exploitation (création des premiers administrateurs,
+                          publication des conditions d'utilisation)
 ```
 
 **Sens des dépendances entre modules métier.** `kyc` dépend d'`identity` (comptes, gardes,
@@ -91,22 +94,39 @@ permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien du module `
 
 ### Chaîne de traitement d'une requête
 
-Quatre gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
+Cinq gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
 
 1. **limitation de débit** par adresse IP ;
 2. **maintenance** — `503` sauf routes `@AllowDuringMaintenance()` ;
 3. **authentification** — refus par défaut : `401` sauf routes `@Public()` ;
 4. **permissions** — sur une route qui porte `@RequirePermissions(...)` : `403 FORBIDDEN` si
    le compte ne les détient pas, puis `403 MFA_ENROLLMENT_REQUIRED` s'il n'a pas activé la
-   validation en deux étapes. Tout refus est inscrit au journal d'audit.
+   validation en deux étapes. Tout refus est inscrit au journal d'audit ;
+5. **conditions d'utilisation** — refus par défaut : `403 TERMS_ACCEPTANCE_REQUIRED` tant
+   que le compte doit accepter la version en vigueur, sauf routes
+   `@AllowBeforeTermsAcceptance()`. Ne sont pas concernées les routes publiques (personne
+   n'y est identifié) ni celles du back-office (`@RequirePermissions(...)`). La règle est
+   relue en base à chaque requête — une lecture, sans cache.
+
+**Toute nouvelle route d'un titulaire est donc fermée** à un compte qui doit accepter, sauf
+si elle déclare le contraire ; un test de bout en bout (`terms.e2e-spec.ts`) recense les
+routes et échoue tant qu'une route ajoutée n'est pas classée.
 
 Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
 
-**Corps des requêtes.** Seul le JSON est analysé. L'unique route qui reçoit un fichier
-(l'envoi d'une pièce de vérification) lit elle-même le corps brut de la requête
-(`common/http/raw-body.ts`), **après** les gardes et ses propres contrôles — quota, dossier —,
-borné en taille et en durée ; le nombre de réceptions simultanées est plafonné
-(`common/http/concurrency-limit.ts`). Un envoi irrecevable est donc refusé sans avoir été lu.
+**Corps des requêtes.** Seul le JSON est analysé — par l'analyseur commun, **avant** les
+gardes, d'où sa limite basse. Deux routes reçoivent davantage et lisent elles-mêmes leur
+corps brut (`common/http/raw-body.ts`), **après** les gardes, borné en taille et en durée :
+
+- l'envoi d'une pièce de vérification (un fichier), après ses propres contrôles — quota,
+  dossier ; le nombre de réceptions simultanées est plafonné
+  (`common/http/concurrency-limit.ts`) ;
+- la publication des conditions d'utilisation (du JSON, jusqu'à 1 Mio) : la route est
+  inscrite dans `common/http/deferred-json-body.ts`, l'analyseur commun l'ignore, et elle
+  décode puis valide son corps avec `readJsonBody`. Une route JSON à venir qui dépasserait
+  la limite commune s'y inscrit de la même façon.
+
+Un envoi irrecevable est donc refusé sans avoir été lu.
 
 ### Tâches de fond
 
@@ -134,6 +154,10 @@ relu par PostgreSQL à sa propre horloge (`now()`), et la base refuse tout effac
 lui. L'horloge de l'application décide quand tenter l'effacement ; celle de la base, s'il est
 permis.
 
+De même, la date de publication d'une version des conditions d'utilisation et celle de chaque
+acceptation sont **fixées par PostgreSQL** (`clock_timestamp()`), quelle que soit la valeur
+que l'application lui présente : ce sont des preuves, et l'ordre des versions en dépend.
+
 ### Couches d'un module métier
 
 `system-settings`, `identity` et `kyc` servent de modèles aux modules métier à venir :
@@ -154,7 +178,8 @@ le mécanisme de persistance et s'appuient directement sur le client de base de 
 **Quand la règle vit dans la base.** Certaines garanties ne peuvent pas reposer sur le seul
 code applicatif — précisément celles qui doivent tenir même si ce code est fautif : journal
 d'audit en ajout seul, double validation des changements de rôle, parcours d'un dossier de
-vérification d'identité. Elles sont alors
+vérification d'identité, clôture d'un compte, publication et acceptation des conditions
+d'utilisation. Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
@@ -177,6 +202,9 @@ entre instances (`FOR UPDATE SKIP LOCKED`). Les consommateurs sont idempotents.
 **Accès refusé par défaut.** Une route n'est accessible sans authentification que si elle
 est marquée `@Public()` ; un test compare l'ensemble des routes publiques à une liste fermée.
 L'identité de l'appelant s'obtient par `@CurrentUser()` — jamais d'un paramètre de la requête.
+De même, une route authentifiée est fermée au compte qui doit accepter les conditions
+d'utilisation, sauf si elle porte `@AllowBeforeTermsAcceptance()` ; un test compare, là aussi,
+les routes à deux listes fermées.
 
 **Fonctionnalités fermées par défaut.** Chaque fonctionnalité réglementée est un paramètre
 système, désactivé tant qu'aucune décision tracée ne l'ouvre. `@RequiresFeature('exchange')`
@@ -186,7 +214,8 @@ suffit à y soumettre une route ; `@AllowDuringMaintenance()` exempte une route 
 chaînes décimales sur le fil, `NUMERIC` en base (ADR 0007). ESLint interdit `parseFloat` et `toFixed`.
 
 **Configuration validée.** Toute variable d'environnement est validée au démarrage ; aucune
-partie du code ne lit `process.env` en dehors de `config/`.
+partie du code ne lit `process.env` en dehors de `config/` et des deux points d'entrée
+(`main.ts`, `cli/main.ts`), qui le transmettent tel quel à ce qui le valide.
 
 ## Conventions
 

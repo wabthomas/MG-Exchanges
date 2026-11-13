@@ -64,7 +64,7 @@ describe('Dossiers de vérification — écritures conditionnelles (PostgreSQL r
         email: `repository${String(sequence)}@example.cd`,
         countryCode: 'CD',
         status: 'ACTIVE',
-        termsAcceptedAt: now,
+        registeredAt: now,
         emailVerifiedAt: now,
       },
       select: { id: true },

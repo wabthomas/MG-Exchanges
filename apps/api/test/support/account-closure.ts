@@ -22,6 +22,7 @@ export const TABLES_EMPTIED_AT_CLOSURE = [
   'user_credentials',
   'verification_challenges',
   'user_profiles',
+  'terms_acceptances',
   'user_sessions',
 ] as const;
 
@@ -64,7 +65,11 @@ export async function insertClosureRecord(
   );
 }
 
-/** Retire au compte tout ce qu'il portait : secrets, codes, profil, sessions. */
+/**
+ * Retire au compte tout ce qu'il portait : secrets, codes, profil, acceptations des conditions
+ * d'utilisation, sessions. À appeler une fois la trace de la clôture écrite : avant elle, la
+ * base refuse d'effacer une acceptation.
+ */
 export async function emptyAccount(db: pg.Client, userId: string): Promise<void> {
   for (const table of TABLES_EMPTIED_AT_CLOSURE) {
     await db.query(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);

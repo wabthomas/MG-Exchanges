@@ -14,6 +14,7 @@ import {
 import { Clock } from '../../src/common/clock.js';
 import { AppConfig, loadAppConfig } from '../../src/config/app-config.js';
 import { ACCOUNT_MAINTENANCE_QUEUE } from '../../src/infrastructure/queue/queue.constants.js';
+import { publishTermsAsOperator } from './terms.js';
 import { createTestDatabase, type TestDatabase } from './test-database.js';
 import { redisUrl } from './test-environment.js';
 
@@ -57,6 +58,12 @@ export interface TestAppOptions {
   readonly env?: Record<string, string>;
   /** Modules supplémentaires (contrôleurs de test). */
   readonly imports?: NonNullable<ModuleMetadata['imports']>;
+  /**
+   * Conditions d'utilisation à la création de la base : par défaut (`'published'`), la
+   * version 1 est publiée, comme sur une plateforme en service — sans elle, nul ne peut
+   * s'inscrire. `'none'` laisse la base telle que les migrations la créent.
+   */
+  readonly terms?: 'published' | 'none';
 }
 
 /** Applications de test démarrées par ce fichier de test et pas encore arrêtées. */
@@ -78,6 +85,9 @@ export async function createTestApp(options: TestAppOptions = {}): Promise<TestA
     );
   }
   const database = await createTestDatabase();
+  if (options.terms !== 'none') {
+    await publishTermsAsOperator(database);
+  }
 
   const flush = new Redis(redisUrl());
   await flush.flushdb();
