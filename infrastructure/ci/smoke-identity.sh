@@ -16,8 +16,11 @@
 #      de la taille maximale, à travers le proxy —, dépose son dossier ; l'administrateur le
 #      trouve dans la file, relit une pièce à l'identique et accepte le dossier ; le compte est
 #      vérifié et son profil reprend l'identité de la pièce ;
-#   6. l'administrateur retrouve le compte par son adresse et ferme ses sessions ;
-#   7. l'utilisateur se reconnecte, obtient la copie de ses données, puis clôt son compte : il
+#   6. grand livre : l'administrateur enregistre un actif ; l'utilisateur y dispose aussitôt
+#      d'un portefeuille à zéro, sans mouvement ; aucun compte n'est ouvert, et la balance du
+#      grand livre est équilibrée — aucune route ne déplace de fonds ;
+#   7. l'administrateur retrouve le compte par son adresse et ferme ses sessions ;
+#   8. l'utilisateur se reconnecte, obtient la copie de ses données, puis clôt son compte : il
 #      ne peut plus se connecter, il est prévenu à son ancienne adresse, son dossier de
 #      vérification est conservé, et le back-office retrouve le compte clôturé.
 #
@@ -29,8 +32,13 @@
 #   - le stockage chiffré des pièces configuré (KYC_ENCRYPTION_KEY) ;
 #   - curl, jq, openssl, sha256sum et python3 (calcul du code TOTP, dates, textes).
 #
-# Le script publie deux versions des conditions d'utilisation (définitives, comme toute
-# publication) : il est fait pour une pile de test, pas pour une plateforme en service.
+# Le script publie deux versions des conditions d'utilisation et enregistre un actif — l'un
+# et l'autre définitifs : il est fait pour une pile de test, pas pour une plateforme en
+# service.
+#
+# Toutes ses requêtes partent d'une même adresse, en quelques secondes : hors connexion,
+# inscription et lecture des conditions, elles sont comptées ensemble par la limitation de
+# débit de l'API (120 par minute par défaut). Le parcours doit rester en deçà.
 #
 #   BASE_URL=http://127.0.0.1:8080 ADMIN_EMAIL=… MGX_ADMIN_PASSWORD=… ./smoke-identity.sh
 set -euo pipefail
@@ -422,7 +430,42 @@ request 200 GET /me/activity '' "$user_token"
 check 'the activity shows the submission and the approval' \
   '[.entries[].type] | (index("IDENTITY_VERIFICATION_SUBMITTED") != null and index("IDENTITY_VERIFICATION_APPROVED") != null)'
 
-# --- 6. Back-office des comptes ------------------------------------------------------------------
+# --- 6. Grand livre : un actif, un portefeuille à zéro, la balance -----------------------------
+# Aucune route ne déplace de fonds : le parcours enregistre un actif, puis lit le portefeuille
+# de l'utilisateur et la balance du grand livre. Un actif enregistré est définitif : son code
+# est propre à cette exécution, pour que le script passe aussi sur une pile déjà utilisée.
+asset_code="T$(date +%s)"
+asset="$(jq -n --arg c "$asset_code" \
+  '{code: $c, name: "Smoke test asset", kind: "FIAT", scale: 2, reason: "Smoke test of the containerised stack"}')"
+
+request 200 GET /me/wallets '' "$user_token"
+check 'an asset that is not registered is no wallet of the account' \
+  "[.wallets[].asset.code] | index(\"$asset_code\") == null"
+request 403 POST /admin/ledger/assets "$asset" "$user_token"
+check 'an account holder cannot register an asset' '.code == "FORBIDDEN"'
+request 201 POST /admin/ledger/assets "$asset" "$admin_token"
+check 'the asset is registered with its two decimals, and names who registered it' \
+  ".code == \"$asset_code\" and .kind == \"FIAT\" and .scale == 2 and .registeredBy != null and .registeredAt != null"
+# Un actif ne s'enregistre qu'une fois.
+request 409 POST /admin/ledger/assets "$asset" "$admin_token"
+
+# Le titulaire dispose aussitôt d'un portefeuille dans cet actif : à zéro, sans mouvement.
+request 200 GET /me/wallets '' "$user_token"
+check 'the account now has an empty wallet in the asset, written with its two decimals' \
+  "[.wallets[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].available == \"0.00\" and .[0].asset.scale == 2"
+request 200 GET "/me/wallets/$asset_code/movements" '' "$user_token"
+check 'the wallet has no movement' \
+  '.wallet.available == "0.00" and .movements == [] and .nextCursor == null'
+request 404 GET /me/wallets/NOSUCHASSET/movements '' "$user_token"
+
+# Vu du back-office : lire un portefeuille n'a ouvert aucun compte, et le grand livre est équilibré.
+request 200 GET "/admin/ledger/accounts?assetCode=$asset_code" '' "$admin_token"
+check 'no ledger account was opened' '.accounts == [] and .nextCursor == null'
+request 200 GET /admin/ledger/trial-balance '' "$admin_token"
+check 'the ledger is balanced, and holds nothing in the new asset' \
+  ".balanced == true and ([.assets[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].balanced == true and .[0].debitBalance == \"0.00\" and .[0].creditBalance == \"0.00\" and ([.[0].accountTypes[].accounts] | add) == 0)"
+
+# --- 7. Back-office des comptes ------------------------------------------------------------------
 request 200 POST /admin/users/search "$(jq -n --arg e "$email" '{email: $e}')" "$admin_token"
 check 'the back office finds the account by its address' ".users | length == 1 and .[0].id == \"$user_id\""
 request 200 GET '/admin/users?limit=5' '' "$admin_token"
@@ -432,7 +475,7 @@ request 200 POST "/admin/users/$user_id/sessions/revoke" \
 check 'the sessions of the account are closed' '.revokedSessions >= 1'
 request 401 GET /me '' "$user_token"
 
-# --- 7. Copie des données, puis clôture du compte ----------------------------------------------
+# --- 8. Copie des données, puis clôture du compte ----------------------------------------------
 request 200 POST /auth/login "$credentials"
 user_token="$(jq -r .tokens.accessToken "$BODY")"
 holder_proof="$(jq -n --arg p "$password" '{currentPassword: $p}')"
@@ -440,8 +483,8 @@ holder_proof="$(jq -n --arg p "$password" '{currentPassword: $p}')"
 request 400 POST /me/data-export '{}' "$user_token"
 request 401 POST /me/data-export '{"currentPassword": "not-the-password-1"}' "$user_token"
 request 200 POST /me/data-export "$holder_proof" "$user_token"
-check 'the copy holds the account, its verified identity and its history' \
-  ".formatVersion == 2 and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0 and ([.terms.acceptances[].version] == [$((terms_version + 1)), $terms_version])"
+check 'the copy holds the account, its verified identity, its history — and no wallet, none having been used' \
+  ".formatVersion == 3 and .wallets == [] and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0 and ([.terms.acceptances[].version] == [$((terms_version + 1)), $terms_version])"
 check 'the copy never holds the full number of the identity document' \
   "tostring | contains(\"$document_number\") | not"
 
