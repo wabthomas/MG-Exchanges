@@ -48,6 +48,10 @@ règle se choisit à chaque publication (ADR 0024).
 - CI : le parcours à travers Nginx publie un texte de 185 Ko et le relit à l'octet près,
   vérifie les refus au-delà des limites, l'inscription liée à la version en vigueur, puis une
   nouvelle version à accepter : compte arrêté, acceptation, reprise.
+- `infrastructure/ci/publish-terms-cli.sh` : publie une version avec l'outil en ligne de
+  commande dans la pile Compose, telle que `DEPLOYMENT.md` la donne — fichier monté en
+  lecture seule, numéro inexact refusé, texte servi par Nginx comparé au fichier. **Le
+  workflow ne l'appelle pas encore** : l'étape à y ajouter figure dans `DEPLOYMENT.md`.
 - ADR 0024. Migration `20261113043000_terms_of_use`. Aucune dépendance nouvelle.
 
 ### Modifié — incompatible avec un client des lots précédents

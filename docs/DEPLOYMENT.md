@@ -327,8 +327,10 @@ docker compose --profile app run --rm --volume "$PWD/conditions:/terms:ro" \
 - Vérifier ensuite : `curl -s https://…/api/v1/terms/current | jq '{number, sha256}'`.
 
 > La commande `pnpm terms:publish` et l'outil dans l'image de migration ont été exécutés hors
-> Docker (voir l'avertissement en tête). La commande `docker compose run --volume …`
-> ci-dessus, elle, n'a pas été exécutée.
+> Docker (voir l'avertissement en tête). **La commande `docker compose run --volume …`
+> ci-dessus n'a pas encore été exécutée par Docker** : le script
+> `infrastructure/ci/publish-terms-cli.sh` la lance et vérifie son résultat, mais le workflow
+> ne l'appelle pas encore (voir « Intégration continue »).
 
 ## Notifications
 
@@ -451,6 +453,22 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
    ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
    sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
    propriétaire et la base fantôme créée par le script d'initialisation.
+
+**Une étape reste à ajouter au workflow.** `infrastructure/ci/publish-terms-cli.sh` publie
+une version des conditions d'utilisation avec l'outil en ligne de commande, dans la pile
+Compose, comme la section « Conditions d'utilisation » le décrit : dossier des textes monté
+en lecture seule dans l'image de migration, numéro inexact refusé, texte relu à l'octet près
+à travers Nginx. Ce script a été exécuté hors Docker. Pour que la CI l'exécute, ajouter au
+job `docker` de `.github/workflows/ci.yml`, juste après l'étape « Parcours d'identité et de
+vérification d'identité à travers Nginx » :
+
+```yaml
+- name: Conditions d'utilisation publiées en ligne de commande
+  run: infrastructure/ci/publish-terms-cli.sh
+```
+
+L'outil qui prépare ce dépôt n'est pas autorisé à modifier les fichiers de
+`.github/workflows/` : cet ajout revient au propriétaire du dépôt.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.
