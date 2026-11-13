@@ -649,10 +649,23 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   Un défaut a été ajouté avec ces corrections. Les vingt défauts concernés ont été
   relancés, puis **les 320 l'ont été d'une traite sur le code livré : tous sont détectés.**
 
+  Trois d'entre eux faisaient échouer d'un coup les 65 tests d'un fichier : la préparation
+  commune de ces tests ne pouvait plus ouvrir les comptes de la plateforme. Ils ont été
+  vérifiés un à un. Deux sont aussi détectés par un test qui vise la règle ; **le troisième
+  ne l'était que par cette préparation**, et une vérification ciblée a été ajoutée (voir
+  « Problèmes identifiés »).
+
 - Lots 1 à 5 de la phase 2 après ce lot, qui modifie la clôture, la copie des données, la
-  tâche horaire, les transactions et le support commun des tests.
-  **Le rejeu des 890 défauts rejouables par script est en cours à l'heure de cette mise à
-  jour** ; son résultat sera porté ici.
+  tâche horaire, les transactions et le support commun des tests. Les 890 défauts
+  rejouables par script — 31 au lot 1, 107 au lot 2, 226 au lot 3, 249 au lot 4, 277 au
+  lot 5 — ont été rejoués sur le code livré. **889 sont détectés**, chacun par l'échec d'un
+  test, aucun par un blocage. **Le dernier n'a plus d'effet, et a été retiré.** Placé dans
+  la migration du lot 5, il privait `super_admin` de la permission de publier les
+  conditions ; or la migration du grand livre, appliquée ensuite, attribue de nouveau tout
+  le catalogue à `super_admin`. Deux bases ont été installées, l'une avec ce défaut,
+  l'autre sans, puis comparées : même structure, mêmes rôles, mêmes permissions — alors
+  qu'arrêtées à la migration du lot 5, la permission manque à la première. Le même défaut,
+  placé dans la migration du grand livre, est détecté : il compte parmi les 320.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -725,8 +738,9 @@ Node.js 24.
 
 ### Pendant le lot 1 de la phase 3
 
-Tous corrigés avant la première publication du lot. Les deux premiers touchent le produit ;
-le troisième, ses tests.
+Les trois premiers ont été corrigés avant la première publication du lot ; le quatrième,
+relevé par la vérification qui l'a suivie, l'a été le jour même. Les deux premiers touchent
+le produit ; les deux autres, ses tests.
 
 1. **L'ordre des verrous d'une écriture l'exposait à s'interbloquer avec une opération.**
    L'écriture verrouillait d'abord ses comptes ; la base retenait ensuite leur titulaire, à
@@ -757,6 +771,15 @@ le troisième, ses tests.
    levées le temps de l'essai. Autre cas du même genre : une route du back-office qui exigeait la mauvaise
    permission passait inaperçue, parce que la base refusait à sa place, par la même
    réponse ; le test lit désormais, au journal d'audit, quel contrôle a refusé.
+4. **Un défaut volontaire n'était détecté que par la préparation des tests.** Trois défauts
+   du grand livre faisaient échouer d'un coup les 65 tests d'un fichier : ils empêchent la
+   préparation commune de ces tests d'ouvrir les comptes de la plateforme. Un tel résultat
+   ne dit pas si un test vise la règle. Chacun a donc été rejoué contre une copie du fichier
+   dont la préparation tolère cet échec, en ne lançant que les tests concernés. Deux
+   échouent encore, sur la règle elle-même. Le troisième — un seul compte de la plateforme
+   par actif, au lieu d'un par type et par actif — **passait** : le jour où la préparation
+   aurait changé, plus rien ne l'aurait relevé. Un test ouvre désormais, dans un actif
+   neuf, un compte de chaque type.
 
 ### Pendant le lot 5 de la phase 2
 
