@@ -467,6 +467,8 @@ vérification d'identité à travers Nginx » :
   run: infrastructure/ci/publish-terms-cli.sh
 ```
 
+(avec le même retrait que les étapes voisines : six espaces devant le tiret.)
+
 L'outil qui prépare ce dépôt n'est pas autorisé à modifier les fichiers de
 `.github/workflows/` : cet ajout revient au propriétaire du dépôt.
 

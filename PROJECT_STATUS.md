@@ -479,15 +479,15 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
     et ne sont pas comptés.
 
   Quatre défauts ont été ajoutés avec ces corrections. Les défauts concernés ont été
-  relancés un à un : tous sont détectés. Les 259 autres n'ont pas été
-  relancés depuis que ces tests ont changé.
+  relancés un à un, puis **les 277 l'ont été d'une traite sur le code livré : tous sont
+  détectés.**
 
 - Lots 1 à 4 après le lot 5, qui modifie l'inscription, la clôture, la copie des données et
-  le support commun des tests. Rejoués à ce jour sur le code de ce lot : les 31 défauts du
-  lot 1, les 107 du lot 2 et 131 des 226 du lot 3. Tous sont détectés, sauf un du lot 3 qui
-  **bloquait un test écrit pour le lot 5 au lieu de le faire échouer** — test corrigé,
-  défaut rejoué : détecté (voir « Problèmes identifiés »). **Les 95 autres défauts du lot 3
-  et les 249 du lot 4 n'ont pas encore été rejoués sur le code de ce lot.**
+  le support commun des tests. **Tous les défauts rejouables par script — 31 au lot 1, 107
+  au lot 2, 226 au lot 3, 249 au lot 4 — ont été rejoués sur le code livré : tous sont
+  détectés.** Une première relance, avant les dernières corrections du lot, avait montré
+  qu'un défaut du lot 3 **bloquait un test écrit pour le lot 5 au lieu de le faire
+  échouer** (voir « Problèmes identifiés ») : le test a été corrigé.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -538,6 +538,8 @@ vérification d'identité à travers Nginx » :
 - name: Conditions d'utilisation publiées en ligne de commande
   run: infrastructure/ci/publish-terms-cli.sh
 ```
+
+(avec le même retrait que les étapes voisines : six espaces devant le tiret.)
 
 **Ce que cela ne dit pas.** L'environnement qui prépare ce dépôt ne peut pas lire les journaux
 d'une exécution (leur hébergement lui est inaccessible) : seuls le résultat et la durée de
