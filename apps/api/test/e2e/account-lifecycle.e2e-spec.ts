@@ -356,7 +356,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       // Le schéma publié décrit tout le document : aucune clé n'en sort.
       expect(response.body).toEqual(copy);
 
-      expect(copy.formatVersion).toBe(2);
+      expect(copy.formatVersion).toBe(3);
       expect(copy.account).toMatchObject({
         id: member.id,
         email: member.email,
@@ -421,6 +421,9 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       });
       expect(copy.account).not.toHaveProperty('termsAcceptedAt');
 
+      // Les portefeuilles : ceux qui ont reçu au moins un mouvement — ici, aucun.
+      expect(copy.wallets).toEqual([]);
+
       // Ce qui n'y figure jamais.
       const text = JSON.stringify(response.body);
       expect(text).not.toContain(number);
@@ -436,11 +439,12 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       const [entry] = await auditEntries('user.data_exported', member.id);
       expect(entry).toMatchObject({ actorId: member.id, outcome: 'SUCCESS', ipAddress: ip });
       expect(entry?.metadata).toEqual({
-        formatVersion: 2,
+        formatVersion: 3,
         sessions: 1,
         activityEntries: copy.activity.entries.length,
         verificationCases: 1,
         termsAcceptances: 1,
+        wallets: 0,
       });
 
       // Signalée au titulaire : si ce n'était pas lui, il le sait.

@@ -7,6 +7,7 @@ import { Prisma } from '../../../generated/prisma/client.js';
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
 import {
   EmailAlreadyTakenError,
+  type HeldUser,
   type NewUser,
   type PendingRegistration,
   PhoneAlreadyVerifiedError,
@@ -37,6 +38,20 @@ function isUniqueViolation(error: unknown): boolean {
 export class PrismaUserRepository extends UserRepository {
   findById(db: DbClient, userId: string): Promise<UserRecord | null> {
     return db.user.findUnique({ where: { id: userId }, select: USER_FIELDS });
+  }
+
+  async holdOpen(tx: DbClient, userIds: readonly string[]): Promise<HeldUser[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    // Si une clôture était en cours, la ligne rendue est celle qu'elle a validée.
+    return tx.$queryRaw<HeldUser[]>(Prisma.sql`
+      SELECT id::text AS id, status::text AS status
+      FROM users
+      WHERE id IN (${Prisma.join(userIds.map((id) => Prisma.sql`${id}::uuid`))})
+      ORDER BY id
+      FOR KEY SHARE
+    `);
   }
 
   async findByEmail(db: DbClient, email: string): Promise<UserRecord | null> {

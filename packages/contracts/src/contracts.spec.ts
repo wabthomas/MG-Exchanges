@@ -2,20 +2,32 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   acceptTermsRequestSchema,
+  ACCOUNT_CLOSURE_BLOCKERS,
   ACCOUNT_CLOSURE_PERMISSION,
   ACTIVITY_TYPES,
   activityQuerySchema,
   ADMIN_KYC_CASE_STATUSES,
   adminKycCaseListQuerySchema,
+  adminLedgerAccountListQuerySchema,
+  adminLedgerPostingListQuerySchema,
+  adminLedgerEntrySchema,
   adminUserListQuerySchema,
   adminUserLookupRequestSchema,
   approveKycCaseRequestSchema,
   approveRoleChangeRequestSchema,
+  ASSET_KINDS,
+  ASSET_NAME_MAX_LENGTH,
+  ASSET_REGISTRATION_PERMISSION,
+  ASSET_SCALE_MAX,
   createRoleChangeRequestSchema,
+  DATA_EXPORT_FORMAT_VERSION,
+  DATA_EXPORT_MOVEMENTS_MAX_ENTRIES,
   ERROR_CODE_VALUES,
   ERROR_CODES,
+  exportedWalletSchema,
   FEATURE_KEYS,
   featureFlagsSchema,
+  FINANCIAL_RECORDS_RETENTION_YEARS,
   isErrorCode,
   KYC_ADDRESS_PROOF_MAX_AGE_DAYS,
   KYC_CASE_STATUSES,
@@ -43,6 +55,15 @@ import {
   kycIdentitySchema,
   kycLevelSchema,
   kycVerifiedLevelSchema,
+  LEDGER_ACCOUNT_TYPE_KEY_PATTERN,
+  LEDGER_ACCOUNT_TYPE_KEYS,
+  LEDGER_ACCOUNT_TYPES,
+  LEDGER_ACTOR_TYPES,
+  LEDGER_CURSOR_PATTERN,
+  LEDGER_ENTRY_KIND_MAX_LENGTH,
+  LEDGER_ENTRY_KIND_PATTERN,
+  LEDGER_PAGE_MAX_SIZE,
+  LEDGER_SIDES,
   loginRequestSchema,
   loginResponseSchema,
   mfaLoginRequestSchema,
@@ -52,6 +73,7 @@ import {
   PERMISSIONS,
   problemDetailsSchema,
   publishTermsVersionRequestSchema,
+  registerAssetRequestSchema,
   registerRequestSchema,
   rejectKycCaseRequestSchema,
   rejectRoleChangeRequestSchema,
@@ -70,9 +92,13 @@ import {
   termsLocaleQuerySchema,
   termsVersionNumberParamSchema,
   totpDisableRequestSchema,
+  trialBalanceSchema,
   updateProfileRequestSchema,
   updateSystemSettingRequestSchema,
   verifyEmailRequestSchema,
+  walletMovementListQuerySchema,
+  walletMovementSchema,
+  walletSchema,
 } from './index.js';
 
 describe('catalogue des codes d’erreur', () => {
@@ -350,6 +376,19 @@ describe('contrats du back-office', () => {
     for (const key of SYSTEM_ROLE_KEYS) {
       const permissions: readonly string[] = SYSTEM_ROLES[key];
       expect(permissions.includes(TERMS_PUBLICATION_PERMISSION)).toBe(key === 'super_admin');
+    }
+    // Le grand livre — les opérations de tous les titulaires — n'est ouvert ni au support ni à
+    // la conformité ; enregistrer un actif est définitif.
+    expect(ASSET_REGISTRATION_PERMISSION).toBe('ledger.manage_assets');
+    expect(PERMISSION_KEYS.filter((permission) => permission.startsWith('ledger.'))).toEqual([
+      'ledger.read',
+      'ledger.manage_assets',
+    ]);
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.some((permission) => permission.startsWith('ledger.'))).toBe(
+        key === 'super_admin',
+      );
     }
   });
 
@@ -922,5 +961,292 @@ describe('contrats des conditions d’utilisation', () => {
     for (const query of [{ locale: 'sw' }, { locale: 'FR' }, { locale: 'fr', version: '1' }]) {
       expect(termsLocaleQuerySchema.safeParse(query).success).toBe(false);
     }
+  });
+});
+
+describe('contrats du grand livre', () => {
+  const UUID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
+  const REASON = 'Ouverture du service en dollars';
+  const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
+
+  it('le plan de comptes : à qui appartient chaque type, et quel sens augmente son solde', () => {
+    expect(LEDGER_ACCOUNT_TYPES).toEqual({
+      // Ce que la plateforme doit à un titulaire : un crédit l'augmente.
+      user_available: { owner: 'USER', normalSide: 'CREDIT', description: expect.any(String) },
+      // Ce qu'elle conserve pour eux hors du grand livre : un débit l'augmente.
+      platform_custody: { owner: 'PLATFORM', normalSide: 'DEBIT', description: expect.any(String) },
+      platform_fees: { owner: 'PLATFORM', normalSide: 'CREDIT', description: expect.any(String) },
+    });
+    expect(LEDGER_ACCOUNT_TYPE_KEYS).toEqual([
+      'user_available',
+      'platform_custody',
+      'platform_fees',
+    ]);
+    for (const key of LEDGER_ACCOUNT_TYPE_KEYS) {
+      expect(key).toMatch(LEDGER_ACCOUNT_TYPE_KEY_PATTERN);
+      expect(key.length).toBeLessThanOrEqual(64);
+      expect(LEDGER_ACCOUNT_TYPES[key].description.length).toBeGreaterThan(10);
+      // Le préfixe dit à qui appartient le compte.
+      expect(key.startsWith('user_')).toBe(LEDGER_ACCOUNT_TYPES[key].owner === 'USER');
+      expect(key.startsWith('platform_')).toBe(LEDGER_ACCOUNT_TYPES[key].owner === 'PLATFORM');
+    }
+    expect(LEDGER_SIDES).toEqual(['DEBIT', 'CREDIT']);
+    expect(LEDGER_ACTOR_TYPES).toEqual(['USER', 'SYSTEM', 'SERVICE']);
+  });
+
+  it('le type d’une écriture : des mots en minuscules séparés par des points, 64 caractères au plus', () => {
+    for (const kind of [
+      'transfer',
+      'transfer.internal',
+      'deposit.mobile_money.confirmed',
+      'a1.b2',
+    ]) {
+      expect(kind).toMatch(LEDGER_ENTRY_KIND_PATTERN);
+    }
+    for (const kind of [
+      '',
+      'Transfer',
+      'transfer.',
+      '.transfer',
+      'transfer..internal',
+      '1transfer',
+      'transfer.1',
+      'transfer-internal',
+      'transfer internal',
+      'transfer.internal\n',
+    ]) {
+      expect(kind).not.toMatch(LEDGER_ENTRY_KIND_PATTERN);
+    }
+    expect(LEDGER_ENTRY_KIND_MAX_LENGTH).toBe(64);
+  });
+
+  it('enregistrer un actif : un code, un libellé, une nature, de 0 à 18 décimales — et une raison', () => {
+    const request = { ...usd, reason: REASON };
+    expect(registerAssetRequestSchema.parse(request)).toEqual(request);
+    expect(
+      registerAssetRequestSchema.parse({ ...request, name: '  US dollar ', reason: ` ${REASON} ` }),
+    ).toEqual(request);
+    expect(ASSET_KINDS).toEqual(['FIAT', 'CRYPTO']);
+    expect(ASSET_SCALE_MAX).toBe(18);
+    expect(ASSET_NAME_MAX_LENGTH).toBe(64);
+    for (const scale of [0, 8, 18]) {
+      expect(registerAssetRequestSchema.safeParse({ ...request, scale }).success).toBe(true);
+    }
+    expect(registerAssetRequestSchema.safeParse({ ...request, name: 'n'.repeat(64) }).success).toBe(
+      true,
+    );
+
+    for (const invalid of [
+      { ...request, code: 'usd' },
+      { ...request, code: 'U' },
+      { ...request, code: undefined },
+      { ...request, name: '' },
+      { ...request, name: '   ' },
+      { ...request, name: 'n'.repeat(65) },
+      { ...request, name: 'US\tdollar' },
+      { ...request, kind: 'STABLECOIN' },
+      { ...request, kind: 'fiat' },
+      { ...request, scale: -1 },
+      { ...request, scale: 19 },
+      { ...request, scale: 2.5 },
+      { ...request, scale: '2' },
+      { ...request, scale: undefined },
+      { ...request, reason: undefined },
+      { ...request, reason: 'trop bref' },
+      { ...request, reason: 'r'.repeat(501) },
+      { ...request, decimals: 2 },
+    ]) {
+      expect(registerAssetRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('un montant est une chaîne décimale, jamais un nombre', () => {
+    expect(walletSchema.parse({ asset: usd, available: '12.34' })).toEqual({
+      asset: usd,
+      available: '12.34',
+    });
+    for (const available of [12.34, 12, '12,34', '1e3', ' 12.34', '', null]) {
+      expect(walletSchema.safeParse({ asset: usd, available }).success).toBe(false);
+    }
+    const movement = {
+      id: UUID,
+      entryId: UUID,
+      kind: 'transfer.internal',
+      side: 'DEBIT',
+      amount: '10.00',
+      balanceAfter: '2.34',
+      postedAt: '2026-11-13T10:00:00.000Z',
+    };
+    expect(walletMovementSchema.parse(movement)).toEqual(movement);
+    for (const invalid of [
+      { ...movement, amount: 10 },
+      { ...movement, balanceAfter: 2.34 },
+      { ...movement, side: 'debit' },
+      { ...movement, side: 'IN' },
+      { ...movement, postedAt: '13/11/2026' },
+      { ...movement, id: 'not-an-id' },
+    ]) {
+      expect(walletMovementSchema.safeParse(invalid).success).toBe(false);
+    }
+    // Un type d'écriture inconnu du client reste lisible : les types arrivent avec les opérations.
+    expect(walletMovementSchema.safeParse({ ...movement, kind: 'something.new' }).success).toBe(
+      true,
+    );
+  });
+
+  it('les mouvements se lisent par pages de 1 à 100, vingt par défaut, avec un curseur opaque', () => {
+    expect(walletMovementListQuerySchema.parse({})).toEqual({ limit: 20 });
+    // Les paramètres d'une URL arrivent en texte.
+    expect(walletMovementListQuerySchema.parse({ limit: '100', after: 'Mw' })).toEqual({
+      limit: 100,
+      after: 'Mw',
+    });
+    expect(LEDGER_PAGE_MAX_SIZE).toBe(100);
+    expect(walletMovementListQuerySchema.safeParse({ limit: '1' }).success).toBe(true);
+    for (const invalid of [
+      { limit: '0' },
+      { limit: '101' },
+      { limit: '1.5' },
+      { limit: 'ten' },
+      { after: '' },
+      { after: 'a+b' },
+      { after: 'a/b' },
+      { after: 'a=' },
+      { after: 'A'.repeat(129) },
+      { userId: UUID },
+      { before: 'Mw' },
+    ]) {
+      expect(walletMovementListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+    expect('A'.repeat(128)).toMatch(LEDGER_CURSOR_PATTERN);
+    expect('aZ09_-').toMatch(LEDGER_CURSOR_PATTERN);
+    expect('Mw\n').not.toMatch(LEDGER_CURSOR_PATTERN);
+  });
+
+  it('la liste des comptes se filtre par titulaire, actif ou type — rien d’autre', () => {
+    expect(adminLedgerAccountListQuerySchema.parse({})).toEqual({ limit: 20 });
+    const query = { userId: UUID, assetCode: 'USD', type: 'user_available', limit: '50' };
+    expect(adminLedgerAccountListQuerySchema.parse(query)).toEqual({ ...query, limit: 50 });
+    for (const type of LEDGER_ACCOUNT_TYPE_KEYS) {
+      expect(adminLedgerAccountListQuerySchema.safeParse({ type }).success).toBe(true);
+    }
+    for (const invalid of [
+      { userId: 'alice' },
+      { assetCode: 'usd' },
+      { type: 'user_locked' },
+      { type: 'USER_AVAILABLE' },
+      { limit: '101' },
+      { email: 'alice@example.cd' },
+      { owner: 'USER' },
+    ]) {
+      expect(adminLedgerAccountListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('les lignes d’un compte se lisent par pages, sans aucun filtre', () => {
+    expect(adminLedgerPostingListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(adminLedgerPostingListQuerySchema.parse({ limit: '100', after: 'Mw' })).toEqual({
+      limit: 100,
+      after: 'Mw',
+    });
+    for (const invalid of [
+      { limit: '0' },
+      { limit: '101' },
+      { after: '' },
+      { after: 'a+b' },
+      { assetCode: 'USD' },
+      { userId: UUID },
+      { before: 'Mw' },
+    ]) {
+      expect(adminLedgerPostingListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('une écriture rendue au back-office porte son auteur, sa clé et ses lignes', () => {
+    const entry = {
+      id: UUID,
+      kind: 'transfer.internal',
+      idempotencyKey: 'transfer:0195f3a2',
+      actor: { type: 'USER', id: UUID },
+      requestId: 'req-1',
+      metadata: { transferId: 'tr_1', attempt: 1, confirmed: true, note: null },
+      postedAt: '2026-11-13T10:00:00.000Z',
+      postings: [
+        {
+          id: UUID,
+          lineNumber: 1,
+          account: { id: UUID, type: 'user_available', owner: 'USER', userId: UUID },
+          asset: usd,
+          side: 'DEBIT',
+          amount: '10.00',
+          balanceAfter: '2.34',
+          accountSequence: 7,
+        },
+      ],
+    };
+    expect(adminLedgerEntrySchema.parse(entry)).toEqual(entry);
+    // La plateforme elle-même : sans identifiant d'auteur ni requête.
+    expect(
+      adminLedgerEntrySchema.safeParse({
+        ...entry,
+        actor: { type: 'SYSTEM', id: null },
+        requestId: null,
+        metadata: {},
+      }).success,
+    ).toBe(true);
+    for (const invalid of [
+      { ...entry, actor: { type: 'ADMIN', id: UUID } },
+      { ...entry, postings: [{ ...entry.postings[0], amount: 10 }] },
+      { ...entry, postings: [{ ...entry.postings[0], lineNumber: 0 }] },
+      { ...entry, postings: [{ ...entry.postings[0], accountSequence: 0 }] },
+      { ...entry, postings: [{ ...entry.postings[0], side: 'BOTH' }] },
+    ]) {
+      expect(adminLedgerEntrySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('la balance donne, par actif, un total pour chaque type du plan de comptes', () => {
+    const balance = {
+      generatedAt: '2026-11-13T10:00:00.000Z',
+      balanced: true,
+      assets: [
+        {
+          asset: usd,
+          debitBalance: '117.50',
+          creditBalance: '117.50',
+          balanced: true,
+          accountTypes: LEDGER_ACCOUNT_TYPE_KEYS.map((type) => ({
+            type,
+            owner: LEDGER_ACCOUNT_TYPES[type].owner,
+            normalSide: LEDGER_ACCOUNT_TYPES[type].normalSide,
+            accounts: 1,
+            balance: '0.00',
+          })),
+        },
+      ],
+    };
+    expect(trialBalanceSchema.parse(balance)).toEqual(balance);
+    expect(trialBalanceSchema.safeParse({ ...balance, assets: [] }).success).toBe(true);
+    expect(
+      trialBalanceSchema.safeParse({
+        ...balance,
+        assets: [{ ...balance.assets[0], debitBalance: 117.5 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('clôture et copie des données : des fonds s’opposent à la clôture, les écritures se gardent dix ans', () => {
+    expect(ACCOUNT_CLOSURE_BLOCKERS).toEqual([
+      'ROLE_HELD',
+      'VERIFICATION_PENDING_REVIEW',
+      'FUNDS_REMAINING',
+    ]);
+    expect(FINANCIAL_RECORDS_RETENTION_YEARS).toBe(10);
+    // Le format de la copie change de version avec les portefeuilles.
+    expect(DATA_EXPORT_FORMAT_VERSION).toBe(3);
+    expect(DATA_EXPORT_MOVEMENTS_MAX_ENTRIES).toBe(2000);
+    const wallet = { asset: usd, available: '2.34', movements: [], truncated: false };
+    expect(exportedWalletSchema.parse(wallet)).toEqual(wallet);
+    expect(exportedWalletSchema.safeParse({ asset: usd, available: '2.34' }).success).toBe(false);
   });
 });

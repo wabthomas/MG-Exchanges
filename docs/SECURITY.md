@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2, lots 1 à 5)
+## En place (phases 1 et 2 ; phase 3, lot 1)
 
 ### Configuration et secrets
 
@@ -385,6 +385,89 @@ Décisions et limites : ADR 0024.
 >   leur inscription (case cochée, sans texte) : elle est conservée comme date d'inscription,
 >   pas comme acceptation.
 
+### Grand livre
+
+Décisions et limites : ADR 0025. **Aucune route ne déplace de fonds** : ce qui suit décrit ce
+que les opérations à venir ne pourront pas enfreindre.
+
+- **Un solde ne s'écrit pas, il résulte d'écritures.** Chaque écriture a au moins deux
+  lignes, et pour chaque actif ses débits égalent ses crédits : la base le vérifie à la
+  validation de la transaction, et refuse une écriture incomplète ou déséquilibrée. Rien ne
+  s'ajoute ensuite à une écriture validée.
+- **Rien ne se modifie ni ne s'efface** : ni un actif, ni une écriture, ni une ligne, ni un
+  type de compte ; un compte ne se supprime pas. La base le refuse, même au propriétaire du
+  schéma. Une erreur se corrige par une écriture inverse, qui reste visible.
+- **Aucun solde ne devient négatif**, celui d'un titulaire comme celui de la plateforme. Le
+  contrôle se fait ligne après ligne, sous le verrou du compte : un découvert, même passager
+  au sein d'une écriture, est refusé.
+- **Un solde écrit directement n'est jamais validé.** Le rang d'une ligne et le solde qui en
+  résulte sont calculés par la base ; à la validation de toute transaction qui a touché un
+  compte, son solde doit être celui de sa dernière ligne. Le rôle de l'API a techniquement le
+  droit de mettre à jour un compte — sans quoi il ne pourrait pas le verrouiller —, mais un
+  solde qu'il écrirait lui-même est refusé, et un compte dont le solde ne correspond plus à
+  sa dernière ligne n'accepte plus aucune ligne.
+- **Un montant n'a de sens que dans son actif** : une ligne est dans l'actif de son compte,
+  et l'équilibre se vérifie actif par actif. Les montants sont des entiers d'unités
+  minimales, jamais des nombres à virgule (ADR 0007).
+- **Idempotence.** Chaque écriture porte une clé unique : la repasser rend le résultat
+  d'origine sans rien écrire, y compris quand plusieurs requêtes identiques arrivent
+  ensemble ; présenter une autre écriture sous la même clé est refusé.
+- **Écritures simultanées.** Les comptes d'une écriture sont verrouillés dans un ordre
+  unique avant que les soldes ne soient lus : deux écritures qui se disputent un compte
+  passent l'une après l'autre, la seconde à partir du solde laissé par la première, et un
+  compte n'est jamais dépensé deux fois. Une transaction que PostgreSQL annule parce qu'elle
+  en croisait une autre est relancée, un nombre borné de fois ; au-delà, la requête répond
+  `409` — rien n'est écrit à moitié.
+- **Un compte clôturé ne reçoit plus rien, un compte qui détient des fonds ne se clôt pas.**
+  Une écriture et la clôture de son titulaire s'excluent : l'une attend l'autre, puis en voit
+  le résultat.
+- **Qui enregistre un actif** : un membre du personnel actif détenant `ledger.manage_assets`
+  — que seul `super_admin` détient —, avec la validation en deux étapes ; la base relit ce
+  droit au moment d'écrire, et la justification est au journal d'audit, dans la même
+  transaction. Sans auteur, un actif ne s'enregistre qu'avec le rôle propriétaire de la
+  base : l'API ne le peut pas.
+- **Consulter le grand livre est tracé** : chaque liste d'actifs, page de comptes, relevé
+  d'un compte, écriture et balance lus par le personnel est inscrit au journal d'audit, avec
+  son auteur. La permission `ledger.read` n'est détenue que par `super_admin`.
+- **Un titulaire ne lit que ses portefeuilles** : chaque lecture est filtrée par le compte
+  de la session, jamais par un paramètre de la requête.
+- **Vérification toutes les heures.** Tout le grand livre est relu et recalculé : soldes,
+  enchaînement des lignes, écritures, équilibre de chaque actif. Une anomalie — qui ne peut
+  venir que d'une altération faite hors de ces règles — est journalisée et inscrite au
+  journal d'audit ; les messages ne contiennent que des identifiants, jamais de montant.
+  **Rien n'est corrigé automatiquement.**
+- **Les références d'une écriture sont bornées** : des textes ASCII courts (identifiants,
+  codes), des entiers, des booléens — ni texte libre long, ni structure imbriquée, 2 048
+  octets au plus. Une écriture ne s'efface jamais : **aucune donnée personnelle ne doit y
+  figurer**. Le format rend la règle difficile à enfreindre par mégarde ; il ne l'impose
+  pas, et elle reste à la charge du code de chaque opération.
+- Les fonctions de la base ont un chemin de recherche figé : une table temporaire homonyme
+  placée par une session ne peut ni habiliter un intrus, ni créer de fonds.
+
+> **Limites à connaître.**
+>
+> - **Aucune opération n'existe.** Ni dépôt, ni retrait, ni transfert : les garanties
+>   ci-dessus sont vérifiées par des tests qui passent des écritures directement, pas par un
+>   usage réel. Les plafonds par niveau de vérification ne sont ni définis ni appliqués.
+> - **Le grand livre est cohérent avec lui-même ; il ne prouve pas que les fonds existent.**
+>   Le rapprochement avec ce que détiennent réellement la banque, l'opérateur de monnaie
+>   mobile ou le dépositaire reste à construire, avec les dépôts et les retraits.
+> - **Le propriétaire du schéma peut tout** : désactiver un déclencheur, puis altérer une
+>   ligne. La vérification périodique est là pour le relever ; elle ne l'empêche pas. Les
+>   identifiants du rôle propriétaire ne doivent servir qu'aux migrations.
+> - **Une anomalie n'alerte personne** : elle est journalisée et tracée, mais aucune alerte
+>   n'est encore branchée (phase 9), et les opérations ne sont pas suspendues
+>   automatiquement.
+> - **Une personne habilitée suffit à enregistrer un actif**, définitivement : pas de double
+>   validation. Un nombre de décimales erroné ne se corrige pas ; l'actif doit être
+>   enregistré sous un autre code.
+> - **Les écritures ne s'effacent jamais**, y compris après la clôture d'un compte. Pendant
+>   dix ans, l'adresse et le numéro gardés par la trace de la clôture permettent de les
+>   rattacher à une personne ; ensuite, elles demeurent sans plus désigner personne. Cette
+>   durée s'appuie sur une lecture non confirmée de la loi (ADR 0022 et 0023).
+> - **Le journal d'audit garde les consultations du personnel**, avec l'identifiant du
+>   titulaire dont le compte a été consulté.
+
 ### Conservation et purge
 
 - Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
@@ -395,14 +478,15 @@ Décisions et limites : ADR 0024.
   suppression d'inscription ou de dossier est tracée. Une inscription supprimée emporte
   l'acceptation des conditions qu'elle portait.
 - **Comptes clôturés** : à l'échéance (trente jours après la clôture, ou dix ans si des
-  dossiers de vérification sont conservés), la même tâche efface les dossiers conservés et
+  dossiers de vérification sont conservés ou si une écriture a été passée sur un de leurs
+  comptes du grand livre), la même tâche efface les dossiers conservés et
   leurs pièces, puis l'adresse et le numéro que gardait la trace de la clôture — 200 comptes
   au plus par passage ; chaque effacement est tracé. Un compte qui ne peut pas être effacé est
   signalé et retenté à chaque passage, sans bloquer les autres.
 - **Un dossier de vérification déposé n'est effacé que par ces deux voies** : à la clôture
   s'il n'a jamais été examiné, à l'échéance légale sinon. Tant que le compte est ouvert, il
   est conservé.
-- **Le journal d'audit n'est jamais purgé.**
+- **Le journal d'audit n'est jamais purgé**, le grand livre non plus.
 
 ### Base de données
 
@@ -443,6 +527,8 @@ Décisions et limites : ADR 0024.
 ### Garde-fous dans le code
 
 - ESLint interdit `parseFloat` et `toFixed` : aucun montant ne passe par un nombre flottant.
+- Aucun module n'écrit un solde : il passe une écriture par `LedgerService`, seul chemin
+  vers les tables du grand livre.
 - Les frontières d'architecture sont vérifiées statiquement.
 
 ## Prévu — non réalisé à ce jour
@@ -462,10 +548,12 @@ Décisions et limites : ADR 0024.
 | KYC : analyse antivirus des pièces, contrôle automatique des pièces et du visage          | 2+    |
 | KYC : filtrage (sanctions, personnes politiquement exposées), relance des pièces expirées | 8     |
 | KYC : vérification des entreprises (KYB), plafonds par niveau                             | 2–3   |
+| Grand livre : rapprochement avec les fonds réellement détenus, alerte sur une anomalie    | 3–9   |
+| Grand livre : double validation des écritures manuelles et de l'enregistrement d'un actif | 3     |
 | Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé        | 9     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles | 2+    |
 | Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)       | 7     |
-| Idempotence des opérations financières, contrôle de concurrence du grand livre            | 3     |
+| En-tête `Idempotency-Key` sur les routes des opérations financières                       | 3     |
 | Webhooks signés, protection contre le rejeu                                               | 4     |
 | Gestion des clés blockchain hors de l'application (HSM / KMS), politiques de signature    | 5     |
 | Surveillance des transactions, plafonds, filtrage, dossiers de conformité                 | 8     |

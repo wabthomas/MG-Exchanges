@@ -36,6 +36,8 @@ const NOTHING: MaintenanceReport = {
     'erase-closed-accounts': 0,
     'purge-published-events': 0,
     'purge-stale-kyc-drafts': 0,
+    // Le grand livre est vérifié à chaque passage ; ici, il ne compte aucune écriture.
+    'verify-ledger': 0,
   },
   failures: 0,
 };

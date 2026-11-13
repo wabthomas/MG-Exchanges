@@ -196,6 +196,9 @@ model User {
   termsAcceptances       TermsAcceptance[]
   publishedTermsVersions TermsVersion[]
 
+  ledgerAccounts   LedgerAccount[]
+  registeredAssets Asset[]
+
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
   @@map("users")
@@ -796,4 +799,154 @@ model KycDocument {
   @@index([caseId])
   @@index([sha256])
   @@map("kyc_documents")
+}
+
+// ---------------------------------------------------------------------------------------
+// Grand livre : actifs, plan de comptes, comptes, écritures en partie double
+// ---------------------------------------------------------------------------------------
+
+enum AssetKind {
+  /// Monnaie ayant cours légal (USD, CDF…).
+  FIAT
+  /// Cryptoactif (BTC, USDT…).
+  CRYPTO
+
+  @@map("asset_kind")
+}
+
+enum LedgerSide {
+  DEBIT
+  CREDIT
+
+  @@map("ledger_side")
+}
+
+enum LedgerAccountOwner {
+  /// Compte d'un titulaire.
+  USER
+  /// Compte de la plateforme elle-même.
+  PLATFORM
+
+  @@map("ledger_account_owner")
+}
+
+/// Actif dans lequel la plateforme tient des comptes. Tous les montants du grand livre sont des
+/// entiers d'unités minimales de l'actif (`scale` décimales) : un actif enregistré est donc
+/// **immuable** — ni modifié, ni retiré. La base l'impose, ainsi que le droit d'enregistrer —
+/// voir la migration « ledger » et docs/DATABASE.md.
+model Asset {
+  /// Code de l'actif : `USD`, `CDF`, `BTC`, `USDT`…
+  code         String    @id @db.VarChar(12)
+  name         String    @db.VarChar(64)
+  kind         AssetKind
+  /// Nombre de décimales de l'unité minimale : 2 pour USD et CDF, 8 pour BTC, 18 pour ETH.
+  scale        Int       @db.SmallInt
+  /// Membre du personnel qui a enregistré l'actif ; NULL s'il l'a été avec le rôle
+  /// propriétaire de la base (outil d'exploitation).
+  registeredBy String?   @map("registered_by") @db.Uuid
+  /// Heure de l'enregistrement, lue à l'horloge de la base.
+  registeredAt DateTime  @default(now()) @map("registered_at") @db.Timestamptz(6)
+
+  registrar User?           @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
+  accounts  LedgerAccount[]
+  postings  LedgerPosting[]
+
+  @@map("assets")
+}
+
+/// Plan de comptes : les types de compte du grand livre, et le sens qui augmente leur solde.
+/// Il ne change que par migration (copie du catalogue de @mgx/contracts) ; le rôle applicatif
+/// ne peut que le lire.
+model LedgerAccountType {
+  key         String             @id @db.VarChar(64)
+  owner       LedgerAccountOwner
+  /// Sens qui augmente le solde des comptes de ce type.
+  normalSide  LedgerSide         @map("normal_side")
+  description String             @db.VarChar(255)
+
+  accounts LedgerAccount[]
+
+  @@map("ledger_account_types")
+}
+
+/// Compte du grand livre : un par type, par actif et — pour un compte de titulaire — par
+/// titulaire (index uniques partiels, écrits dans la migration).
+///
+/// `balance` et `postingCount` ne sont que le reflet de la dernière ligne passée sur le compte :
+/// seule une ligne d'écriture les fait changer, et la base le vérifie à la validation de chaque
+/// transaction. Un solde n'est jamais négatif. Un compte ne se supprime pas.
+model LedgerAccount {
+  id           String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  typeKey      String     @map("type_key") @db.VarChar(64)
+  assetCode    String     @map("asset_code") @db.VarChar(12)
+  /// Titulaire ; NULL pour un compte de la plateforme.
+  userId       String?    @map("user_id") @db.Uuid
+  /// Sens qui augmente le solde : recopié du type à l'ouverture du compte.
+  normalSide   LedgerSide @map("normal_side")
+  /// Solde, en unités minimales de l'actif, exprimé dans le sens normal du compte.
+  balance      Decimal    @default(0) @db.Decimal(38, 0)
+  /// Nombre de lignes passées sur le compte : le rang de la dernière.
+  postingCount BigInt     @default(0) @map("posting_count")
+  /// Heure de l'ouverture, lue à l'horloge de la base.
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  type     LedgerAccountType @relation(fields: [typeKey], references: [key], onDelete: Restrict)
+  asset    Asset             @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  user     User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  postings LedgerPosting[]
+
+  @@map("ledger_accounts")
+}
+
+/// Écriture du grand livre : l'en-tête de ses lignes. Elle déclare leur nombre ; à la validation
+/// de la transaction, la base vérifie qu'elles y sont toutes et que, pour chaque actif, le
+/// total des débits égale celui des crédits. Une écriture est **immuable** : une erreur se
+/// corrige par une écriture inverse, jamais par une modification.
+model LedgerEntry {
+  id             String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Clé qui rend l'écriture unique : la repasser ne l'écrit pas une seconde fois.
+  idempotencyKey String         @unique @map("idempotency_key") @db.VarChar(160)
+  /// Type de l'écriture : l'opération qui l'a produite (`transfer.internal`…).
+  kind           String         @db.VarChar(64)
+  /// Nombre de lignes de l'écriture, déclaré à sa création.
+  postingCount   Int            @map("posting_count") @db.SmallInt
+  actorType      AuditActorType @map("actor_type")
+  /// Identifiant de l'auteur ; NULL uniquement pour l'acteur SYSTEM.
+  actorId        String?        @map("actor_id") @db.VarChar(64)
+  requestId      String?        @map("request_id") @db.VarChar(128)
+  /// Références techniques de l'opération (identifiant du transfert…) : aucune donnée
+  /// personnelle — une écriture ne s'efface jamais.
+  metadata       Json           @default("{}")
+  /// Heure de l'écriture, lue à l'horloge de la base.
+  postedAt       DateTime       @default(now()) @map("posted_at") @db.Timestamptz(6)
+
+  postings LedgerPosting[]
+
+  @@map("ledger_entries")
+}
+
+/// Ligne d'une écriture : elle débite ou crédite un compte d'un montant strictement positif.
+/// La base calcule elle-même son rang sur le compte (`accountSequence` : 1, 2, 3… sans trou) et
+/// le solde du compte après elle (`balanceAfter`). Une ligne est **immuable**.
+model LedgerPosting {
+  id              String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  entryId         String     @map("entry_id") @db.Uuid
+  /// Rang de la ligne dans l'écriture : 1, 2, 3…
+  lineNumber      Int        @map("line_number") @db.SmallInt
+  accountId       String     @map("account_id") @db.Uuid
+  /// Actif du montant : celui du compte — la base refuse tout autre.
+  assetCode       String     @map("asset_code") @db.VarChar(12)
+  side            LedgerSide
+  /// Montant, en unités minimales de l'actif : strictement positif.
+  amount          Decimal    @db.Decimal(38, 0)
+  accountSequence BigInt     @map("account_sequence")
+  balanceAfter    Decimal    @map("balance_after") @db.Decimal(38, 0)
+
+  entry   LedgerEntry   @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  asset   Asset         @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+
+  @@unique([entryId, lineNumber])
+  @@unique([accountId, accountSequence])
+  @@map("ledger_postings")
 }

@@ -76,9 +76,13 @@ export class AccountLifecycleController {
       'profile are erased at once, and its e-mail address and phone number are free for a new ' +
       'registration. Verification cases that were never reviewed are erased with their ' +
       'documents; those on which a decision was taken are kept until `legalRetentionUntil`, as ' +
-      'the law requires. What remains is erased from `erasureDueAt`. The holder is told by ' +
-      'e-mail.\n\nRefused (`409`) while the account holds a back-office role — and, rarely, ' +
-      'while another request is still modifying the account: nothing has changed, try again.',
+      'the law requires. Entries posted to the wallets of the account are never erased; when ' +
+      'there are any, the e-mail address and phone number the account carried are kept until ' +
+      '`legalRetentionUntil` as well. What remains is erased from `erasureDueAt`. The holder ' +
+      'is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role, or ' +
+      'while one of its wallets still holds funds — they must leave the account first — and, ' +
+      'rarely, while another request is still modifying the account: nothing has changed, try ' +
+      'again.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(closeAccountRequestSchema) })
   @ApiOkResponse({ schema: toOpenApiSchema(accountClosureSchema) })

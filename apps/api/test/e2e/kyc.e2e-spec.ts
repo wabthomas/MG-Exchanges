@@ -2688,6 +2688,7 @@ describe('Vérification d’identité sans stockage chiffré configuré — bout
       'erase-closed-accounts',
       'purge-published-events',
       'purge-stale-kyc-drafts',
+      'verify-ledger',
     ]);
     expect(report.otherSteps).toMatchObject({
       'purge-stale-kyc-drafts': 0,

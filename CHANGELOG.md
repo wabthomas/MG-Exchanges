@@ -3,6 +3,79 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 1 : grand livre en partie double
+
+**Aucune route ne déplace de fonds.** Ce lot livre l'endroit où les opérations écriront, et
+les règles qu'elles ne pourront pas enfreindre (ADR 0025). Les plafonds par niveau de
+vérification, le statut réglementaire et la liste des actifs à tenir restent à décider.
+
+### Ajouté
+
+- **Grand livre en partie double** : toute variation d'un solde est une écriture d'au moins
+  deux lignes, dont les débits égalent les crédits, actif par actif. Une écriture ne se
+  modifie ni ne s'efface ; chaque ligne garde son rang sur son compte et le solde qui en
+  résulte. Aucun compte ne devient négatif.
+- **Plan de comptes** : `user_available` (fonds dont un titulaire dispose),
+  `platform_custody` (fonds conservés pour les titulaires hors du grand livre),
+  `platform_fees` (frais gagnés). Il s'étendra avec les opérations.
+- **Actifs enregistrés par le back-office** : `POST /admin/ledger/assets` (code, libellé,
+  nature, nombre de décimales — 0 à 18 ; **définitif**) et `GET /admin/ledger/assets`.
+  Aucun actif n'est créé par migration.
+- **Portefeuilles du titulaire, en lecture** : `GET /me/wallets` — un portefeuille par actif
+  tenu, à zéro tant que rien n'y est passé — et `GET /me/wallets/{assetCode}/movements`, du
+  plus récent au plus ancien, paginés.
+- **Consultation par le back-office** : `GET /admin/ledger/accounts`,
+  `GET /admin/ledger/accounts/{accountId}/postings`, `GET /admin/ledger/entries/{entryId}`,
+  `GET /admin/ledger/trial-balance` (balance par actif et par type de compte). Chaque
+  consultation est inscrite au journal d'audit.
+- Permissions nouvelles `ledger.read` et `ledger.manage_assets`, détenues par `super_admin`
+  seul.
+- **`LedgerService`**, seul chemin du code vers un solde : `post` (dans sa propre
+  transaction) et `postWithin` (dans celle de l'opération). Écritures **idempotentes** par
+  leur clé ; comptes verrouillés dans un ordre unique — les titulaires, puis les comptes ;
+  fonds insuffisants et titulaire clôturé refusés sans rien écrire.
+- **Règles portées par la base** (erreurs `MGX08` et `MGX09`) : écriture entière et
+  équilibrée à la validation de la transaction ; ligne dans l'actif de son compte ; rang et
+  solde calculés par la base, sous le verrou du compte ; solde jamais négatif ; solde d'un
+  compte égal à celui de sa dernière ligne ; actifs, plan de comptes, écritures et lignes
+  immuables ; comptes jamais supprimés ; seul enregistre un actif un compte actif détenant
+  `ledger.manage_assets`, ou le rôle propriétaire ; dates lues à l'horloge de la base.
+- **Nouvelle tentative sur conflit** : `UnitOfWork.run(work, { retry })` relance entière une
+  transaction que PostgreSQL a annulée parce qu'elle en croisait une autre (interblocage,
+  conflit de sérialisation) — trois nouvelles tentatives au plus, espacées au hasard.
+- **Vérification périodique** : l'étape `verify-ledger` de la tâche horaire relit tout le
+  grand livre ; une anomalie est journalisée et inscrite au journal d'audit
+  (`ledger.verification_failed`). Rien n'est corrigé automatiquement.
+- **Clôture et grand livre** : un compte qui détient des fonds ne se clôt pas ; les écritures
+  ne s'effacent jamais ; dès qu'une écriture a été passée sur un compte du titulaire, la
+  trace de sa clôture garde son adresse et son numéro dix ans.
+- CI : le parcours à travers Nginx enregistre un actif, lit le portefeuille à zéro d'un
+  titulaire et la balance du grand livre.
+- ADR 0025. Migration `20261113160828_ledger`. Aucune dépendance nouvelle.
+
+### Modifié
+
+- **Une requête annulée parce qu'elle en croisait une autre répond `409 CONFLICT`**
+  (« The request conflicted with another one. Please try again. ») et non plus `500` : rien
+  n'a été écrit, elle est à refaire.
+- Copie des données : `formatVersion` passe à `3` — `wallets` ajouté (portefeuilles qui ont
+  servi et leurs mouvements, 2 000 au plus par portefeuille).
+- Clôture d'un compte : `409 CONFLICT` si l'un de ses portefeuilles détient encore des fonds
+  (motif `FUNDS_REMAINING`) ; `legalRetentionUntil` vaut aussi dix ans après la clôture
+  lorsqu'une écriture a été passée sur un de ses comptes.
+- Les routes des portefeuilles peuvent répondre `403 TERMS_ACCEPTANCE_REQUIRED` : elles sont
+  fermées au compte qui doit accepter les conditions d'utilisation.
+- `GET /admin/roles` : le catalogue compte quinze permissions.
+- Tâche horaire : une étape de plus, `verify-ledger`.
+
+### Non réalisé
+
+- **Aucune opération** : ni dépôt, ni retrait, ni transfert, ni frais. Les soldes valent
+  zéro. Pas d'en-tête `Idempotency-Key`, pas de fonds réservés, pas de plafonds : ils
+  viendront avec la première opération.
+- Pas d'écriture manuelle ni de correction par le back-office ; pas de rapprochement avec
+  les fonds réellement détenus ; pas d'alerte branchée sur une anomalie.
+
 ## [Non publié] — Phase 2, lot 5 : conditions d'utilisation versionnées
 
 Le texte des conditions n'est pas fourni par ce lot, et la règle — faut-il accepter de nouveau

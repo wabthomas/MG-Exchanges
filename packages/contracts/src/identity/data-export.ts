@@ -1,6 +1,7 @@
 import { isoDateSchema, isoDateTimeSchema, localeSchema, uuidSchema } from '@mgx/validation';
 import { z } from 'zod';
 
+import { exportedWalletSchema } from '../ledger/ledger.js';
 import {
   AT_MOST_ONE_SECOND_FACTOR,
   atMostOneSecondFactor,
@@ -19,9 +20,10 @@ export type DataExportRequest = z.infer<typeof dataExportRequestSchema>;
 
 /**
  * Version du format de la copie. `2` : les conditions d'utilisation acceptées figurent dans
- * `terms` ; `account.termsAcceptedAt` a disparu.
+ * `terms` ; `account.termsAcceptedAt` a disparu. `3` : les portefeuilles du titulaire et leurs
+ * mouvements figurent dans `wallets`.
  */
-export const DATA_EXPORT_FORMAT_VERSION = 2;
+export const DATA_EXPORT_FORMAT_VERSION = 3;
 
 /** Nombre maximal d'événements d'activité inclus dans une copie (les plus récents). */
 export const DATA_EXPORT_ACTIVITY_MAX_ENTRIES = 2000;
@@ -103,5 +105,11 @@ export const dataExportSchema = z.object({
   }),
   /** Conditions d'utilisation : les versions que le compte a acceptées. */
   terms: termsExportSchema,
+  /**
+   * Portefeuilles sur lesquels au moins un mouvement a été passé, dans l'ordre des codes
+   * d'actif, avec leurs mouvements — les plus récents si le portefeuille en compte davantage
+   * que la copie n'en contient.
+   */
+  wallets: z.array(exportedWalletSchema),
 });
 export type DataExport = z.infer<typeof dataExportSchema>;

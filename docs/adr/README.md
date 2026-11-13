@@ -27,5 +27,6 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0020](0020-conservation-et-purge-des-donnees-d-identite.md)      | Conservation et purge des données d'identité                                       | Acceptée — complétée par 0023 et 0024 |
 | [0021](0021-envoi-des-e-mails-par-smtp.md)                        | Envoi des e-mails par SMTP                                                         | Acceptée                              |
 | [0022](0022-verification-d-identite-dossiers-pieces-chiffrees.md) | Vérification d'identité : dossiers par niveau, pièces chiffrées, examen humain     | Acceptée — complétée par 0023         |
-| [0023](0023-cloture-conservation-effacement-copie-des-donnees.md) | Clôture d'un compte, conservation légale, effacement et copie des données          | Acceptée — complétée par 0024         |
+| [0023](0023-cloture-conservation-effacement-copie-des-donnees.md) | Clôture d'un compte, conservation légale, effacement et copie des données          | Acceptée — complétée par 0024 et 0025 |
 | [0024](0024-conditions-d-utilisation-versionnees.md)              | Conditions d'utilisation versionnées : publication, acceptation, accès conditionné | Acceptée                              |
+| [0025](0025-grand-livre-en-partie-double.md)                      | Grand livre en partie double : écritures immuables, règles portées par la base     | Acceptée                              |

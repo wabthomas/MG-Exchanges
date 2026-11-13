@@ -23,6 +23,8 @@ export const PERMISSIONS = {
   'kyc.review': 'Approve or reject identity verification cases.',
   'kyc.revoke': 'Withdraw an identity verification that was approved.',
   'terms.publish': 'Publish a new version of the terms of use and follow its acceptance.',
+  'ledger.read': 'View the ledger: assets, accounts, balances, entries and the trial balance.',
+  'ledger.manage_assets': 'Register the assets in which the platform keeps accounts.',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -85,3 +87,9 @@ export const ACCOUNT_CLOSURE_PERMISSION = 'users.close' satisfies PermissionKey;
  * vérifie elle-même à chaque publication.
  */
 export const TERMS_PUBLICATION_PERMISSION = 'terms.publish' satisfies PermissionKey;
+
+/**
+ * Permission d'enregistrer un actif au grand livre. La base de données la vérifie elle-même à
+ * chaque enregistrement.
+ */
+export const ASSET_REGISTRATION_PERMISSION = 'ledger.manage_assets' satisfies PermissionKey;

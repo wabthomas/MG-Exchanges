@@ -46,6 +46,14 @@ export const CLOSED_ACCOUNT_IDENTIFIERS_RETENTION_DAYS = 30;
 export const VERIFICATION_RECORDS_RETENTION_YEARS = 10;
 
 /**
+ * Durée, en années, pendant laquelle l'adresse et le numéro d'un compte clôturé sont conservés
+ * lorsque des écritures ont été passées sur ses comptes au grand livre : ce qui permet de
+ * rattacher une opération à une personne. La base de données impose elle-même ce plancher. Les
+ * écritures, elles, ne s'effacent jamais.
+ */
+export const FINANCIAL_RECORDS_RETENTION_YEARS = 10;
+
+/**
  * Clôture du compte par son titulaire. Elle est **immédiate et définitive** : `confirm` doit
  * valoir `true`.
  */
@@ -61,8 +69,8 @@ export type CloseAccountRequest = z.infer<typeof closeAccountRequestSchema>;
 export const accountClosureSchema = z.object({
   closedAt: isoDateTimeSchema,
   /**
-   * Terme de la conservation imposée par la loi (dossiers de vérification d'identité examinés) ;
-   * `null` si rien n'est conservé à ce titre.
+   * Terme de la conservation imposée par la loi (dossiers de vérification d'identité examinés,
+   * écritures passées sur les comptes du titulaire) ; `null` si rien n'est conservé à ce titre.
    */
   legalRetentionUntil: isoDateTimeSchema.nullable(),
   /**
@@ -74,7 +82,11 @@ export const accountClosureSchema = z.object({
 export type AccountClosure = z.infer<typeof accountClosureSchema>;
 
 /** Ce qui empêche la clôture d'un compte ; la réponse `409` les cite dans son message. */
-export const ACCOUNT_CLOSURE_BLOCKERS = ['ROLE_HELD', 'VERIFICATION_PENDING_REVIEW'] as const;
+export const ACCOUNT_CLOSURE_BLOCKERS = [
+  'ROLE_HELD',
+  'VERIFICATION_PENDING_REVIEW',
+  'FUNDS_REMAINING',
+] as const;
 export type AccountClosureBlocker = (typeof ACCOUNT_CLOSURE_BLOCKERS)[number];
 
 // --- Clôture par le personnel (back-office) -----------------------------------------------------

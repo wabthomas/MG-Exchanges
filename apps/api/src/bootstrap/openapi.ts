@@ -37,6 +37,7 @@ export function buildOpenApiDocument(
     .addTag('System', 'Platform status and feature availability')
     .addTag('Authentication', 'Sign-up, sign-in, session tokens, password')
     .addTag('Account', 'The signed-in account and its sessions')
+    .addTag('Wallets', 'Balances and movements of the signed-in account (read-only)')
     .addTag('Administration', 'Back-office (requires permissions)')
     .addTag('Health', 'Liveness and readiness probes (infrastructure)')
     .build();

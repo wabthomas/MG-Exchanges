@@ -35,6 +35,7 @@ import {
   png,
   type TestFile,
 } from '../support/kyc.js';
+import { registerAssetInSql } from '../support/ledger-sql.js';
 import {
   type CrossingMoment,
   RequestCrossing,
@@ -42,6 +43,7 @@ import {
 } from '../support/request-crossing.module.js';
 import { publishTermsAsOperator } from '../support/terms.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
+import { withConnection } from '../support/test-database.js';
 
 interface Member extends RegisteredUser {
   readonly id: string;
@@ -256,6 +258,16 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
       prepare: async (m) => () => get(m, '/me/verification'),
     },
     {
+      route: 'GET /me/wallets',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/wallets'),
+    },
+    {
+      route: 'GET /me/wallets/{assetCode}/movements',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/wallets/USD/movements'),
+    },
+    {
       route: 'POST /auth/logout',
       expected: [204, 204],
       prepare: async (m) => () => post(m, '/auth/logout'),
@@ -446,6 +458,8 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     crossing = testApp.app.get(RequestCrossing);
     await openFeature(testApp, 'registration');
     await openFeature(testApp, 'kyc');
+    // Un actif tenu par la plateforme : sans lui, la lecture d'un portefeuille répond 404.
+    await withConnection(testApp.database.ownerUrl, (owner) => registerAssetInSql(owner, 'USD', 2));
     officer = await complianceOfficer();
   });
 

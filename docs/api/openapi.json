@@ -945,7 +945,9 @@
                                   "kyc.read",
                                   "kyc.review",
                                   "kyc.revoke",
-                                  "terms.publish"
+                                  "terms.publish",
+                                  "ledger.read",
+                                  "ledger.manage_assets"
                                 ]
                               }
                             },
@@ -1256,7 +1258,9 @@
                               "kyc.read",
                               "kyc.review",
                               "kyc.revoke",
-                              "terms.publish"
+                              "terms.publish",
+                              "ledger.read",
+                              "ledger.manage_assets"
                             ]
                           }
                         },
@@ -1832,7 +1836,9 @@
                           "kyc.read",
                           "kyc.review",
                           "kyc.revoke",
-                          "terms.publish"
+                          "terms.publish",
+                          "ledger.read",
+                          "ledger.manage_assets"
                         ]
                       }
                     },
@@ -3501,7 +3507,7 @@
                     "formatVersion": {
                       "type": "number",
                       "enum": [
-                        2
+                        3
                       ]
                     },
                     "generatedAt": {
@@ -4257,6 +4263,106 @@
                         "acceptances"
                       ],
                       "additionalProperties": false
+                    },
+                    "wallets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "available": {
+                            "type": "string"
+                          },
+                          "movements": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "entryId": {
+                                  "type": "string",
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                },
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "side": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DEBIT",
+                                    "CREDIT"
+                                  ]
+                                },
+                                "amount": {
+                                  "type": "string"
+                                },
+                                "balanceAfter": {
+                                  "type": "string"
+                                },
+                                "postedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "entryId",
+                                "kind",
+                                "side",
+                                "amount",
+                                "balanceAfter",
+                                "postedAt"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "truncated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "asset",
+                          "available",
+                          "movements",
+                          "truncated"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -4268,7 +4374,8 @@
                     "sessions",
                     "activity",
                     "verification",
-                    "terms"
+                    "terms",
+                    "wallets"
                   ],
                   "additionalProperties": false
                 }
@@ -4339,7 +4446,7 @@
     },
     "/api/v1/me/close": {
       "post": {
-        "description": "**Immediate and permanent.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. `confirm` must be `true`.\n\nThe account can no longer sign in: its password, two-step verification, sessions and profile are erased at once, and its e-mail address and phone number are free for a new registration. Verification cases that were never reviewed are erased with their documents; those on which a decision was taken are kept until `legalRetentionUntil`, as the law requires. What remains is erased from `erasureDueAt`. The holder is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role — and, rarely, while another request is still modifying the account: nothing has changed, try again.",
+        "description": "**Immediate and permanent.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. `confirm` must be `true`.\n\nThe account can no longer sign in: its password, two-step verification, sessions and profile are erased at once, and its e-mail address and phone number are free for a new registration. Verification cases that were never reviewed are erased with their documents; those on which a decision was taken are kept until `legalRetentionUntil`, as the law requires. Entries posted to the wallets of the account are never erased; when there are any, the e-mail address and phone number the account carried are kept until `legalRetentionUntil` as well. What remains is erased from `erasureDueAt`. The holder is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role, or while one of its wallets still holds funds — they must leave the account first — and, rarely, while another request is still modifying the account: nothing has changed, try again.",
         "operationId": "AccountLifecycleController_close_v1",
         "parameters": [],
         "requestBody": {
@@ -6492,7 +6599,7 @@
     },
     "/api/v1/admin/users/{userId}/close": {
       "post": {
-        "description": "**Permanent.** Closes an active or suspended account, at the request of its holder received through another channel (`HOLDER_REQUEST`) or by decision of the platform (`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its holder had done it (see `POST /me/close`), and the holder is told by e-mail — never why. Refused (`409`) while the account holds a back-office role, or while one of its identity verification cases awaits review: decide the case first, so that the decision is kept. Also refused (`409`), rarely, while another request is still modifying the account: nothing has changed, try again. The mandatory `reason` is written to the audit log. You cannot close your own account from the back office. Requires `users.close`.",
+        "description": "**Permanent.** Closes an active or suspended account, at the request of its holder received through another channel (`HOLDER_REQUEST`) or by decision of the platform (`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its holder had done it (see `POST /me/close`), and the holder is told by e-mail — never why. Refused (`409`) while the account holds a back-office role, while one of its identity verification cases awaits review — decide the case first, so that the decision is kept — or while one of its wallets still holds funds: they must leave the account first. Also refused (`409`), rarely, while another request is still modifying the account: nothing has changed, try again. The mandatory `reason` is written to the audit log. You cannot close your own account from the back office. Requires `users.close`.",
         "operationId": "AdminUsersController_close_v1",
         "parameters": [
           {
@@ -6727,7 +6834,9 @@
                                 "kyc.read",
                                 "kyc.review",
                                 "kyc.revoke",
-                                "terms.publish"
+                                "terms.publish",
+                                "ledger.read",
+                                "ledger.manage_assets"
                               ]
                             }
                           },
@@ -15799,6 +15908,1560 @@
         ]
       }
     },
+    "/api/v1/me/wallets": {
+      "get": {
+        "description": "One wallet per asset in which the platform keeps accounts, in the order of asset codes — at zero until funds are posted to it. The list is empty while no asset is registered. `available` is a **decimal string** with exactly `asset.scale` decimals, never a JSON number. Read-only: no route moves funds yet.",
+        "operationId": "WalletController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "wallets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "available": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "asset",
+                          "available"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "wallets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My wallets",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/api/v1/me/wallets/{assetCode}/movements": {
+      "get": {
+        "description": "**Most recent first.** Each movement is one line of a ledger entry: `CREDIT` — funds came in; `DEBIT` — funds went out. `amount` is always positive; `balanceAfter` is the balance of the wallet right after the movement, so the first movement of the first page carries the current balance (`wallet.available`). `kind` names the operation that produced the entry; movements that share an `entryId` belong to the same operation. Page with `after` = the `nextCursor` of the previous page. Answers `NOT_FOUND` for an asset the platform does not keep.",
+        "operationId": "WalletController_movements_v1",
+        "parameters": [
+          {
+            "name": "assetCode",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "wallet": {
+                      "type": "object",
+                      "properties": {
+                        "asset": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "FIAT",
+                                "CRYPTO"
+                              ]
+                            },
+                            "scale": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 18
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "name",
+                            "kind",
+                            "scale"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "available": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "asset",
+                        "available"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "movements": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "entryId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "DEBIT",
+                              "CREDIT"
+                            ]
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "balanceAfter": {
+                            "type": "string"
+                          },
+                          "postedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "entryId",
+                          "kind",
+                          "side",
+                          "amount",
+                          "balanceAfter",
+                          "postedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "wallet",
+                    "movements",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Movements of one of my wallets",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/api/v1/admin/ledger/assets": {
+      "get": {
+        "description": "Every asset in which the platform keeps accounts, in the order of their codes, with who registered it and when. `registeredBy` is `null` for an asset registered outside the API. Every consultation is recorded in the audit log. Requires `ledger.read`.",
+        "operationId": "AdminLedgerController_listAssets_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "assets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "FIAT",
+                              "CRYPTO"
+                            ]
+                          },
+                          "scale": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 18
+                          },
+                          "registeredAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          },
+                          "registeredBy": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "name",
+                          "kind",
+                          "scale",
+                          "registeredAt",
+                          "registeredBy"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "assets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the assets of the ledger",
+        "tags": [
+          "Administration"
+        ]
+      },
+      "post": {
+        "description": "**Permanent.** A registered asset is never changed nor removed: every amount of the ledger is an integer number of its smallest unit, so its number of decimals — `scale`: 2 for USD and CDF, 8 for BTC, 18 at most — can never change, and neither can its code, its kind or its name. Check them twice. Registering an asset moves no funds and opens no operation: it only gives every account holder an empty wallet in that asset. Answers `CONFLICT` if the code is already registered.\n\nThe mandatory `reason` is written to the audit log. Requires `ledger.manage_assets`.",
+        "operationId": "AdminLedgerController_registerAsset_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "pattern": "^\\P{Cc}*$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "FIAT",
+                      "CRYPTO"
+                    ]
+                  },
+                  "scale": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 18
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "code",
+                  "name",
+                  "kind",
+                  "scale",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "FIAT",
+                        "CRYPTO"
+                      ]
+                    },
+                    "scale": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 18
+                    },
+                    "registeredAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "registeredBy": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "name",
+                    "kind",
+                    "scale",
+                    "registeredAt",
+                    "registeredBy"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Register an asset",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/ledger/accounts": {
+      "get": {
+        "description": "Accounts of account holders and of the platform itself, **oldest first**. Filter by `userId`, `assetCode` or `type`. An account is opened by the first entry posted to it: a holder with no account in an asset simply holds nothing in it. `balance` is expressed on the normal side of the account (`normalSide`) and is never negative. Page with `after` = the `nextCursor` of the previous page. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers. Every consultation is recorded in the audit log. Requires `ledger.read`.",
+        "operationId": "AdminLedgerController_listAccounts_v1",
+        "parameters": [
+          {
+            "name": "userId",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "assetCode",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "USD"
+            }
+          },
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "user_available",
+                "platform_custody",
+                "platform_fees"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accounts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "user_available",
+                              "platform_custody",
+                              "platform_fees"
+                            ]
+                          },
+                          "owner": {
+                            "type": "string",
+                            "enum": [
+                              "USER",
+                              "PLATFORM"
+                            ]
+                          },
+                          "userId": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "normalSide": {
+                            "type": "string",
+                            "enum": [
+                              "DEBIT",
+                              "CREDIT"
+                            ]
+                          },
+                          "balance": {
+                            "type": "string"
+                          },
+                          "postingCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "type",
+                          "owner",
+                          "userId",
+                          "asset",
+                          "normalSide",
+                          "balance",
+                          "postingCount",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "accounts",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Browse ledger accounts",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/ledger/accounts/{accountId}/postings": {
+      "get": {
+        "description": "The account and the lines posted to it, **most recent first**. `accountSequence` numbers the lines of the account 1, 2, 3… without a gap, and `balanceAfter` is the balance right after each line: the first line of the first page carries the balance of the account. Page with `after` = the `nextCursor` of the previous page. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers. Every consultation is recorded in the audit log. Requires `ledger.read`.",
+        "operationId": "AdminLedgerController_listPostings_v1",
+        "parameters": [
+          {
+            "name": "accountId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "account": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "user_available",
+                            "platform_custody",
+                            "platform_fees"
+                          ]
+                        },
+                        "owner": {
+                          "type": "string",
+                          "enum": [
+                            "USER",
+                            "PLATFORM"
+                          ]
+                        },
+                        "userId": {
+                          "nullable": true,
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "asset": {
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "FIAT",
+                                "CRYPTO"
+                              ]
+                            },
+                            "scale": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 18
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "name",
+                            "kind",
+                            "scale"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "normalSide": {
+                          "type": "string",
+                          "enum": [
+                            "DEBIT",
+                            "CREDIT"
+                          ]
+                        },
+                        "balance": {
+                          "type": "string"
+                        },
+                        "postingCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "createdAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type",
+                        "owner",
+                        "userId",
+                        "asset",
+                        "normalSide",
+                        "balance",
+                        "postingCount",
+                        "createdAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "postings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "entryId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "lineNumber": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "DEBIT",
+                              "CREDIT"
+                            ]
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "balanceAfter": {
+                            "type": "string"
+                          },
+                          "accountSequence": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "postedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "entryId",
+                          "lineNumber",
+                          "kind",
+                          "side",
+                          "amount",
+                          "balanceAfter",
+                          "accountSequence",
+                          "postedAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "account",
+                    "postings",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "View a ledger account and its postings",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/ledger/entries/{entryId}": {
+      "get": {
+        "description": "The whole entry: who posted it, for which operation (`kind`, `metadata`), under which idempotency key, and all its lines in order. For each asset, the debits of an entry equal its credits. An entry is never changed nor deleted: a mistake is corrected by a reverse entry. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers. Every consultation is recorded in the audit log. Requires `ledger.read`.",
+        "operationId": "AdminLedgerController_getEntry_v1",
+        "parameters": [
+          {
+            "name": "entryId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "idempotencyKey": {
+                      "type": "string"
+                    },
+                    "actor": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "USER",
+                            "SYSTEM",
+                            "SERVICE"
+                          ]
+                        },
+                        "id": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "nullable": true,
+                      "type": "string"
+                    },
+                    "metadata": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "postedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "postings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "lineNumber": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          },
+                          "account": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "user_available",
+                                  "platform_custody",
+                                  "platform_fees"
+                                ]
+                              },
+                              "owner": {
+                                "type": "string",
+                                "enum": [
+                                  "USER",
+                                  "PLATFORM"
+                                ]
+                              },
+                              "userId": {
+                                "nullable": true,
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "type",
+                              "owner",
+                              "userId"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "side": {
+                            "type": "string",
+                            "enum": [
+                              "DEBIT",
+                              "CREDIT"
+                            ]
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "balanceAfter": {
+                            "type": "string"
+                          },
+                          "accountSequence": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "lineNumber",
+                          "account",
+                          "asset",
+                          "side",
+                          "amount",
+                          "balanceAfter",
+                          "accountSequence"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "idempotencyKey",
+                    "actor",
+                    "requestId",
+                    "metadata",
+                    "postedAt",
+                    "postings"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "View a ledger entry",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/ledger/trial-balance": {
+      "get": {
+        "description": "For each asset, the total of the balances per account type. `debitBalance` adds the accounts whose balance grows on the debit side — what the platform holds for its account holders; `creditBalance`, those that grow on the credit side — what it owes them, and what it earned. The two are equal (`balanced`) as long as the ledger is sound: a difference means the ledger was altered outside the application. The same verification, and deeper ones, also run every hour. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers. Every consultation is recorded in the audit log. Requires `ledger.read`.",
+        "operationId": "AdminLedgerController_trialBalance_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    },
+                    "balanced": {
+                      "type": "boolean"
+                    },
+                    "assets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "debitBalance": {
+                            "type": "string"
+                          },
+                          "creditBalance": {
+                            "type": "string"
+                          },
+                          "balanced": {
+                            "type": "boolean"
+                          },
+                          "accountTypes": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "user_available",
+                                    "platform_custody",
+                                    "platform_fees"
+                                  ]
+                                },
+                                "owner": {
+                                  "type": "string",
+                                  "enum": [
+                                    "USER",
+                                    "PLATFORM"
+                                  ]
+                                },
+                                "normalSide": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DEBIT",
+                                    "CREDIT"
+                                  ]
+                                },
+                                "accounts": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                "balance": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "owner",
+                                "normalSide",
+                                "accounts",
+                                "balance"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "asset",
+                          "debitBalance",
+                          "creditBalance",
+                          "balanced",
+                          "accountTypes"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "generatedAt",
+                    "balanced",
+                    "assets"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Trial balance of the ledger",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "HealthController_live",
@@ -16083,6 +17746,10 @@
     {
       "name": "Account",
       "description": "The signed-in account and its sessions"
+    },
+    {
+      "name": "Wallets",
+      "description": "Balances and movements of the signed-in account (read-only)"
     },
     {
       "name": "Administration",

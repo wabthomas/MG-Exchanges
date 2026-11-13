@@ -12,6 +12,7 @@ import { PinoLogger } from 'nestjs-pino';
 
 import {
   ACCOUNT_CLOSED_SQLSTATE,
+  isTransactionConflict,
   sqlStateOf,
 } from '../../infrastructure/database/database-errors.js';
 import { AppError } from '../errors/app-error.js';
@@ -78,6 +79,16 @@ export function toProblem(exception: unknown): Problem {
     return { status: 409, code: 'CONFLICT', detail: 'This account is closed.' };
   }
 
+  // Transaction annulée par la base parce qu'elle en croisait une autre, y compris après ses
+  // nouvelles tentatives. Rien n'a été écrit : la requête peut être renvoyée telle quelle.
+  if (isTransactionConflict(exception)) {
+    return {
+      status: 409,
+      code: 'CONFLICT',
+      detail: 'The request conflicted with another one. Please try again.',
+    };
+  }
+
   return { status: 500, code: 'INTERNAL_ERROR', detail: GENERIC_SERVER_ERROR_DETAIL };
 }
 
@@ -135,6 +146,12 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       this.logger.error(
         { err: exception, requestId: getRequestId(request), code: problem.code },
         'Request failed',
+      );
+    } else if (isTransactionConflict(exception)) {
+      // Pas un défaut, mais un signal : des requêtes se disputent les mêmes lignes.
+      this.logger.warn(
+        { err: exception, requestId: getRequestId(request) },
+        'Request abandoned: its transaction conflicted with another one',
       );
     }
 

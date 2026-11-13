@@ -70,25 +70,32 @@ apps/api/src/
                           des données, purge périodique
     kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
                           examen par la conformité
+    ledger/               grand livre en partie double : actifs, comptes, écritures ;
+                          portefeuilles en lecture ; vérification périodique
   cli/                    outil d'exploitation (création des premiers administrateurs,
                           publication des conditions d'utilisation)
 ```
 
-**Sens des dépendances entre modules métier.** `kyc` dépend d'`identity` (comptes, gardes,
-permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien du module `kyc`.
+**Sens des dépendances entre modules métier.** `kyc` et `ledger` dépendent d'`identity`
+(comptes, gardes, permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien de ces
+modules.
 
 - Pour connaître le niveau d'un compte et son profil vérifié, elle **lit** les dossiers
   acceptés à travers son propre port, `VerificationStatusReader` — en lecture seule : seul le
   module `kyc` écrit un dossier.
 - Pour la purge des dossiers abandonnés, elle expose un registre, `MaintenanceStepRegistry` :
-  un module y inscrit une étape, exécutée avec la tâche horaire. Un module ajouté plus tard se
-  branche de la même façon, sans que l'identité le connaisse.
+  un module y inscrit une étape, exécutée avec la tâche horaire — une purge, ou une
+  vérification : le grand livre y inscrit la sienne (`verify-ledger`). Un module ajouté plus
+  tard se branche de la même façon, sans que l'identité le connaisse.
 - Pour la clôture d'un compte, elle expose un second registre, `AccountDataRegistry`. Un
   module qui détient des données rattachées à un compte s'y inscrit (`AccountDataHolder`) et
   répond de ce qu'il détient : ce qui s'oppose à la clôture, jusqu'à quand la loi impose de
   conserver, ce qui s'efface à la clôture puis à l'échéance, ce qui figure dans la copie
-  remise au titulaire. **Tout module à venir qui rattache des données à un compte — le grand
-  livre, les ordres — doit s'y inscrire** : sans cela, la clôture ignorerait ce qu'il détient.
+  remise au titulaire. Le grand livre s'y inscrit : des fonds s'opposent à la clôture, une
+  écriture passée impose dix ans de conservation, rien ne s'efface, les portefeuilles
+  figurent dans la copie. **Tout module à venir qui rattache des données à un compte — les
+  ordres, par exemple — doit s'y inscrire** : sans cela, la clôture ignorerait ce qu'il
+  détient.
   La base, elle, refuse de toute façon une ligne ajoutée à un compte clôturé, pour les tables
   qui portent le déclencheur `<table>_account_open` (voir [`DATABASE.md`](DATABASE.md)).
 
@@ -137,6 +144,9 @@ Un envoi irrecevable est donc refusé sans avoir été lu.
 | purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
 |                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés |
 |                              |                | à l'échéance d'effacement, événements publiés depuis trente jours |
+| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie |
+|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est       |
+|                              |                | corrigé automatiquement                                           |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
@@ -156,11 +166,13 @@ permis.
 
 De même, la date de publication d'une version des conditions d'utilisation et celle de chaque
 acceptation sont **fixées par PostgreSQL** (`clock_timestamp()`), quelle que soit la valeur
-que l'application lui présente : ce sont des preuves, et l'ordre des versions en dépend.
+que l'application lui présente : ce sont des preuves, et l'ordre des versions en dépend. Il
+en va de même de la date d'une écriture du grand livre, de l'enregistrement d'un actif et de
+l'ouverture d'un compte.
 
 ### Couches d'un module métier
 
-`system-settings`, `identity` et `kyc` servent de modèles aux modules métier à venir :
+`system-settings`, `identity`, `kyc` et `ledger` servent de modèles aux modules métier à venir :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
@@ -179,7 +191,8 @@ le mécanisme de persistance et s'appuient directement sur le client de base de 
 code applicatif — précisément celles qui doivent tenir même si ce code est fautif : journal
 d'audit en ajout seul, double validation des changements de rôle, parcours d'un dossier de
 vérification d'identité, clôture d'un compte, publication et acceptation des conditions
-d'utilisation. Elles sont alors
+d'utilisation, grand livre (écritures entières et équilibrées, soldes jamais négatifs, rien
+qui se modifie ni ne s'efface). Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
@@ -191,6 +204,20 @@ erreur métier.
 **Transactions explicites.** `UnitOfWork.run(tx => …)` délimite une transaction ; le client
 `tx` est passé explicitement à chaque service qui y participe. Les frontières de transaction
 sont donc toujours visibles dans le code — essentiel pour les opérations financières.
+Lorsque PostgreSQL annule une transaction parce qu'elle en croisait une autre (interblocage,
+conflit de sérialisation), `UnitOfWork.run(work, { retry })` la **relance entière**, un
+nombre borné de fois, après une courte pause tirée au hasard ; `work` doit donc pouvoir être
+rejoué, et ne rien faire hors de la transaction. Sans cette option, ou une fois les
+tentatives épuisées, la requête répond `409 CONFLICT` — jamais une erreur serveur.
+
+**Un seul chemin pour l'argent.** Aucun module n'écrit un solde : il passe une écriture par
+`LedgerService` — `post` dans sa propre transaction, `postWithin(tx, …)` dans celle de
+l'opération. Chaque écriture porte une **clé d'idempotence** : la repasser rend le résultat
+d'origine sans rien écrire. **Ordre des verrous : les titulaires, puis les comptes.** Une
+écriture retient d'abord ses titulaires, dans l'ordre de leurs identifiants, puis verrouille
+ses comptes, dans l'ordre des leurs ; deux écritures qui se croisent s'attendent sans
+s'interbloquer. Une opération peut donc verrouiller un titulaire _avant_ de passer une
+écriture — pour vérifier un plafond, par exemple —, jamais après (ADR 0025).
 
 **Rien d'important sans trace.** `AuditService.record(tx, …)` écrit dans la transaction de
 l'opération auditée : une action sensible ne peut pas aboutir sans son entrée d'audit.
@@ -235,9 +262,14 @@ partie du code ne lit `process.env` en dehors de `config/` et des deux points d'
 2. Modéliser les tables dans `schema.prisma`, créer la migration (`pnpm db:migrate:dev --create-only`),
    y ajouter contraintes et déclencheurs à la main, la documenter dans `DATABASE.md`.
 3. Définir les contrats (schémas Zod) dans `@mgx/contracts`.
-4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi.
+4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi. Un mouvement de
+   fonds passe par `LedgerService.postWithin(tx, …)`, avec une clé d'idempotence propre à
+   l'opération — jamais par une écriture directe dans les tables du grand livre.
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.
-6. Tester : unitaires, intégration sur PostgreSQL réel (concurrence comprise), bout en bout.
-7. Importer le module dans `app.module.ts`.
+6. Si le module rattache des données à un compte : l'inscrire à `AccountDataRegistry`
+   (clôture, conservation, effacement, copie des données) et poser le déclencheur
+   `<table>_account_open` sur ses tables.
+7. Tester : unitaires, intégration sur PostgreSQL réel (concurrence comprise), bout en bout.
+8. Importer le module dans `app.module.ts`.

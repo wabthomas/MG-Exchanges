@@ -91,6 +91,13 @@ de la bascule (schéma « étendre, migrer, contracter »).
 > base. Sans objet pour une base neuve. La règle ci-dessus vaut de nouveau pour les
 > migrations suivantes.
 
+La migration `ledger` (grand livre), elle, **n'ajoute que** des tables, des règles et deux
+permissions : elle suit la règle, et la version précédente de l'API continue de fonctionner
+sur la base migrée. Constaté sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet — inscription, vérification d'identité, back-office, copie des données, clôture —
+sans une erreur.
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -121,7 +128,8 @@ toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **
 données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
 déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
-échéance** — durées dans `DATABASE.md`). Un échec est journalisé
+échéance** — durées dans `DATABASE.md` ; puis **vérification du grand livre**, voir « Grand
+livre »). Un échec est journalisé
 (`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
 l'exécution suivante réessaie.
 
@@ -169,7 +177,7 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   le passage : elle n'attend aucun verrou plus de 300 ms, puis recommence. Ce délai doit
   rester inférieur à `deadlock_timeout` de PostgreSQL (une seconde par défaut) : **ne pas
   abaisser ce réglage sous une seconde**, faute de quoi la base interromprait elle-même l'une
-  des deux requêtes, au hasard (`500`).
+  des deux requêtes, au hasard (`409` : rien n'est écrit, mais la requête est à refaire).
 - **Surveiller l'effacement.** L'étape `erase-closed-accounts` traite au plus 200 comptes par
   heure, de l'échéance la plus ancienne à la plus récente. Un compte qui ne peut pas être
   effacé est journalisé (`Closed account not erased`, avec son identifiant) et retenté à
@@ -195,6 +203,62 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   rouvrir le service.
 - **Journal d'audit.** Il n'est jamais purgé (identifiant technique du compte, adresse IP,
   appareil). Sa durée de conservation reste à fixer avec le conseil juridique.
+
+## Grand livre
+
+Décisions : ADR 0025. **Aucune route ne déplace de fonds à ce jour** ; ce que l'exploitation
+doit déjà savoir :
+
+- **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
+  aucun ne l'est par les migrations. Un administrateur (`super_admin`, validation en deux
+  étapes) les enregistre par l'API :
+
+  ```bash
+  curl -X POST https://<hôte>/api/v1/admin/ledger/assets \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"code":"USD","name":"US dollar","kind":"FIAT","scale":2,"reason":"Comptes en dollars : décision du 12/03"}'
+  ```
+
+  **C'est définitif** : ni le code, ni le libellé, ni la nature, ni le nombre de décimales
+  (`scale` : 2 pour le dollar et le franc congolais, 8 pour le bitcoin, 18 au plus) ne se
+  modifient ensuite, et un actif ne se retire pas. Un nombre de décimales erroné oblige à
+  enregistrer l'actif sous un autre code. Enregistrer un actif ne déplace aucun fonds et
+  n'ouvre aucune opération : chaque titulaire voit apparaître un portefeuille à zéro.
+
+- **Vérification horaire.** L'étape `verify-ledger` de la tâche de maintenance relit **tout**
+  le grand livre. Une anomalie produit :
+  - une erreur dans les journaux, `Ledger verification failed`, avec la liste des anomalies
+    (nature et identifiant — jamais de montant ; cinquante au plus) ;
+  - une entrée `ledger.verification_failed` au journal d'audit ;
+  - l'échec de l'étape (`Account maintenance step failed`), à chaque passage tant que
+    l'anomalie demeure.
+
+  **Cette alerte doit être traitée sans délai** — et aucune alerte automatique n'est encore
+  branchée (phase 9) : c'est à la supervision des journaux de la relever. Une anomalie ne
+  peut venir que d'une écriture faite hors des règles de la base (déclencheurs désactivés
+  avec le rôle propriétaire, restauration partielle) ou d'un défaut de ces règles. **Ne rien
+  corriger à la main** : passer en mode maintenance, conserver les journaux, examiner. Rien
+  n'est corrigé automatiquement.
+
+- **Rôle propriétaire.** Il peut désactiver les règles du grand livre ; le rôle de l'API ne
+  le peut pas. Ses identifiants (`DATABASE_MIGRATION_URL`) ne servent qu'aux migrations et
+  aux outils d'exploitation, et ne sont jamais donnés à l'API.
+- **Requêtes qui se croisent.** Avertissement
+  `Request abandoned: its transaction conflicted with another one` : PostgreSQL a annulé une
+  transaction qui en croisait une autre, y compris après ses nouvelles tentatives ; la
+  requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans gravité ; répété,
+  il désigne des requêtes qui se disputent les mêmes lignes — à signaler.
+- **Sauvegarde et restauration.** Le grand livre se restaure **en entier, avec le reste de la
+  base** : restaurer une partie de ses tables le rendrait incohérent, ce que la vérification
+  relèverait. Après une restauration, laisser passer la vérification horaire avant de
+  rouvrir le service.
+- **Clôture d'un compte.** Un compte dont un portefeuille détient des fonds ne se clôt pas,
+  pas même par le personnel (`409`). Sans effet tant qu'aucune opération n'existe ; la
+  procédure de sortie des fonds d'un compte à fermer devra exister avant l'ouverture des
+  dépôts.
+- **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
+  bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
+  puis à borner, avant que le grand livre ne compte des millions de lignes.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -449,7 +513,8 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
    compte est arrêté, accepte, reprend —,
    **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
    maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
-   acceptation, puis copie des données et clôture du compte), contrôle que le volume
+   acceptation, **grand livre** : enregistrement d'un actif, portefeuille à zéro, balance,
+   puis copie des données et clôture du compte), contrôle que le volume
    ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
    sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
    propriétaire et la base fantôme créée par le script d'initialisation.

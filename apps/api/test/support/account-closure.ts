@@ -10,7 +10,8 @@ export interface SqlClosureOptions {
   readonly closedAt?: Date;
   /**
    * Terme de la conservation légale. Par défaut : dix ans après la clôture si une décision a
-   * été prise sur un dossier de vérification du compte, aucun sinon.
+   * été prise sur un dossier de vérification du compte, ou si une écriture a été passée sur un
+   * de ses comptes au grand livre ; aucun sinon.
    */
   readonly legalRetentionUntil?: Date | null;
 }
@@ -43,7 +44,9 @@ export async function insertClosureRecord(
          WHEN $4::boolean THEN (
            SELECT ${TEN_YEARS_LATER}
            WHERE EXISTS (SELECT 1 FROM kyc_cases k
-                         WHERE k.user_id = $1 AND k.status NOT IN ('DRAFT', 'SUBMITTED')))
+                         WHERE k.user_id = $1 AND k.status NOT IN ('DRAFT', 'SUBMITTED'))
+              OR EXISTS (SELECT 1 FROM ledger_accounts a
+                         WHERE a.user_id = $1 AND a.posting_count > 0))
          ELSE $3::timestamptz
        END AS until
        FROM closing

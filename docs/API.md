@@ -86,6 +86,11 @@ erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 
 Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
 
+**Requêtes qui se croisent.** Lorsque PostgreSQL doit annuler une transaction parce qu'elle
+en croisait une autre — interblocage, conflit de sérialisation —, la requête répond
+`409 CONFLICT` (« The request conflicted with another one. Please try again. ») : **rien n'a
+été écrit en base**, elle est à refaire. Le cas est journalisé côté serveur.
+
 ### Erreurs produites par le reverse proxy
 
 Nginx répond lui-même dans cinq cas, **au même format** que l'API :
@@ -351,13 +356,15 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   erronés sont comptés comme ailleurs (`429 RATE_LIMITED` avec `Retry-After`) et inscrits à
   l'historique du compte.
 - **Copie des données.** Un document JSON (`Content-Disposition: attachment`,
-  `mg-exchange-data.json`) : `formatVersion` (`2`), `generatedAt`, `account`, `profile`,
+  `mg-exchange-data.json`) : `formatVersion` (`3`), `generatedAt`, `account`, `profile`,
   `security`, `sessions`, `activity` (les 2 000 événements les plus récents ; `truncated`
-  indique s'il en existe de plus anciens), `verification` (niveau et dossiers) et `terms`
+  indique s'il en existe de plus anciens), `verification` (niveau et dossiers), `terms`
   (`acceptances` : chaque version des conditions d'utilisation acceptée et sa date, de la
-  plus récente à la plus ancienne). Le format `2` a ajouté `terms` et retiré
-  `account.termsAcceptedAt`. Elle ne
-  contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
+  plus récente à la plus ancienne) et `wallets` (chaque portefeuille sur lequel au moins un
+  mouvement a été passé : son actif, son solde, et ses mouvements du plus récent au plus
+  ancien — les 2 000 plus récents ; `truncated` indique s'il en existe de plus anciens). Le
+  format `2` a ajouté `terms` et retiré `account.termsAcceptedAt` ; le format `3` a ajouté
+  `wallets`. Elle ne contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
   joints aux dossiers y sont **décrits, pas inclus**. Au plus **3 copies par 24 heures**
   (`429` ensuite). Chaque copie figure dans l'historique et est signalée au titulaire par
   e-mail, avec l'adresse IP d'origine. `503 SERVICE_UNAVAILABLE` si le compte a déclaré une
@@ -370,11 +377,18 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   - un dossier de vérification jamais examiné (en préparation ou déposé) est effacé avec ses
     pièces ; ceux sur lesquels une décision a été prise sont conservés jusqu'à
     `legalRetentionUntil` (dix ans après la clôture ; `null` s'il n'y en a pas) ;
+  - **les écritures du grand livre ne s'effacent jamais.** Dès qu'un mouvement a été passé
+    sur un portefeuille du compte, `legalRetentionUntil` vaut dix ans après la clôture, et
+    l'ancienne adresse et l'ancien numéro sont gardés jusque-là : c'est ce qui permet,
+    pendant ce temps, de rattacher une opération à une personne ;
   - ce qui reste — l'ancienne adresse, l'ancien numéro, les dossiers conservés — est effacé à
     partir de `erasureDueAt` (le terme légal, et jamais moins de 30 jours après la clôture) ;
   - le titulaire reçoit un e-mail de confirmation à son ancienne adresse.
 
   `409 CONFLICT` si le compte détient un rôle du back-office : il lui est d'abord retiré.
+  `409 CONFLICT` si l'un de ses portefeuilles **détient encore des fonds** : ils doivent
+  d'abord être retirés ou transférés (« it still holds funds, which must be withdrawn or
+  transferred first »).
   `409 CONFLICT` aussi, plus rarement, si une autre requête modifie le compte au même instant
   et tarde à s'achever : rien n'a changé, la demande est à refaire.
 
@@ -450,8 +464,8 @@ que soit sa règle.
   | son historique                          | `GET /me/activity`                                                                |
   | emporter ses données, partir            | `POST /me/data-export`, `POST /me/close`                                          |
 
-  Lui sont fermés : le profil, le numéro de téléphone, la vérification d'identité — et, par
-  défaut, **toute route ajoutée par la suite** (elle doit déclarer explicitement qu'elle reste
+  Lui sont fermés : le profil, le numéro de téléphone, la vérification d'identité, les
+  portefeuilles — et, par défaut, **toute route ajoutée par la suite** (elle doit déclarer explicitement qu'elle reste
   ouverte). Les routes publiques ne sont pas concernées, ni le back-office : le personnel y
   agit pour la plateforme, non comme client.
 
@@ -543,6 +557,39 @@ y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
 - Le dossier d'un autre compte « n'existe pas » (`404`). Sans stockage chiffré configuré
   côté serveur, tout sauf la situation répond `503 SERVICE_UNAVAILABLE`.
 
+## Portefeuilles
+
+**Lecture seule : aucune route ne dépose, ne retire ni ne transfère de fonds.** Les soldes
+sont ceux du grand livre de la plateforme ; tant qu'aucune opération n'existe, ils valent
+zéro.
+
+| Route                                          | Réponse                             |
+| ---------------------------------------------- | ----------------------------------- |
+| `GET /api/v1/me/wallets`                       | `{ wallets }`                       |
+| `GET /api/v1/me/wallets/{assetCode}/movements` | `{ wallet, movements, nextCursor }` |
+
+- **Un portefeuille par actif** dans lequel la plateforme tient des comptes, dans l'ordre des
+  codes : `asset` (`code`, `name`, `kind` — `FIAT` ou `CRYPTO` —, `scale`) et `available`, ce
+  dont le titulaire dispose. Un portefeuille vaut zéro tant qu'aucun mouvement n'y a été
+  passé ; la liste est vide tant qu'aucun actif n'est enregistré.
+- **Montants** : des chaînes décimales à exactement `asset.scale` décimales — `"0.00"` pour
+  un actif à deux décimales, `"0.00000000"` pour un actif à huit —, jamais des nombres JSON.
+- **Mouvements**, du plus récent au plus ancien : `id`, `entryId`, `kind`, `side`, `amount`,
+  `balanceAfter`, `postedAt`. `side` se lit comme sur un relevé de compte : `CREDIT`, des
+  fonds entrent ; `DEBIT`, des fonds sortent. `amount` est toujours positif ; `balanceAfter`
+  est le solde du portefeuille juste après le mouvement — le premier mouvement de la première
+  page porte donc le solde actuel (`wallet.available`). `kind` nomme l'opération qui a
+  produit le mouvement ; des mouvements de même `entryId` appartiennent à la même opération.
+- **Pagination** : `limit` (1 à 100, 20 par défaut) et `after`, le `nextCursor` de la page
+  précédente — `null` à la dernière page. Tout autre paramètre, et un curseur qui ne vient
+  pas d'une page précédente, sont refusés (`400 VALIDATION_FAILED`).
+- `404 NOT_FOUND` pour un actif que la plateforme ne tient pas ; `400 VALIDATION_FAILED`
+  pour un code d'actif mal formé (2 à 12 caractères : une lettre majuscule, puis des lettres
+  majuscules ou des chiffres).
+- Ces routes suivent le mode maintenance (`503 MAINTENANCE`) et sont fermées au compte qui
+  doit encore accepter les conditions d'utilisation (`403 TERMS_ACCEPTANCE_REQUIRED`). Elles
+  ne dépendent d'aucune fonctionnalité à ouvrir : elles ne font que lire.
+
 ## Administration
 
 Routes réservées aux comptes détenant la permission indiquée (`403 FORBIDDEN` sinon ; le
@@ -551,39 +598,46 @@ refus est inscrit au journal d'audit). Les utilisateurs finaux n'ont aucune perm
 **Le back-office exige la validation en deux étapes** : sans elle, toute route
 d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les permissions.
 
-| Route                                                 | Permission              | Rôle                                                         |
-| ----------------------------------------------------- | ----------------------- | ------------------------------------------------------------ |
-| `GET /api/v1/admin/system-settings`                   | `system_settings.read`  | paramètres et valeurs en vigueur                             |
-| `PUT /api/v1/admin/system-settings/{key}`             | `system_settings.write` | mode maintenance, ouverture d'une fonctionnalité             |
-| `GET /api/v1/admin/users`                             | `users.read`            | parcourir la liste des comptes                               |
-| `POST /api/v1/admin/users/search`                     | `users.read`            | retrouver un compte par un identifiant complet               |
-| `GET /api/v1/admin/users/{userId}`                    | `users.read`            | fiche d'un compte                                            |
-| `POST /api/v1/admin/users/{userId}/suspend`           | `users.suspend`         | suspendre (`reason`, `notifyUser?`)                          |
-| `POST /api/v1/admin/users/{userId}/reactivate`        | `users.suspend`         | lever une suspension (`reason`)                              |
-| `POST /api/v1/admin/users/{userId}/sessions/revoke`   | `users.revoke_sessions` | déconnecter le compte partout (`reason`)                     |
-| `POST /api/v1/admin/users/{userId}/mfa/reset`         | `users.reset_mfa`       | retirer le second facteur (`reason`)                         |
-| `POST /api/v1/admin/users/{userId}/close`             | `users.close`           | clore le compte (`ground`, `reason`, `confirm`)              |
-| `GET /api/v1/admin/roles`                             | `roles.read`            | rôles, permissions, nombre de détenteurs                     |
-| `GET /api/v1/admin/role-changes`                      | `roles.read`            | demandes de changement de rôle                               |
-| `POST /api/v1/admin/role-changes`                     | `roles.manage`          | demander l'attribution ou le retrait d'un rôle               |
-| `GET /api/v1/admin/role-changes/{requestId}`          | `roles.read`            | une demande                                                  |
-| `POST /api/v1/admin/role-changes/{requestId}/approve` | `roles.manage`          | approuver — **par un second administrateur**                 |
-| `POST /api/v1/admin/role-changes/{requestId}/reject`  | `roles.manage`          | refuser (`note`) — par un second administrateur              |
-| `POST /api/v1/admin/role-changes/{requestId}/cancel`  | `roles.manage`          | retirer sa propre demande                                    |
-| `GET /api/v1/admin/kyc/cases`                         | `kyc.read`              | file des dossiers de vérification                            |
-| `GET /api/v1/admin/kyc/cases/{caseId}`                | `kyc.read`              | fiche d'un dossier                                           |
-| `GET /api/v1/admin/kyc/cases/{caseId}/documents/{id}` | `kyc.read`              | télécharger une pièce                                        |
-| `POST /api/v1/admin/kyc/cases/{caseId}/approve`       | `kyc.review`            | accepter (`note?`)                                           |
-| `POST /api/v1/admin/kyc/cases/{caseId}/reject`        | `kyc.review`            | refuser (`reasons`, `note`)                                  |
-| `POST /api/v1/admin/kyc/cases/{caseId}/revoke`        | `kyc.revoke`            | retirer une vérification acceptée (`reason`)                 |
-| `GET /api/v1/admin/terms/versions`                    | `terms.publish`         | versions des conditions d'utilisation, et leurs acceptations |
-| `POST /api/v1/admin/terms/versions`                   | `terms.publish`         | publier une version — **définitif**                          |
+| Route                                                    | Permission              | Rôle                                                         |
+| -------------------------------------------------------- | ----------------------- | ------------------------------------------------------------ |
+| `GET /api/v1/admin/system-settings`                      | `system_settings.read`  | paramètres et valeurs en vigueur                             |
+| `PUT /api/v1/admin/system-settings/{key}`                | `system_settings.write` | mode maintenance, ouverture d'une fonctionnalité             |
+| `GET /api/v1/admin/users`                                | `users.read`            | parcourir la liste des comptes                               |
+| `POST /api/v1/admin/users/search`                        | `users.read`            | retrouver un compte par un identifiant complet               |
+| `GET /api/v1/admin/users/{userId}`                       | `users.read`            | fiche d'un compte                                            |
+| `POST /api/v1/admin/users/{userId}/suspend`              | `users.suspend`         | suspendre (`reason`, `notifyUser?`)                          |
+| `POST /api/v1/admin/users/{userId}/reactivate`           | `users.suspend`         | lever une suspension (`reason`)                              |
+| `POST /api/v1/admin/users/{userId}/sessions/revoke`      | `users.revoke_sessions` | déconnecter le compte partout (`reason`)                     |
+| `POST /api/v1/admin/users/{userId}/mfa/reset`            | `users.reset_mfa`       | retirer le second facteur (`reason`)                         |
+| `POST /api/v1/admin/users/{userId}/close`                | `users.close`           | clore le compte (`ground`, `reason`, `confirm`)              |
+| `GET /api/v1/admin/roles`                                | `roles.read`            | rôles, permissions, nombre de détenteurs                     |
+| `GET /api/v1/admin/role-changes`                         | `roles.read`            | demandes de changement de rôle                               |
+| `POST /api/v1/admin/role-changes`                        | `roles.manage`          | demander l'attribution ou le retrait d'un rôle               |
+| `GET /api/v1/admin/role-changes/{requestId}`             | `roles.read`            | une demande                                                  |
+| `POST /api/v1/admin/role-changes/{requestId}/approve`    | `roles.manage`          | approuver — **par un second administrateur**                 |
+| `POST /api/v1/admin/role-changes/{requestId}/reject`     | `roles.manage`          | refuser (`note`) — par un second administrateur              |
+| `POST /api/v1/admin/role-changes/{requestId}/cancel`     | `roles.manage`          | retirer sa propre demande                                    |
+| `GET /api/v1/admin/kyc/cases`                            | `kyc.read`              | file des dossiers de vérification                            |
+| `GET /api/v1/admin/kyc/cases/{caseId}`                   | `kyc.read`              | fiche d'un dossier                                           |
+| `GET /api/v1/admin/kyc/cases/{caseId}/documents/{id}`    | `kyc.read`              | télécharger une pièce                                        |
+| `POST /api/v1/admin/kyc/cases/{caseId}/approve`          | `kyc.review`            | accepter (`note?`)                                           |
+| `POST /api/v1/admin/kyc/cases/{caseId}/reject`           | `kyc.review`            | refuser (`reasons`, `note`)                                  |
+| `POST /api/v1/admin/kyc/cases/{caseId}/revoke`           | `kyc.revoke`            | retirer une vérification acceptée (`reason`)                 |
+| `GET /api/v1/admin/terms/versions`                       | `terms.publish`         | versions des conditions d'utilisation, et leurs acceptations |
+| `POST /api/v1/admin/terms/versions`                      | `terms.publish`         | publier une version — **définitif**                          |
+| `GET /api/v1/admin/ledger/assets`                        | `ledger.read`           | actifs dans lesquels la plateforme tient des comptes         |
+| `POST /api/v1/admin/ledger/assets`                       | `ledger.manage_assets`  | enregistrer un actif — **définitif**                         |
+| `GET /api/v1/admin/ledger/accounts`                      | `ledger.read`           | comptes du grand livre                                       |
+| `GET /api/v1/admin/ledger/accounts/{accountId}/postings` | `ledger.read`           | un compte et ses lignes                                      |
+| `GET /api/v1/admin/ledger/entries/{entryId}`             | `ledger.read`           | une écriture complète                                        |
+| `GET /api/v1/admin/ledger/trial-balance`                 | `ledger.read`           | balance du grand livre                                       |
 
 Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
 `users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `users.close`,
 `kyc.read`, `kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité et ne
 clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt. Seul
-`super_admin` publie les conditions d'utilisation (`terms.publish`).
+`super_admin` publie les conditions d'utilisation (`terms.publish`), consulte le grand livre
+(`ledger.read`) et y enregistre un actif (`ledger.manage_assets`).
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -735,6 +789,64 @@ De deux décisions simultanées sur une même demande, une seule s'applique ; l'
 - Ces routes restent accessibles pendant la maintenance et lorsque la fonctionnalité `kyc`
   est fermée aux titulaires.
 
+### Grand livre
+
+**Aucune route ne passe d'écriture** : le back-office consulte le grand livre et enregistre
+les actifs dans lesquels il tient des comptes.
+
+```json
+POST /api/v1/admin/ledger/assets
+{
+  "code": "USD",
+  "name": "US dollar",
+  "kind": "FIAT",
+  "scale": 2,
+  "reason": "Comptes en dollars : décision du 12/03"
+}
+```
+
+- **Enregistrer un actif est définitif.** Ni son code, ni son nombre de décimales (`scale`),
+  ni sa nature (`kind` : `FIAT` ou `CRYPTO`), ni son libellé ne se modifient ensuite, et un
+  actif ne se retire pas : chaque montant du grand livre est un nombre entier de sa plus
+  petite unité. `scale` vaut 2 pour le dollar et le franc congolais, 8 pour le bitcoin, 18 au
+  plus. **À vérifier deux fois.** Réponse `201` avec l'actif ; `409 CONFLICT` si le code est
+  déjà enregistré.
+- Enregistrer un actif **ne déplace aucun fonds et n'ouvre aucune opération** : chaque
+  titulaire voit seulement apparaître un portefeuille à zéro dans cet actif.
+- `code` : 2 à 12 caractères, une lettre majuscule puis des lettres majuscules ou des
+  chiffres ; `name` : 64 caractères au plus, sur une ligne. La justification (`reason`) est
+  inscrite au journal d'audit avec l'actif.
+- **La base vérifie elle-même le droit d'enregistrer** : un auteur qui perd son rôle entre le
+  contrôle de ses droits et l'écriture reçoit `403 FORBIDDEN`.
+- **Liste des actifs** : dans l'ordre des codes, avec `registeredAt` et `registeredBy` —
+  `null` pour un actif enregistré hors de l'API.
+- **Comptes** : ceux des titulaires et ceux de la plateforme elle-même, du plus anciennement
+  ouvert au plus récent. Filtres : `userId`, `assetCode`, `type` (`user_available`,
+  `platform_custody`, `platform_fees`). Un compte est ouvert par la première écriture qui le
+  touche : un titulaire sans compte dans un actif n'y détient rien. `balance` est exprimé
+  dans le sens normal du compte (`normalSide`) et n'est jamais négatif ; `postingCount` est
+  le nombre de lignes passées sur le compte.
+- **Un compte et ses lignes** : de la plus récente à la plus ancienne. `accountSequence`
+  numérote les lignes du compte 1, 2, 3… sans trou ; `balanceAfter` est le solde juste après
+  chacune. `404 NOT_FOUND` si le compte n'existe pas.
+- **Une écriture** : qui l'a passée (`actor`), pour quelle opération (`kind`, `metadata`),
+  sous quelle clé d'idempotence, et toutes ses lignes dans l'ordre. Pour chaque actif, les
+  débits d'une écriture égalent ses crédits. Une écriture ne se modifie ni ne s'efface : une
+  erreur se corrige par une écriture inverse. `404 NOT_FOUND` si elle n'existe pas.
+- **Balance** : pour chaque actif, le total des soldes par type de compte. `debitBalance`
+  additionne les comptes dont le solde augmente au débit — ce que la plateforme conserve pour
+  ses titulaires ; `creditBalance`, ceux dont il augmente au crédit — ce qu'elle leur doit,
+  et ce qu'elle a gagné. Les deux sont égaux (`balanced`) tant que le grand livre est sain :
+  un écart signale une altération faite hors de l'application. La même vérification, et
+  d'autres plus profondes, s'exécutent aussi toutes les heures.
+- **Pagination** des comptes et des lignes : `limit` (1 à 100, 20 par défaut), `after` = le
+  `nextCursor` de la page précédente. Les montants sont des chaînes décimales à exactement
+  `asset.scale` décimales.
+- **Toute consultation est inscrite au journal d'audit** : liste des actifs, page de
+  comptes, compte, écriture, balance.
+- Ces routes restent accessibles pendant la maintenance : c'est le moment où l'on vérifie
+  les comptes.
+
 **Premier administrateur.** Aucune route ne permet d'obtenir un rôle sans l'accord de deux
 administrateurs : les premiers comptes d'administration se créent en ligne de commande, avec
 le rôle propriétaire de la base (voir `DEPLOYMENT.md`). Il en faut **au moins deux** pour que
@@ -759,10 +871,10 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Vérification des entreprises (KYB) et plafonds par niveau de vérification (fin de la phase 2
-et phase 3) ;
-en-tête `Idempotency-Key` obligatoire sur toute opération financière (phase 3) ; webhooks
-entrants signés et protégés contre le rejeu (phase 4).
+Vérification des entreprises (KYB, fin de la phase 2) ; plafonds par niveau de vérification,
+en-tête `Idempotency-Key` obligatoire sur toute opération financière, puis les premières
+opérations elles-mêmes (suite de la phase 3) ; webhooks entrants signés et protégés contre
+le rejeu (phase 4).
 
 ## Règles d'exposition de la documentation
 
