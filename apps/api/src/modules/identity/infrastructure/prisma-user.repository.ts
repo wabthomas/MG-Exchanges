@@ -118,15 +118,18 @@ export class PrismaUserRepository extends UserRepository {
     userId: string,
     passwordHash: string,
     now: Date,
-  ): Promise<void> {
-    await db.userCredential.update({
+  ): Promise<boolean> {
+    // `updateMany` : une ligne absente n'est pas une erreur. La clôture du compte efface son
+    // mot de passe ; une requête partie avant elle peut arriver ici après.
+    const { count } = await db.userCredential.updateMany({
       where: { userId },
       data: { passwordHash, passwordChangedAt: now },
     });
+    return count === 1;
   }
 
   async replacePasswordHash(db: DbClient, userId: string, passwordHash: string): Promise<void> {
-    await db.userCredential.update({ where: { userId }, data: { passwordHash } });
+    await db.userCredential.updateMany({ where: { userId }, data: { passwordHash } });
   }
 
   async updateLocale(tx: DbClient, userId: string, locale: string): Promise<void> {

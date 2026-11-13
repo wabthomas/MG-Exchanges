@@ -1,9 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { setTimeout as pause } from 'node:timers/promises';
 
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 import { PrismaClient } from '../../src/generated/prisma/client.js';
+import { isLockContention } from '../../src/infrastructure/database/database-errors.js';
 import {
   ClosureRuleViolationError,
   type NewClosure,
@@ -220,6 +222,61 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
         });
       });
     });
+
+    it('borne l’attente des verrous, pour la transaction en cours et pour elle seule', async () => {
+      const userId = await createUser();
+      /** Réglage en vigueur sur les connexions du groupe, celle qui vient de servir comprise. */
+      const lockTimeouts = async (): Promise<string[]> => {
+        const rows = await Promise.all(
+          Array.from(
+            { length: 12 },
+            () =>
+              app.$queryRaw<{ value: string }[]>`SELECT current_setting('lock_timeout') AS value`,
+          ),
+        );
+        return [...new Set(rows.map(([row]) => row?.value ?? ''))];
+      };
+      expect(await lockTimeouts()).toEqual(['0']);
+
+      // Transaction validée : le réglage vaut pendant, et plus après.
+      await app.$transaction(async (tx) => {
+        await repository.boundLockWaits(tx, 150);
+        const [row] = await tx.$queryRaw<
+          { value: string }[]
+        >`SELECT current_setting('lock_timeout') AS value`;
+        expect(row?.value).toBe('150ms');
+      });
+      expect(await lockTimeouts()).toEqual(['0']);
+
+      await asOwnerSql(async (other) => {
+        // Une autre transaction tient une ligne du compte, et ne la rend pas.
+        await other.query('BEGIN');
+        await other.query(
+          `UPDATE "user_credentials" SET "password_changed_at" = now() WHERE "user_id" = $1`,
+          [userId],
+        );
+        const refused: unknown = await Promise.race([
+          app
+            .$transaction(async (tx) => {
+              await repository.boundLockWaits(tx, 150);
+              await tx.userCredential.deleteMany({ where: { userId } });
+            })
+            .then(
+              () => null,
+              (error: unknown) => error,
+            ),
+          // Borne propre au test : sans le réglage, l'effacement attendrait sans fin.
+          pause(5_000, 'still waiting', { ref: false }),
+        ]);
+        await other.query('ROLLBACK');
+        // L'attente a été interrompue par une erreur que le service reconnaît, et relance.
+        expect(isLockContention(refused)).toBe(true);
+      });
+
+      // Rien n'a été écrit, et aucune connexion ne garde le réglage.
+      expect(await app.userCredential.count({ where: { userId } })).toBe(1);
+      expect(await lockTimeouts()).toEqual(['0']);
+    });
   });
 
   describe('clôturer', () => {
@@ -311,6 +368,18 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
         // Ses secrets, ses sessions et son profil sont intacts.
         expect(await counts(userId)).toMatchObject({ credentials: 1, sessions: 2, profiles: 1 });
       }
+    });
+
+    it('le mot de passe d’un compte clôturé ne s’écrit plus : le dépôt le dit, sans lever d’erreur', async () => {
+      const userId = await createUser();
+      expect(await users.updatePasswordHash(app, userId, ARGON2_HASH, new Date())).toBe(true);
+
+      await close(userId);
+
+      // Ce que ferait une requête partie avant la clôture, et arrivée après.
+      expect(await users.updatePasswordHash(app, userId, ARGON2_HASH, new Date())).toBe(false);
+      await expect(users.replacePasswordHash(app, userId, ARGON2_HASH)).resolves.toBeUndefined();
+      expect(await counts(userId)).toEqual(NOTHING);
     });
 
     it('un compte ne se clôt qu’une fois', async () => {

@@ -152,6 +152,15 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   signaler. `Cleanup after account closure failed` (avertissement) : la clôture est acquise,
   mais un nettoyage qui la suit a échoué (Redis injoignable, fichier non supprimé) ; rien
   n'est à refaire côté compte.
+  `Account closure abandoned: the account is busy` (avertissement) : une autre requête a tenu
+  le compte pendant quatre essais ; la clôture a répondu `409`, rien n'a changé, et le
+  demandeur peut la refaire. Répété pour un même compte, le message désigne une transaction
+  qui ne se termine pas.
+- **Attente des verrous.** Une clôture qui croise une autre écriture du même compte lui cède
+  le passage : elle n'attend aucun verrou plus de 300 ms, puis recommence. Ce délai doit
+  rester inférieur à `deadlock_timeout` de PostgreSQL (une seconde par défaut) : **ne pas
+  abaisser ce réglage sous une seconde**, faute de quoi la base interromprait elle-même l'une
+  des deux requêtes, au hasard (`500`).
 - **Surveiller l'effacement.** L'étape `erase-closed-accounts` traite au plus 200 comptes par
   heure, de l'échéance la plus ancienne à la plus récente. Un compte qui ne peut pas être
   effacé est journalisé (`Closed account not erased`, avec son identifiant) et retenté à

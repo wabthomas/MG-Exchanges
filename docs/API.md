@@ -356,6 +356,8 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   - le titulaire reçoit un e-mail de confirmation à son ancienne adresse.
 
   `409 CONFLICT` si le compte détient un rôle du back-office : il lui est d'abord retiré.
+  `409 CONFLICT` aussi, plus rarement, si une autre requête modifie le compte au même instant
+  et tarde à s'achever : rien n'a changé, la demande est à refaire.
 
 - Ces deux routes suivent le mode maintenance (`503 MAINTENANCE`) ; le back-office, lui, peut
   toujours clore un compte.
@@ -522,7 +524,8 @@ et sa justification sont écrits au journal d'audit dans la même transaction.
   compte) ou `PLATFORM_DECISION` —, `confirm` vaut `true`, et le titulaire est **toujours**
   prévenu, jamais de la raison. Compte actif ou suspendu seulement. `409 CONFLICT` tant que
   le compte détient un rôle, ou qu'un de ses dossiers de vérification attend l'examen : le
-  dossier est d'abord décidé, pour que la décision soit conservée.
+  dossier est d'abord décidé, pour que la décision soit conservée. `409 CONFLICT` aussi si
+  une autre requête modifie le compte au même instant et tarde à s'achever : à refaire.
 - **Compte clôturé.** Sa fiche porte `closure` : `closedAt`, `origin` (`HOLDER` \| `STAFF`),
   `closedBy`, `legalRetentionUntil`, `erasureDueAt`, `formerEmail`, `formerPhone` et
   `erasedAt` — l'ancienne adresse et l'ancien numéro valent `null` une fois effacés. Son

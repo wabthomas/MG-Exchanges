@@ -4246,7 +4246,7 @@
     },
     "/api/v1/me/close": {
       "post": {
-        "description": "**Immediate and permanent.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. `confirm` must be `true`.\n\nThe account can no longer sign in: its password, two-step verification, sessions and profile are erased at once, and its e-mail address and phone number are free for a new registration. Verification cases that were never reviewed are erased with their documents; those on which a decision was taken are kept until `legalRetentionUntil`, as the law requires. What remains is erased from `erasureDueAt`. The holder is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role.",
+        "description": "**Immediate and permanent.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough. `confirm` must be `true`.\n\nThe account can no longer sign in: its password, two-step verification, sessions and profile are erased at once, and its e-mail address and phone number are free for a new registration. Verification cases that were never reviewed are erased with their documents; those on which a decision was taken are kept until `legalRetentionUntil`, as the law requires. What remains is erased from `erasureDueAt`. The holder is told by e-mail.\n\nRefused (`409`) while the account holds a back-office role — and, rarely, while another request is still modifying the account: nothing has changed, try again.",
         "operationId": "AccountLifecycleController_close_v1",
         "parameters": [],
         "requestBody": {
@@ -5742,7 +5742,7 @@
     },
     "/api/v1/admin/users/{userId}/close": {
       "post": {
-        "description": "**Permanent.** Closes an active or suspended account, at the request of its holder received through another channel (`HOLDER_REQUEST`) or by decision of the platform (`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its holder had done it (see `POST /me/close`), and the holder is told by e-mail — never why. Refused (`409`) while the account holds a back-office role, or while one of its identity verification cases awaits review: decide the case first, so that the decision is kept. The mandatory `reason` is written to the audit log. You cannot close your own account from the back office. Requires `users.close`.",
+        "description": "**Permanent.** Closes an active or suspended account, at the request of its holder received through another channel (`HOLDER_REQUEST`) or by decision of the platform (`PLATFORM_DECISION`); `confirm` must be `true`. The account is closed exactly as if its holder had done it (see `POST /me/close`), and the holder is told by e-mail — never why. Refused (`409`) while the account holds a back-office role, or while one of its identity verification cases awaits review: decide the case first, so that the decision is kept. Also refused (`409`), rarely, while another request is still modifying the account: nothing has changed, try again. The mandatory `reason` is written to the audit log. You cannot close your own account from the back office. Requires `users.close`.",
         "operationId": "AdminUsersController_close_v1",
         "parameters": [
           {

@@ -40,6 +40,12 @@ export class ClosureRuleViolationError extends Error {
 /** Port de persistance de la clôture des comptes. */
 export abstract class AccountClosureRepository {
   /**
+   * Borne, pour la transaction en cours, l'attente de chaque verrou : au-delà, l'instruction
+   * échoue (`isLockContention`) au lieu d'attendre, et la transaction est à refaire.
+   */
+  abstract boundLockWaits(tx: DbClient, milliseconds: number): Promise<void>;
+
+  /**
    * Verrouille le compte jusqu'à la fin de la transaction : tout ce qui s'y ajouterait attend,
    * puis est refusé. `null` si le compte n'existe pas.
    */

@@ -89,6 +89,34 @@ seul code de l'API. La migration `account_closure` fait refuser par PostgreSQL :
   en avance, ou un code fautif, n'effacent rien — l'étape de purge échoue et le signale ;
 - la modification ou la suppression d'une trace, hors le constat de son effacement.
 
+### Une clôture au milieu d'autres écritures du même compte
+
+Une clôture peut croiser une autre requête du même compte : un second onglet, une application
+restée ouverte, une demande de code. Trois règles, chacune vérifiée par un test qui provoque
+le croisement :
+
+- **Une écriture arrivée après la clôture reçoit `409`, jamais une erreur serveur** — que la
+  base la refuse (`MGX05`) ou que la ligne visée ait disparu avec le compte : le mot de passe
+  qu'un changement allait remplacer, par exemple.
+- **La demande de réinitialisation du mot de passe garde sa réponse unique.** Si le compte est
+  clôturé pendant la requête, elle répond comme pour une adresse inconnue.
+- **La clôture cède le passage.** Elle verrouille le compte, puis efface ce qu'il porte ; une
+  autre écriture peut prendre ces verrous dans l'ordre inverse — annuler un code, puis en
+  ouvrir un autre. Plutôt que de laisser PostgreSQL constater l'interblocage et interrompre
+  l'une des deux requêtes, au hasard, la clôture n'attend aucun verrou plus de 300 ms : sa
+  transaction est annulée — rien n'est écrit —, l'autre écriture s'achève, et la clôture
+  recommence, quatre essais au plus. Si le compte reste occupé, elle répond `409` : rien n'a
+  changé, la demande est à refaire.
+
+Un ordre de verrouillage unique pour toutes les écritures d'un compte aurait écarté
+l'interblocage à la source ; il aurait fallu reprendre chaque service des lots 1 à 3. Céder
+et recommencer ne touche que la clôture, et ne dépend pas de la discipline du code à venir.
+
+Un test rejoue en outre chaque route ouverte au titulaire avec une clôture qui la croise —
+une fois la requête authentifiée, puis à l'ouverture de sa première transaction : aucune ne
+répond par une erreur serveur, aucune n'écrit sur le compte, aucun fichier ne reste sur le
+volume. Une route ajoutée plus tard doit y être inscrite.
+
 ### Copie des données
 
 `POST /me/data-export` remet au titulaire, en un document JSON versionné, ce que la plateforme

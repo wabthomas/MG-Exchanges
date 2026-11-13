@@ -29,3 +29,24 @@ export function isUniqueViolation(error: unknown): boolean {
     sqlStateOf(error) === '23505'
   );
 }
+
+/**
+ * SQLSTATE levé par la base lorsqu'une écriture vise un compte clôturé (voir la migration
+ * `account_closure`).
+ */
+export const ACCOUNT_CLOSED_SQLSTATE = 'MGX05';
+
+/** Vrai si la base a refusé une écriture parce que le compte visé est clôturé. */
+export function isAccountClosedError(error: unknown): boolean {
+  return sqlStateOf(error) === ACCOUNT_CLOSED_SQLSTATE;
+}
+
+/**
+ * Vrai si la transaction a été interrompue faute d'obtenir un verrou : délai d'attente dépassé
+ * (`lock_timeout`, SQLSTATE 55P03) ou interblocage résolu par PostgreSQL (40P01). Rien n'a été
+ * écrit : la transaction peut être relancée.
+ */
+export function isLockContention(error: unknown): boolean {
+  const sqlState = sqlStateOf(error);
+  return sqlState === '55P03' || sqlState === '40P01';
+}

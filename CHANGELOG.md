@@ -65,6 +65,17 @@ Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; ve
   proxy était copiée sur son disque le temps d'être relayée, puis supprimée. Plus aucune
   réponse de l'API n'y est écrite (`proxy_max_temp_file_size 0`) ; un test lit la
   configuration, et le parcours de la pile complète échoue si Nginx signale un tel fichier.
+- **Requêtes simultanées à la clôture** — trois défauts de ce lot, trouvés en envoyant des
+  requêtes concurrentes à l'API après sa première publication sur la branche :
+  - un changement de mot de passe qui croisait la clôture répondait `500` ; il répond `409`,
+    comme toute écriture arrivée après la clôture (de même une connexion, à l'instant où
+    l'empreinte de son mot de passe est recalculée) ;
+  - une demande de réinitialisation du mot de passe qui croisait la clôture répondait `409`
+    « compte clôturé » au lieu de sa réponse unique `202` : pendant un instant, elle disait
+    qu'un compte portait cette adresse ;
+  - la clôture pouvait s'interbloquer avec une autre écriture du même compte ; PostgreSQL
+    interrompait alors l'une des deux requêtes (`500`). La clôture cède maintenant le passage
+    et recommence ; si le compte reste occupé, elle répond `409` et rien n'a changé.
 
 ### Corrigé — outillage de test
 

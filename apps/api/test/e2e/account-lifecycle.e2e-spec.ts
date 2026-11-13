@@ -1,3 +1,5 @@
+import { setTimeout as pause } from 'node:timers/promises';
+
 import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
 import {
   accountClosureSchema,
@@ -21,7 +23,10 @@ import request from 'supertest';
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
 import { AccountMaintenanceService } from '../../src/modules/identity/application/account-maintenance.service.js';
 import { ActivityService } from '../../src/modules/identity/application/activity.service.js';
+import { PasswordHasher } from '../../src/modules/identity/application/password-hasher.js';
 import { PendingLoginStore } from '../../src/modules/identity/application/pending-login.store.js';
+import { UserRepository } from '../../src/modules/identity/application/user.repository.js';
+import { VerificationService } from '../../src/modules/identity/application/verification.service.js';
 import { SECURITY_NOTICE_REQUESTED_EVENT } from '../../src/modules/identity/domain/identity-events.js';
 import { OutboxService } from '../../src/modules/outbox/application/outbox.service.js';
 import { moveErasureTerm } from '../support/account-closure.js';
@@ -57,7 +62,7 @@ import {
 } from '../support/kyc.js';
 import { LateWriteGate, LateWriteModule } from '../support/late-write.module.js';
 import { createTestApp, type TestApp, testClock } from '../support/test-app.js';
-import { withConnection } from '../support/test-database.js';
+import { untilBlocked, withConnection } from '../support/test-database.js';
 
 const UNKNOWN_ID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
 const REASON = 'Demande reçue par courrier, dossier support 2026-0457';
@@ -936,6 +941,211 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
           where: { email: { endsWith: '@closed.invalid' }, status: { not: 'CLOSED' } },
         }),
       ).toBe(0);
+    });
+  });
+
+  describe('clôture au milieu d’autres écritures du même compte', () => {
+    const ACCOUNT_CLOSED = { code: 'CONFLICT', detail: 'This account is closed.' };
+    const signIn = (member: Member) =>
+      http
+        .post('/api/v1/auth/login')
+        .set(from(newClientIp()))
+        .send({ email: member.email, password: member.password });
+    const forgot = (email: string) =>
+      http.post('/api/v1/auth/password/forgot').set(from(newClientIp())).send({ email });
+
+    /** Compte dont un code de vérification du téléphone est en cours : une ligne de plus à effacer. */
+    async function customerWithPendingCode(): Promise<Member> {
+      const member = await customer();
+      await post(member.accessToken, '/me/phone/verification', { phone: newPhone() }).expect(202);
+      // Le code est émis par un traitement asynchrone, qui écrit sur cette ligne.
+      await backgroundWorkDone(testApp);
+      expect(
+        await prisma.verificationChallenge.count({
+          where: { userId: member.id, purpose: 'PHONE_VERIFICATION' },
+        }),
+      ).toBe(1);
+      return member;
+    }
+
+    it('un changement de mot de passe qui croise la clôture reçoit 409 — ni panne, ni mot de passe écrit', async () => {
+      const member = await customer();
+      const hasher = testApp.app.get(PasswordHasher);
+      const hash = hasher.hash.bind(hasher);
+      // Le mot de passe actuel vient d'être confirmé ; le compte est clôturé avant l'écriture.
+      const crossing = jest.spyOn(hasher, 'hash').mockImplementationOnce(async (password) => {
+        await closeOwn(member).expect(200);
+        return hash(password);
+      });
+      try {
+        const response = await post(member.accessToken, '/auth/password/change', {
+          currentPassword: member.password,
+          newPassword: 'a-brand-new-password-9',
+        });
+        expect(response.status).toBe(409);
+        expect(problemDetailsSchema.parse(response.body)).toMatchObject(ACCOUNT_CLOSED);
+        expect(crossing).toHaveBeenCalledTimes(1);
+      } finally {
+        crossing.mockRestore();
+      }
+      expect(await prisma.userCredential.count({ where: { userId: member.id } })).toBe(0);
+      expect(await auditEntries('user.password_changed', member.id)).toEqual([]);
+      await backgroundWorkDone(testApp);
+      expect(
+        mailbox(testApp)
+          .messagesFor(member.email)
+          .filter(({ template }) => template === 'password_changed'),
+      ).toEqual([]);
+    });
+
+    it('une connexion qui croise la clôture, à l’instant où l’empreinte du mot de passe est recalculée, reçoit 409', async () => {
+      const member = await customer();
+      const hasher = testApp.app.get(PasswordHasher);
+      const hash = hasher.hash.bind(hasher);
+      const outdated = jest.spyOn(hasher, 'needsRehash').mockReturnValueOnce(true);
+      const crossing = jest.spyOn(hasher, 'hash').mockImplementationOnce(async (password) => {
+        await closeOwn(member).expect(200);
+        return hash(password);
+      });
+      try {
+        const response = await signIn(member);
+        expect(response.status).toBe(409);
+        expect(problemDetailsSchema.parse(response.body)).toMatchObject(ACCOUNT_CLOSED);
+        expect(crossing).toHaveBeenCalledTimes(1);
+      } finally {
+        crossing.mockRestore();
+        outdated.mockRestore();
+      }
+      expect(await prisma.userSession.count({ where: { userId: member.id } })).toBe(0);
+      expect(await prisma.userCredential.count({ where: { userId: member.id } })).toBe(0);
+    });
+
+    it('une demande de réinitialisation qui croise la clôture répond comme pour une adresse inconnue', async () => {
+      const member = await customer();
+      const unknown = await forgot(newEmail('ghost')).expect(202);
+      const verification = testApp.app.get(VerificationService);
+      const request = verification.request.bind(verification);
+      // Le compte vient d'être trouvé actif ; il est clôturé avant que le code ne soit ouvert.
+      const crossing = jest
+        .spyOn(verification, 'request')
+        .mockImplementationOnce(async (...args: Parameters<VerificationService['request']>) => {
+          await closeOwn(member).expect(200);
+          return request(...args);
+        });
+      try {
+        const response = await forgot(member.email);
+        expect(response.status).toBe(202);
+        expect(response.body).toEqual(unknown.body);
+        expect(crossing).toHaveBeenCalledTimes(1);
+      } finally {
+        crossing.mockRestore();
+      }
+      expect(await prisma.verificationChallenge.count({ where: { userId: member.id } })).toBe(0);
+      expect(await auditEntries('user.password_reset_requested', member.id)).toEqual([]);
+      await backgroundWorkDone(testApp);
+      expect(
+        mailbox(testApp)
+          .messagesFor(member.email)
+          .filter(({ template }) => template === 'password_reset_code'),
+      ).toEqual([]);
+    });
+
+    it('une réinitialisation dont le compte n’a plus de mot de passe est refusée comme un code invalide', async () => {
+      const member = await customer();
+      await forgot(member.email).expect(202);
+      const message = await nextMessageOf(testApp, member.email, 'password_reset_code', 1);
+      // Dépôt simulé : en pratique la clôture efface aussi le code, qui est refusé avant.
+      const gone = jest
+        .spyOn(testApp.app.get(UserRepository), 'updatePasswordHash')
+        .mockResolvedValueOnce(false);
+      try {
+        const refused = await http
+          .post('/api/v1/auth/password/reset')
+          .set(from(newClientIp()))
+          .send({
+            email: member.email,
+            code: codeIn(message),
+            newPassword: 'a-brand-new-password-9',
+          });
+        expect(codeOf(refused)).toBe('INVALID_OR_EXPIRED_CODE');
+        expect(gone).toHaveBeenCalledTimes(1);
+      } finally {
+        gone.mockRestore();
+      }
+      expect(await auditEntries('user.password_reset', member.id)).toEqual([]);
+      // Rien n'a changé : la session est intacte, le mot de passe aussi.
+      await get(member.accessToken, '/me').expect(200);
+      await signIn(member).expect(200);
+    });
+
+    it('la clôture cède le passage à une écriture qui prend ses verrous dans l’autre ordre, puis aboutit', async () => {
+      const member = await customerWithPendingCode();
+
+      const closed = await asOwner(async (other) => {
+        // L'autre écriture annule le code en cours…
+        await other.query('BEGIN');
+        await other.query(
+          `UPDATE "verification_challenges" SET "invalidated_at" = now()
+           WHERE "user_id" = $1 AND "purpose" = 'PHONE_VERIFICATION'`,
+          [member.id],
+        );
+        // … la clôture verrouille le compte, puis attend ce code pour l'effacer…
+        const closing = closeOwn(member).then((response) => response);
+        await untilBlocked(other);
+        // … et l'autre écriture a maintenant besoin du compte. Si la clôture ne cédait rien,
+        // chacune attendrait l'autre jusqu'à ce que la base interrompe l'une des deux.
+        await other.query(
+          `INSERT INTO "verification_challenges"
+             ("user_id", "purpose", "target", "max_attempts", "expires_at")
+           VALUES ($1, 'PHONE_VERIFICATION', '+243990000077', 5, now() + interval '10 minutes')`,
+          [member.id],
+        );
+        await other.query('COMMIT');
+        return closing;
+      });
+
+      expect(closed.status).toBe(200);
+      expect((await accountRow(member.id)).status).toBe('CLOSED');
+      // La clôture est passée après l'autre écriture : elle a effacé aussi ce qu'elle a ajouté.
+      expect(await prisma.verificationChallenge.count({ where: { userId: member.id } })).toBe(0);
+      expect(await auditEntries('user.closed', member.id)).toHaveLength(1);
+      await get(member.accessToken, '/me').expect(401);
+    });
+
+    it('et renonce, sans rien changer, si le compte reste occupé : 409, la demande est à refaire', async () => {
+      const member = await customerWithPendingCode();
+
+      const refused = await asOwner(async (other) => {
+        await other.query('BEGIN');
+        await other.query(
+          `UPDATE "verification_challenges" SET "invalidated_at" = now()
+           WHERE "user_id" = $1 AND "purpose" = 'PHONE_VERIFICATION'`,
+          [member.id],
+        );
+        try {
+          // Borne propre au test : une clôture qui attendrait sans fin ne répondrait jamais.
+          return await Promise.race([
+            closeOwn(member).then((response) => response),
+            pause(10_000, null, { ref: false }),
+          ]);
+        } finally {
+          await other.query('ROLLBACK');
+        }
+      });
+
+      expect(refused?.status).toBe(409);
+      expect(problemDetailsSchema.parse(refused?.body)).toMatchObject({
+        code: 'CONFLICT',
+        detail: 'The account is being modified by another request. Please try again.',
+      });
+      // Rien n'a changé : le compte est ouvert, sa session aussi, et rien n'est inscrit.
+      expect((await accountRow(member.id)).status).toBe('ACTIVE');
+      expect(await closureRow(member.id)).toBeNull();
+      expect(await auditEntries('user.closed', member.id)).toEqual([]);
+      await get(member.accessToken, '/me').expect(200);
+      // Le passage libre, la même demande aboutit.
+      await closeOwn(member).expect(200);
+      expect((await accountRow(member.id)).status).toBe('CLOSED');
     });
   });
 

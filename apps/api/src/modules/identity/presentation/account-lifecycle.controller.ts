@@ -72,7 +72,8 @@ export class AccountLifecycleController {
       'registration. Verification cases that were never reviewed are erased with their ' +
       'documents; those on which a decision was taken are kept until `legalRetentionUntil`, as ' +
       'the law requires. What remains is erased from `erasureDueAt`. The holder is told by ' +
-      'e-mail.\n\nRefused (`409`) while the account holds a back-office role.',
+      'e-mail.\n\nRefused (`409`) while the account holds a back-office role — and, rarely, ' +
+      'while another request is still modifying the account: nothing has changed, try again.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(closeAccountRequestSchema) })
   @ApiOkResponse({ schema: toOpenApiSchema(accountClosureSchema) })

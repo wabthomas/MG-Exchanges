@@ -7,12 +7,15 @@ import type {
   CloseAccountRequest,
   CloseUserRequest,
 } from '@mgx/contracts';
+import { setTimeout as pause } from 'node:timers/promises';
+
 import { Injectable } from '@nestjs/common';
 import { PinoLogger } from 'nestjs-pino';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import { Clock } from '../../../common/clock.js';
 import { AppError } from '../../../common/errors/app-error.js';
+import { isLockContention } from '../../../infrastructure/database/database-errors.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
@@ -48,6 +51,21 @@ function notFound(): AppError {
   return new AppError('NOT_FOUND', 'Account not found.');
 }
 
+/**
+ * Attente maximale d'un verrou par une clôture, avant qu'elle ne cède le passage. Nettement
+ * inférieure au délai de détection des interblocages de PostgreSQL (`deadlock_timeout`, une
+ * seconde par défaut) : la clôture cède avant que la base n'interrompe quelqu'un.
+ */
+export const CLOSURE_LOCK_WAIT_MS = 300;
+
+/** Pauses avant chaque nouvel essai d'une clôture qui a cédé le passage. */
+export const CLOSURE_RETRY_DELAYS_MS: readonly number[] = [50, 150, 300];
+
+interface CommittedClosure {
+  readonly closure: ClosureRecord;
+  readonly afterClosure: AfterClosure[];
+}
+
 interface ClosureOrder {
   readonly userId: string;
   readonly origin: AccountClosureOrigin;
@@ -71,6 +89,9 @@ interface ClosureOrder {
  * Un compte qui détient un rôle du back-office ne se clôt pas : ses rôles lui sont d'abord
  * retirés, sous double validation. Les règles essentielles sont aussi imposées par la base
  * (voir la migration `account_closure`).
+ *
+ * Une clôture qui croise une autre écriture du même compte lui cède le passage, puis
+ * recommence (voir `commit`).
  */
 @Injectable()
 export class AccountClosureService {
@@ -139,12 +160,72 @@ export class AccountClosureService {
   }
 
   private async close(order: ClosureOrder): Promise<ClosureRecord> {
+    const { userId } = order;
+    const { closure, afterClosure } = await this.commit(order);
+
+    // La clôture est acquise et ne se rejoue pas : ce qui suit est du nettoyage. Un échec y est
+    // signalé, sans faire échouer une demande dont l'effet est déjà définitif.
+    const cleanup: AfterClosure[] = [
+      // Une connexion restée à mi-chemin (seconde étape en attente) est annulée — la seconde
+      // étape refuse de toute façon un compte clôturé.
+      () => this.pendingLogins.invalidateAllForUser(userId),
+      () => this.throttle.clear(userId),
+      ...afterClosure,
+    ];
+    for (const work of cleanup) {
+      try {
+        await work();
+      } catch (error) {
+        this.logger.warn({ err: error, userId }, 'Cleanup after account closure failed');
+      }
+    }
+    return closure;
+  }
+
+  /**
+   * Valide la clôture, en cédant le passage aux autres écritures du même compte.
+   *
+   * La clôture verrouille le compte, puis efface ce qu'il porte. Une autre écriture du même
+   * compte peut prendre ces verrous dans l'ordre inverse — annuler un code puis en ouvrir un
+   * autre, par exemple. Plutôt que de s'attendre l'une l'autre jusqu'à ce que PostgreSQL
+   * interrompe l'une des deux, au hasard, la clôture n'attend aucun verrou plus de
+   * `CLOSURE_LOCK_WAIT_MS` : sa transaction est annulée — rien n'est écrit —, l'autre écriture
+   * s'achève, et la clôture recommence. Si le compte reste occupé, elle renonce : `409`.
+   */
+  private async commit(order: ClosureOrder): Promise<CommittedClosure> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.attempt(order);
+      } catch (error) {
+        if (!isLockContention(error)) {
+          throw error;
+        }
+        const delay = CLOSURE_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined) {
+          this.logger.warn(
+            { err: error, userId: order.userId, attempts: attempt + 1 },
+            'Account closure abandoned: the account is busy',
+          );
+          throw new AppError(
+            'CONFLICT',
+            'The account is being modified by another request. Please try again.',
+            { cause: error },
+          );
+        }
+        await pause(delay);
+      }
+    }
+  }
+
+  /** Un essai de clôture : une transaction, validée entière ou annulée entière. */
+  private attempt(order: ClosureOrder): Promise<CommittedClosure> {
     const { userId, origin } = order;
     const closedAt = this.clock.now();
     const holders = this.holders.holders();
 
-    const { closure, afterClosure } = await this.unitOfWork
+    return this.unitOfWork
       .run(async (tx) => {
+        await this.closures.boundLockWaits(tx, CLOSURE_LOCK_WAIT_MS);
         // Les modules verrouillent d'abord ce qu'ils détiennent, le compte ensuite : c'est
         // l'ordre de leurs propres écritures.
         for (const holder of holders) {
@@ -243,24 +324,6 @@ export class AccountClosureService {
         }
         throw error;
       });
-
-    // La clôture est acquise et ne se rejoue pas : ce qui suit est du nettoyage. Un échec y est
-    // signalé, sans faire échouer une demande dont l'effet est déjà définitif.
-    const cleanup: AfterClosure[] = [
-      // Une connexion restée à mi-chemin (seconde étape en attente) est annulée — la seconde
-      // étape refuse de toute façon un compte clôturé.
-      () => this.pendingLogins.invalidateAllForUser(userId),
-      () => this.throttle.clear(userId),
-      ...afterClosure,
-    ];
-    for (const work of cleanup) {
-      try {
-        await work();
-      } catch (error) {
-        this.logger.warn({ err: error, userId }, 'Cleanup after account closure failed');
-      }
-    }
-    return closure;
   }
 
   private async recordDenial(actor: StaffActor, userId: string, reason: string): Promise<void> {

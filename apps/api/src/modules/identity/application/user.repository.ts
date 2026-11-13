@@ -95,15 +95,22 @@ export abstract class UserRepository {
   /** Marque l'adresse comme vérifiée ; un compte en attente de vérification devient actif. */
   abstract markEmailVerified(tx: DbClient, userId: string, now: Date): Promise<void>;
 
-  /** Enregistre un **nouveau** mot de passe (date de changement mise à jour). */
+  /**
+   * Enregistre un **nouveau** mot de passe (date de changement mise à jour).
+   *
+   * @returns faux si le compte n'a plus de mot de passe : il a été clôturé entre-temps.
+   */
   abstract updatePasswordHash(
     db: DbClient,
     userId: string,
     passwordHash: string,
     now: Date,
-  ): Promise<void>;
+  ): Promise<boolean>;
 
-  /** Remplace l'empreinte du **même** mot de passe, recalculée avec des paramètres plus forts. */
+  /**
+   * Remplace l'empreinte du **même** mot de passe, recalculée avec des paramètres plus forts.
+   * Sans effet si le compte n'a plus de mot de passe (clôturé entre-temps).
+   */
   abstract replacePasswordHash(db: DbClient, userId: string, passwordHash: string): Promise<void>;
 
   /** Change la langue des messages adressés au titulaire du compte. */

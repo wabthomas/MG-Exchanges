@@ -1,7 +1,13 @@
 import { describe, expect, it } from '@jest/globals';
 
 import { Prisma } from '../../generated/prisma/client.js';
-import { isUniqueViolation, sqlStateOf } from './database-errors.js';
+import {
+  ACCOUNT_CLOSED_SQLSTATE,
+  isAccountClosedError,
+  isLockContention,
+  isUniqueViolation,
+  sqlStateOf,
+} from './database-errors.js';
 
 /** Erreur telle que Prisma la lève lorsque PostgreSQL refuse une instruction. */
 function databaseError(code: string, sqlState?: string): Prisma.PrismaClientKnownRequestError {
@@ -60,5 +66,33 @@ describe('erreurs de base de données', () => {
     expect(isUniqueViolation(new Error('duplicate key value violates unique constraint'))).toBe(
       false,
     );
+  });
+
+  it('reconnaît une écriture refusée parce que le compte est clôturé, et elle seule', () => {
+    expect(ACCOUNT_CLOSED_SQLSTATE).toBe('MGX05');
+    expect(isAccountClosedError(databaseError('P2010', 'MGX05'))).toBe(true);
+    expect(isAccountClosedError(databaseError('P2039', 'MGX05'))).toBe(true);
+
+    expect(isAccountClosedError(databaseError('P2010', 'MGX04'))).toBe(false);
+    expect(isAccountClosedError(databaseError('P2039', '55P03'))).toBe(false);
+    // Une ligne absente n'est pas un refus de la base : elle n'est pas devinée.
+    expect(isAccountClosedError(databaseError('P2025'))).toBe(false);
+    expect(isAccountClosedError(new Error('account is closed'))).toBe(false);
+  });
+
+  it('reconnaît une transaction interrompue faute de verrou : délai dépassé, ou interblocage', () => {
+    // Les formes que Prisma leur donne : requête d'un modèle, requête SQL, conflit d'écriture.
+    expect(isLockContention(databaseError('P2039', '55P03'))).toBe(true);
+    expect(isLockContention(databaseError('P2010', '55P03'))).toBe(true);
+    expect(isLockContention(databaseError('P2034', '40P01'))).toBe(true);
+  });
+
+  it('ne prend aucune autre erreur pour une attente de verrou : celle-là ne se relance pas', () => {
+    for (const sqlState of ['MGX04', 'MGX05', '23505', '40001', '57014', '53300']) {
+      expect(isLockContention(databaseError('P2010', sqlState))).toBe(false);
+    }
+    expect(isLockContention(databaseError('P2034'))).toBe(false);
+    expect(isLockContention(new Error('canceling statement due to lock timeout'))).toBe(false);
+    expect(isLockContention(null)).toBe(false);
   });
 });

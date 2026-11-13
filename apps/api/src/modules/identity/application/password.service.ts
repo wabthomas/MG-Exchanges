@@ -7,6 +7,8 @@ import type {
 import { Injectable } from '@nestjs/common';
 
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
+import { AppError } from '../../../common/errors/app-error.js';
+import { isAccountClosedError } from '../../../infrastructure/database/database-errors.js';
 import { type DbClient, PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../../infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../audit/application/audit.service.js';
@@ -50,17 +52,25 @@ export class PasswordService {
     // Seul un compte actif se réinitialise : un compte suspendu ou clôturé ne se rouvre pas
     // ainsi, et une inscription inachevée ne s'achève que par la vérification de l'adresse.
     if (user?.status === 'ACTIVE') {
-      await this.unitOfWork.run(async (tx) => {
-        if (await this.verification.request(tx, user, 'PASSWORD_RESET', client)) {
-          await this.audit.record(tx, {
-            actor: { type: 'SYSTEM' },
-            action: 'user.password_reset_requested',
-            resource: { type: 'user', id: user.id },
-            outcome: 'SUCCESS',
-            ...client,
-          });
-        }
-      });
+      await this.unitOfWork
+        .run(async (tx) => {
+          if (await this.verification.request(tx, user, 'PASSWORD_RESET', client)) {
+            await this.audit.record(tx, {
+              actor: { type: 'SYSTEM' },
+              action: 'user.password_reset_requested',
+              resource: { type: 'user', id: user.id },
+              outcome: 'SUCCESS',
+              ...client,
+            });
+          }
+        })
+        .catch((error: unknown) => {
+          // Le compte a été clôturé pendant la requête. La réponse reste celle d'une adresse
+          // inconnue : elle ne dit pas qu'un compte portait cette adresse à l'instant.
+          if (!isAccountClosedError(error)) {
+            throw error;
+          }
+        });
     } else if (user?.status === 'PENDING_VERIFICATION') {
       // La personne croit avoir un compte : elle est invitée, par e-mail, à reprendre
       // l'inscription. Réinitialiser activerait un compte dont les informations déclarées
@@ -111,10 +121,13 @@ export class PasswordService {
 
     const passwordHash = await this.hasher.hash(request.newPassword);
     const done = await this.unitOfWork.run(async (tx) => {
-      if (!(await this.verification.consume(tx, challenge.id, now))) {
+      if (
+        !(await this.verification.consume(tx, challenge.id, now)) ||
+        // Plus de mot de passe à remplacer : le compte a été clôturé entre-temps.
+        !(await this.users.updatePasswordHash(tx, user.id, passwordHash, now))
+      ) {
         return false;
       }
-      await this.users.updatePasswordHash(tx, user.id, passwordHash, now);
       // Quiconque détenait une session — y compris un intrus — la perd. Le second facteur,
       // lui, reste en place : l'accès à la boîte aux lettres ne suffit pas à le contourner.
       const revokedSessions = await this.sessions.revokeAllForUser(
@@ -160,7 +173,11 @@ export class PasswordService {
     const now = new Date();
     const passwordHash = await this.hasher.hash(request.newPassword);
     await this.unitOfWork.run(async (tx) => {
-      await this.users.updatePasswordHash(tx, user.id, passwordHash, now);
+      if (!(await this.users.updatePasswordHash(tx, user.id, passwordHash, now))) {
+        // Le compte a été clôturé pendant la requête, après la confirmation du mot de passe :
+        // même réponse que pour toute écriture arrivée après la clôture.
+        throw new AppError('CONFLICT', 'This account is closed.');
+      }
       const revokedSessions = await this.sessions.revokeAllForUser(
         tx,
         user.id,

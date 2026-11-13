@@ -168,16 +168,16 @@ Exécution du 2026-11-12 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **1 169 tests réussis, 0 échec** |
+| `pnpm test`                      | **1 236 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 95    | —                                               |
 | `@mgx/contracts`          | 34    | —                                               |
-| API — unitaires           | 437   | —                                               |
-| API — intégration         | 227   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 273   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — unitaires           | 440   | —                                               |
+| API — intégration         | 229   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 335   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
 Ce que ces tests établissent, notamment :
 
@@ -276,7 +276,21 @@ Ce que ces tests établissent, notamment :
   secret, une session, un profil ou un rôle ; toute écriture sur un compte clôturé ; une
   clôture antidatée, ou prononcée par un compte non habilité ; l'effacement d'un dossier
   conservé avant son terme, lu à sa propre horloge. Une session ouverte pendant une clôture
-  attend son issue, puis est refusée ; deux écritures croisées ne s'interbloquent pas ;
+  attend son issue, puis est refusée ; deux écritures ordinaires qui se croisent sur un même
+  compte ne s'interbloquent pas ;
+- **clôture au milieu d'autres requêtes du même compte** : chaque croisement est provoqué par
+  le test, à l'instant voulu. Un changement de mot de passe, ou une connexion, qui arrive
+  après la clôture reçoit `409`, jamais une erreur serveur ; une demande de réinitialisation
+  répond comme pour une adresse inconnue ; face à une écriture qui prend ses verrous dans
+  l'ordre inverse — une seconde connexion à PostgreSQL la joue —, la clôture cède le passage
+  puis aboutit ; si le compte reste occupé, elle renonce sans rien changer ;
+- **chaque route ouverte au titulaire, croisée par la clôture de son compte** : 28 requêtes —
+  session, mot de passe, second facteur, téléphone, profil, dossiers et pièces, copie des
+  données —, chacune à deux moments : une fois authentifiée et avant tout traitement, puis à
+  l'ouverture de sa première transaction, quand toutes ses lectures ont vu un compte ouvert
+  et que toutes ses écritures trouvent un compte clôturé. Aucune ne répond par une erreur
+  serveur ; le compte reste clôturé et ne porte plus rien ; aucun fichier ne reste sur le
+  volume des pièces ;
 - **conservation et effacement** : un dossier examiné — accepté ou refusé — est conservé dix
   ans avec ses fichiers ; un dossier jamais examiné est effacé à la clôture. À l'échéance,
   **la base entière est relue, table par table : plus aucune ne contient l'adresse, le
@@ -289,7 +303,7 @@ Ce que ces tests établissent, notamment :
   essai refusé n'en consomme pas ; sans stockage chiffré, elle est refusée plutôt que
   tronquée.
 
-**Efficacité des tests vérifiée par mutation.** 615 défauts ont été introduits volontairement,
+**Efficacité des tests vérifiée par mutation.** 634 défauts ont été introduits volontairement,
 un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -331,27 +345,31 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   requêtes se croisaient réellement — rejoué trois fois, il l'a détecté trois fois.
   L'écriture en cause est maintenant vérifiée directement, sans dépendre de l'instant où les
   requêtes arrivent, et deux défauts voisins ont été ajoutés : 107 au lot 2, tous détectés.
-- Lot 4 : 230 défauts — 90 dans les règles SQL de la clôture, de la conservation et de
-  l'effacement, 140 dans le code (clôture par le titulaire et par le personnel, preuve
+- Lot 4 : 249 défauts — 91 dans les règles SQL de la clôture, de la conservation et de
+  l'effacement, 158 dans le code (clôture par le titulaire et par le personnel, preuve
   redemandée au titulaire, effacement à l'échéance, purge des événements publiés, copie des
-  données). **À la première passe, 3 des 221 défauts n'étaient pas détectés**, chacun
-  révélant un manque dans les tests, comblé depuis : l'origine d'une clôture réécrite au
-  moment où son effacement est constaté ; une connexion commencée — mot de passe accepté,
-  second facteur attendu — qui n'était pas annulée par la clôture ; un effacement compté une
-  seconde fois lorsqu'une autre instance l'avait déjà constaté. Neuf défauts ont été ajoutés
-  avec les tests écrits ensuite (mode maintenance, copie et clôture sans stockage chiffré,
+  données, requêtes qui croisent la clôture). **À la première passe, 3 des 221 défauts
+  n'étaient pas détectés**, chacun révélant un manque dans les tests, comblé depuis :
+  l'origine d'une clôture réécrite au moment où son effacement est constaté ; une connexion
+  commencée — mot de passe accepté, second facteur attendu — qui n'était pas annulée par la
+  clôture ; un effacement compté une seconde fois lorsqu'une autre instance l'avait déjà
+  constaté. Vingt-huit défauts ont été ajoutés avec les tests écrits ensuite : neuf avant la
+  première publication du lot (mode maintenance, copie et clôture sans stockage chiffré,
   nettoyage en échec après une clôture acquise, ancien numéro dans la recherche et la fiche
-  du back-office, événements publiés jamais purgés, adresse citée dans le journal d'audit).
-  Les 230 sont détectés lors d'une passe complète sur le code livré.
+  du back-office, événements publiés jamais purgés, adresse citée dans le journal d'audit),
+  dix-neuf avec la correction des requêtes simultanées (voir « Problèmes identifiés »). Tous
+  sont détectés. Un résultat a été écarté puis rejoué seul : une commande lancée par erreur
+  exécutait d'autres tests au même moment.
 - Lots 1 à 3 après le lot 4, qui modifie leur code et plusieurs de leurs tests. Vingt-huit
   défauts du lot 3 visaient des règles SQL que la migration du lot 4 redéfinit : ils ont été
-  déplacés vers la nouvelle définition. Ont été rejoués : les 31 défauts du lot 1 rejouables
-  par script, et ceux des lots 2 et 3 qui portent sur un fichier modifié par ce lot — 31 sur
-  107 et 74 sur 226. Tous sont détectés. L'un d'eux — la purge au travail non borné, déjà
-  citée au lot 2 — bloquait de nouveau un test au lieu de le faire échouer : cette fois un
-  test écrit pour le lot 4, corrigé depuis. **Les autres défauts des lots 2 et 3 (76 et 152)
-  n'ont pas encore été rejoués depuis le lot 4**, alors que certains de leurs tests ont été
-  remaniés : leur détection n'est établie, à ce stade, que sur le code du lot 3.
+  déplacés vers la nouvelle définition. **Tous les défauts rejouables par script — 31 au
+  lot 1, 107 au lot 2, 226 au lot 3 — ont été rejoués sur le code du lot 4 : tous sont
+  détectés.** L'un d'eux — la purge au travail non borné, déjà citée au lot 2 — bloquait de
+  nouveau un test au lieu de le faire échouer : cette fois un test écrit pour le lot 4,
+  corrigé depuis.
+- Après la correction des requêtes simultanées, ont été rejoués les défauts qui portent sur
+  un fichier qu'elle modifie, code ou test : les 249 du lot 4, les 31 du lot 1 et 5 du
+  lot 2. Tous sont détectés.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -390,8 +408,9 @@ ci-dessus ou révélera des défauts.
 
 ### Pendant le lot 4 de la phase 2
 
-Tous corrigés avant la livraison du lot. Les deux premiers touchent le produit ; les autres,
-ses tests.
+Tous corrigés. Les deux premiers et les trois derniers touchent le produit ; les autres, ses
+tests. **Les trois derniers ont été trouvés après la première publication du lot sur la
+branche**, en envoyant des requêtes simultanées à l'API de l'aperçu.
 
 1. **Une pièce d'identité téléchargée par un examinateur passait, en clair, par un fichier
    temporaire du proxy** — défaut du lot 3. Une réponse plus grande que les tampons de Nginx
@@ -424,6 +443,38 @@ ses tests.
    qu'ils soient traités.** L'un a échoué une fois pendant la vérification finale ; rejoué
    sous charge, le travers se reproduit 9 fois sur 80. Trois autres pouvaient conclure
    « aucun message n'est parti » trop tôt. Ils attendent maintenant la fin du traitement.
+8. **Un changement de mot de passe qui croisait la clôture répondait par une erreur
+   serveur.** Mot de passe actuel confirmé, compte clôturé par une autre requête, puis
+   écriture du nouveau mot de passe sur une ligne disparue : `500`. Rien n'était écrit, mais
+   la documentation promettait `409` à toute écriture arrivée après la clôture — ce n'était
+   vrai que pour les écritures que la base refuse, pas pour celles qui ne trouvent plus leur
+   ligne. Reproduit 7 fois sur 14 essais contre l'aperçu ; il répond maintenant `409`. Le
+   même défaut existait à la connexion, à l'instant où l'empreinte du mot de passe est
+   recalculée.
+9. **Une demande de réinitialisation du mot de passe qui croisait la clôture répondait
+   « compte clôturé » (`409`)** au lieu de sa réponse unique : pendant un instant, une route
+   ouverte à tous disait qu'un compte portait cette adresse. Reproduit 4 fois sur 14. Elle
+   répond maintenant comme pour une adresse inconnue.
+10. **La clôture pouvait s'interbloquer avec une autre écriture du même compte.** Elle
+    verrouille le compte puis efface ce qu'il porte ; confirmer une application
+    d'authentification, régénérer des codes de secours, redemander un code ou vérifier un
+    numéro prennent ces verrous dans l'ordre inverse. PostgreSQL interrompait alors l'une
+    des deux requêtes après une seconde (`500`) — sans rien écrire à moitié. Le défaut n'a
+    pas été observé contre l'aperçu (la fenêtre est de quelques millisecondes) ; il a été
+    établi par l'examen des verrous, puis reproduit avec deux connexions à PostgreSQL. La
+    clôture cède maintenant le passage et recommence ; si le compte reste occupé, elle
+    répond `409`. Après correction, 112 requêtes simultanées en huit salves, puis quarante
+    croisements deux à deux : aucune erreur serveur.
+
+Ces trois défauts étaient de la même famille : une requête partie avant la clôture, traitée
+après. Plutôt que de chercher les suivants au hasard, un test rejoue désormais **chaque route
+ouverte au titulaire** avec une clôture qui la croise, à deux moments de son traitement (voir
+« Ce que ces tests établissent »). Il n'a trouvé aucune autre erreur serveur. Il a montré
+trois inscriptions au journal d'audit postérieures à la clôture, laissées en l'état : la
+copie des données, rassemblée avant la clôture et remise ; et deux actions devenues sans
+effet que leur service inscrit comme réussies — fermer les autres sessions (aucune),
+désactiver un second facteur que la clôture venait de retirer. Rien n'est écrit sur le
+compte, aucun message ne part.
 
 ### Pendant le lot 3 de la phase 2
 
@@ -621,6 +672,14 @@ Clôture, effacement, copie des données :
 - **La clôture est sans retour** : ni délai de rétractation, ni réouverture. La même personne
   peut se réinscrire aussitôt, avec la même adresse ; le nouveau compte n'hérite de rien, et
   doit refaire vérifier son identité.
+- **Requêtes simultanées sur un même compte** : seuls les croisements avec la clôture ont été
+  examinés verrou par verrou. Entre les autres écritures d'un compte, l'ordre des verrous
+  n'a pas fait l'objet d'une revue systématique ; un interblocage y serait résolu par
+  PostgreSQL — une requête interrompue, rien d'écrit à moitié — et répondrait `500`. Une
+  clôture demandée pendant qu'une autre requête tarde peut répondre `409` : elle est à
+  refaire. Les routes du back-office et les routes sans authentification ne sont pas
+  couvertes par le balayage des croisements ; pour elles, un compte clôturé pendant la
+  requête se présente comme un compte déjà clôturé, cas testé par ailleurs.
 - **Le journal d'audit n'est pas effacé**, y compris après l'échéance. Il ne contient ni
   adresse e-mail ni numéro complet, mais garde l'identifiant technique du compte, des
   adresses IP et des appareils, et les justifications saisies par le personnel — qui ne

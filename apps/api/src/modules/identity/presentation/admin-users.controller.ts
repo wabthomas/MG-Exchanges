@@ -262,8 +262,9 @@ export class AdminUsersController {
       'holder had done it (see `POST /me/close`), and the holder is told by e-mail — never ' +
       'why. Refused (`409`) while the account holds a back-office role, or while one of its ' +
       'identity verification cases awaits review: decide the case first, so that the decision ' +
-      'is kept. The mandatory `reason` is written to the audit log. You cannot close your own ' +
-      'account from the back office. Requires `users.close`.',
+      'is kept. Also refused (`409`), rarely, while another request is still modifying the ' +
+      'account: nothing has changed, try again. The mandatory `reason` is written to the audit ' +
+      'log. You cannot close your own account from the back office. Requires `users.close`.',
   })
   @ApiParam({ name: 'userId', schema: { type: 'string', format: 'uuid' } })
   @ApiBody({ schema: toOpenApiInputSchema(closeUserRequestSchema) })

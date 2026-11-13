@@ -10,18 +10,14 @@ import { type ArgumentsHost, Catch, type ExceptionFilter, HttpException } from '
 import type { Request, Response } from 'express';
 import { PinoLogger } from 'nestjs-pino';
 
-import { sqlStateOf } from '../../infrastructure/database/database-errors.js';
+import {
+  ACCOUNT_CLOSED_SQLSTATE,
+  sqlStateOf,
+} from '../../infrastructure/database/database-errors.js';
 import { AppError } from '../errors/app-error.js';
 import { getRequestId } from './request-id.middleware.js';
 
 const GENERIC_SERVER_ERROR_DETAIL = 'An unexpected error occurred. Please try again later.';
-
-/**
- * SQLSTATE levé par la base lorsqu'une écriture vise un compte clôturé (voir la migration
- * `account_closure`). Ce n'est pas un défaut : la requête était en cours quand le compte a été
- * clôturé. Aucun service n'a à s'en soucier — la réponse est la même partout.
- */
-const ACCOUNT_CLOSED_SQLSTATE = 'MGX05';
 
 /** Code du catalogue associé par défaut à un statut HTTP levé sans code explicite. */
 const DEFAULT_CODE_BY_STATUS: Readonly<Record<number, ErrorCode>> = {
@@ -75,6 +71,9 @@ export function toProblem(exception: unknown): Problem {
     return { status, code, detail: exception.message };
   }
 
+  // Écriture refusée par la base parce que le compte est clôturé. Ce n'est pas un défaut : la
+  // requête était en cours quand le compte a été clôturé. Aucun service n'a à s'en soucier —
+  // la réponse est la même partout.
   if (sqlStateOf(exception) === ACCOUNT_CLOSED_SQLSTATE) {
     return { status: 409, code: 'CONFLICT', detail: 'This account is closed.' };
   }

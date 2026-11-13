@@ -41,6 +41,11 @@ async function refusedByDatabase<T>(work: () => Promise<T>): Promise<T> {
 
 @Injectable()
 export class PrismaAccountClosureRepository extends AccountClosureRepository {
+  async boundLockWaits(tx: DbClient, milliseconds: number): Promise<void> {
+    // `true` : le réglage ne vaut que pour cette transaction.
+    await tx.$executeRaw`SELECT set_config('lock_timeout', ${`${String(milliseconds)}ms`}, true)`;
+  }
+
   async lockAccount(tx: DbClient, userId: string): Promise<LockedAccount | null> {
     // Le verrou d'abord, en une instruction ; les rôles ensuite : une attribution en cours a
     // dû attendre ce verrou, ou s'est achevée avant lui.
