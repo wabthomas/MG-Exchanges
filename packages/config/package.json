@@ -1,0 +1,27 @@
+{
+  "name": "@mgx/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Préréglages d'outillage partagés du monorepo MG-Exchange (TypeScript, ESLint, Jest).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint/index.js",
+    "./jest": "./jest/index.js",
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/library.json": "./tsconfig/library.json",
+    "./tsconfig/nest.json": "./tsconfig/nest.json"
+  },
+  "files": [
+    "eslint",
+    "jest",
+    "tsconfig"
+  ],
+  "devDependencies": {
+    "@eslint/js": "catalog:",
+    "eslint": "catalog:",
+    "eslint-config-prettier": "catalog:",
+    "globals": "catalog:",
+    "typescript-eslint": "catalog:"
+  }
+}

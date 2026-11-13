@@ -1,0 +1,43 @@
+# Dépendances
+node_modules/
+.pnpm-store/
+
+# Artefacts de build et de test
+dist/
+build/
+coverage/
+*.tsbuildinfo
+.eslintcache
+
+# Client Prisma généré (reconstruit par `pnpm db:generate`)
+apps/api/src/generated/
+
+# Environnements : aucun secret dans Git — seuls les modèles *.example sont versionnés
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Journaux
+*.log
+logs/
+
+# Éditeurs et systèmes
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# Données locales Docker (volumes montés en répertoire, sauvegardes)
+infrastructure/docker/data/
+backups/
+*.dump
+*.sql.gz
+
+# Clés et certificats : jamais dans le dépôt
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks

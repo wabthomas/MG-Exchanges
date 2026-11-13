@@ -1,0 +1,11 @@
+{
+  "extends": "../../packages/config/tsconfig/nest.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "declaration": false,
+    "tsBuildInfoFile": "./dist/.tsbuildinfo"
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.spec.ts"]
+}

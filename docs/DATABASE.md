@@ -1,0 +1,500 @@
+# Base de données
+
+PostgreSQL **18 ou supérieur** (fonction native `uuidv7()`), schéma géré exclusivement par
+les migrations Prisma (`apps/api/prisma/`).
+
+## Conventions
+
+| Sujet          | Règle                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| Nommage        | tables au pluriel et colonnes en `snake_case` ; modèles Prisma en `PascalCase`               |
+| Clés primaires | UUID v7 générés par la base (`uuidv7()`), ordonnés dans le temps                             |
+| Horodatages    | `timestamptz(6)`, toujours en UTC                                                            |
+| Montants       | `NUMERIC(38,0)` en unités minimales de l'actif — jamais `float`, `real` ni `money` (phase 3) |
+| Énumérations   | types `ENUM` PostgreSQL pour les ensembles fermés et stables                                 |
+| JSON           | `jsonb`, réservé aux contenus sans schéma relationnel (métadonnées, charges utiles)          |
+| Intégrité      | portée par la base : `NOT NULL`, `CHECK`, clés étrangères, unicité, déclencheurs             |
+| Suppression    | pas de suppression physique des données financières ou d'audit                               |
+
+## Rôles et privilèges
+
+Deux rôles distincts, pour que la compromission de l'API ne donne aucun pouvoir sur le schéma :
+
+| Rôle         | Utilisé par                           | Droits                                                                                                                      |
+| ------------ | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| propriétaire | migrations (`DATABASE_MIGRATION_URL`) | possède les objets ; DDL                                                                                                    |
+| applicatif   | l'API (`DATABASE_URL`)                | `SELECT`, `INSERT`, `UPDATE`, `DELETE` sur les données — aucun DDL, aucun `TRUNCATE`, ne peut pas désactiver un déclencheur |
+
+Les privilèges sont attribués par
+[`grant-app-privileges.sql`](../infrastructure/docker/postgres/sql/grant-app-privileges.sql),
+exécuté une fois par base (initialisation Docker en local ; à intégrer à l'outillage
+d'infrastructure ailleurs). Les tests d'intégration exécutent ce même fichier et se
+connectent avec le rôle applicatif : la séparation est donc vérifiée à chaque exécution.
+
+L'historique des migrations (`_prisma_migrations`) n'est pas une donnée applicative : qui
+peut l'écrire peut faire rejouer ou ignorer une migration au déploiement suivant. Le rôle
+applicatif n'y a **aucun accès**, pas même en lecture.
+
+Les droits d'administration (`permissions`, `roles`, `role_permissions`, `user_roles`) sont
+en **lecture seule** pour le rôle applicatif. Le catalogue ne change que par migration. Une
+attribution (`user_roles`) ne change que de deux façons : l'outil d'amorçage en ligne de
+commande, exécuté avec le rôle propriétaire ; ou l'**approbation d'une demande de changement
+de rôle**, que la base applique elle-même (voir `role_change_requests`). L'API n'écrit donc
+jamais directement une attribution : chacune résulte d'une demande approuvée, qui en reste la
+trace ineffaçable. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
+elle ne peut pas vérifier que ce sont bien eux qui agissent (limite décrite dans l'ADR 0018).
+
+En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
+utilisée pour les migrations.
+
+## Tables (phase 1)
+
+### `system_settings` — paramètres de la plateforme
+
+| Colonne                    | Type           | Notes                                           |
+| -------------------------- | -------------- | ----------------------------------------------- |
+| `key`                      | `varchar(128)` | clé primaire ; `maintenance.mode`, `features.*` |
+| `value`                    | `jsonb`        | validée par le schéma défini dans le code       |
+| `version`                  | `integer`      | incrémentée à chaque modification               |
+| `created_at`, `updated_at` | `timestamptz`  |                                                 |
+
+Contraintes : format de clé (`system_settings_key_format_check`), `version >= 1`.
+Les clés autorisées et le schéma de leurs valeurs sont définis dans le code ; une valeur
+stockée invalide est ignorée au profit de la valeur par défaut (fonctionnalité fermée).
+
+### `audit_logs` — journal d'audit, en ajout seul
+
+| Colonne                                  | Type               | Notes                                           |
+| ---------------------------------------- | ------------------ | ----------------------------------------------- |
+| `id`                                     | `uuid`             | clé primaire, UUID v7                           |
+| `occurred_at`                            | `timestamptz`      |                                                 |
+| `actor_type`                             | `audit_actor_type` | `USER`, `SYSTEM`, `SERVICE`                     |
+| `actor_id`                               | `varchar(64)`      | `NULL` si et seulement si l'acteur est `SYSTEM` |
+| `action`                                 | `varchar(128)`     | `ressource.verbe`, ex. `system_setting.updated` |
+| `resource_type`, `resource_id`           | `varchar`          | ressource concernée                             |
+| `outcome`                                | `audit_outcome`    | `SUCCESS`, `FAILURE`, `DENIED`                  |
+| `request_id`, `ip_address`, `user_agent` |                    | contexte de la requête                          |
+| `metadata`                               | `jsonb`            | objet JSON, expurgé des secrets avant écriture  |
+
+Index : `(occurred_at)`, `(actor_type, actor_id, occurred_at)`, `(resource_type, resource_id, occurred_at)`.
+
+**Immuabilité, à trois niveaux :**
+
+1. déclencheurs `audit_logs_append_only_row` et `audit_logs_append_only_truncate` : tout
+   `UPDATE`, `DELETE` ou `TRUNCATE` est refusé (SQLSTATE `MGX01`), **y compris pour le
+   propriétaire du schéma** ;
+2. privilèges : le rôle applicatif ne possède que `INSERT` et `SELECT` sur cette table ;
+3. le rôle applicatif ne peut ni désactiver un déclencheur ni modifier la table.
+
+Une correction se fait par une nouvelle entrée, jamais par modification.
+
+### `outbox_events` — boîte d'envoi transactionnelle
+
+| Colonne                                       | Type            | Notes                                                  |
+| --------------------------------------------- | --------------- | ------------------------------------------------------ |
+| `id`                                          | `uuid`          | UUID v7 ; sert aussi d'identifiant de traitement       |
+| `aggregate_type`, `aggregate_id`              | `varchar`       | entité à l'origine de l'événement                      |
+| `event_type`                                  | `varchar(128)`  | `agrégat.fait`, ex. `system_setting.changed`           |
+| `payload`, `metadata`                         | `jsonb`         |                                                        |
+| `status`                                      | `outbox_status` | `PENDING`, `PUBLISHED`, `DEAD`                         |
+| `attempts`, `last_error`                      |                 | suivi des tentatives de publication                    |
+| `occurred_at`, `available_at`, `published_at` | `timestamptz`   | `available_at` porte le délai avant nouvelle tentative |
+
+Contraintes : `attempts >= 0` ; un événement est `PUBLISHED` si et seulement si
+`published_at` est renseignée ; format de `event_type`.
+Index : `(aggregate_type, aggregate_id)`, `(published_at)` — purge des événements publiés — et
+l'index partiel `outbox_events_pending_idx (available_at, id) WHERE status = 'PENDING'`, qui
+sert la file du relais.
+
+## Tables (phase 2 — identité)
+
+### `users` — comptes
+
+| Colonne                      | Type           | Notes                                                              |
+| ---------------------------- | -------------- | ------------------------------------------------------------------ |
+| `id`                         | `uuid`         | UUID v7                                                            |
+| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                           |
+| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`            |
+| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion |
+| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement               |
+| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                             |
+| `locale`                     | `varchar(10)`  | langue des messages                                                |
+| `terms_accepted_at`          | `timestamptz`  | acceptation des conditions d'utilisation                           |
+
+Contraintes : adresse normalisée et bien formée, téléphone E.164, code pays en majuscules,
+**un compte `ACTIVE` a toujours une adresse vérifiée**. Un compte n'est jamais supprimé :
+il est clôturé (toutes les clés étrangères vers `users` sont `ON DELETE RESTRICT`). Seule
+exception : une **inscription jamais vérifiée** (`PENDING_VERIFICATION`), qui n'est pas encore
+un compte, est supprimée après 7 jours avec son secret et ses codes.
+
+**Compte clôturé** (ADR 0023) — la ligne reste, sans identifiant, et ne change plus jamais :
+
+- contraintes : un compte `CLOSED` porte l'adresse factice `closed-<id>@closed.invalid`, non
+  vérifiée, et aucun numéro (`users_closed_is_anonymous_check`) ; le domaine `closed.invalid`
+  est réservé aux comptes clôturés (`users_reserved_email_domain_check`) — nul ne peut donc
+  prendre d'avance l'adresse factice d'un compte ;
+- déclencheur `users_enforce_closure` (fonction `mgx_enforce_user_closure()`) : un compte ne
+  naît pas clôturé ; seul un compte actif ou suspendu se clôt, et seulement **avec sa trace**
+  (`account_closures`), **sans rôle**, et une fois supprimés son secret, son second facteur,
+  ses codes, ses sessions et son profil (`MGX04`) ; **clôturé, il ne se modifie plus**
+  (`MGX05`) ;
+- déclencheurs `<table>_account_open` (fonction `mgx_forbid_closed_account_rows()`) sur
+  `user_credentials`, `user_totp_credentials`, `user_recovery_codes`, `user_sessions`,
+  `verification_challenges`, `user_profiles`, `user_roles` et `kyc_cases` : **rien ne s'ajoute
+  à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
+  `FOR KEY SHARE` ; la clôture la verrouille en `FOR UPDATE`. Les deux s'excluent : une ligne
+  est écrite avant la clôture — qui l'efface, ou échoue — ou attend la clôture et est
+  refusée. Le verrou est le plus faible qui convienne : il ne gêne aucune autre écriture du
+  compte.
+
+### `user_credentials` — secret d'authentification
+
+Table séparée de `users` : aucune lecture d'un compte ne renvoie son secret.
+`password_hash` est une empreinte Argon2id au format PHC ; une contrainte refuse toute autre
+valeur — un mot de passe en clair ne peut pas y être écrit, même par erreur.
+
+### `permissions`, `roles`, `role_permissions`, `user_roles` — droits du back-office
+
+`permissions` est la copie du catalogue du code (`@mgx/contracts`) ; un test vérifie que les
+deux sont identiques, rôle par rôle. `roles` contient les rôles système : `super_admin`
+(toutes les permissions), `support` (`users.read`, `users.suspend`,
+`users.revoke_sessions`) et `compliance` (`users.read`, `users.close`, `kyc.read`,
+`kyc.review`, `kyc.revoke`). `user_roles` attribue un rôle à un compte (`granted_by` : auteur
+de la demande approuvée, `NULL` pour l'amorçage). Tables en lecture seule pour le rôle
+applicatif (voir « Rôles et privilèges »).
+
+### `role_change_requests` — changements de rôle sous double validation
+
+| Colonne                                      | Notes                                                            |
+| -------------------------------------------- | ---------------------------------------------------------------- |
+| `user_id`, `role_id`, `action`               | compte concerné, rôle, `GRANT` ou `REVOKE`                       |
+| `reason`                                     | justification de la demande                                      |
+| `status`                                     | `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED`, `EXPIRED`        |
+| `requested_by`, `requested_at`, `expires_at` | auteur, date, échéance (72 heures)                               |
+| `decided_by`, `decided_at`, `decision_note`  | auteur et date de la décision ; `decided_by` est `NULL` si échue |
+
+**La règle des quatre yeux est portée par la base**, pas seulement par l'API :
+
+- contraintes : nul ne demande un changement de ses propres rôles ; une approbation ou un
+  refus vient d'un compte qui n'est ni l'auteur de la demande ni l'intéressé ; seul l'auteur
+  retire sa demande ; une décision est complète (datée, attribuée) ; une seule demande en
+  attente par compte et par rôle ;
+- déclencheur `role_change_requests_enforce` (fonction `mgx_enforce_role_change()`,
+  `SECURITY DEFINER`, chemin de recherche figé) : une demande naît en attente ; ses termes ne
+  changent jamais ; une demande décidée ne se redécide pas ; **à l'approbation**, la fonction
+  vérifie que la demande n'est pas échue, que son auteur et l'approbateur sont actifs et
+  détiennent `roles.manage`, qu'un rôle ne va qu'à un compte actif — puis écrit elle-même
+  dans `user_roles`. Elle prend d'abord un verrou consultatif
+  (`pg_advisory_xact_lock`, clé `role_change:approval`) : les approbations sont appliquées
+  une à une, chacune vérifiée sur un état que la précédente a déjà validé. Toute règle
+  enfreinte lève l'erreur `MGX02` ;
+- une demande ne s'efface pas (`MGX01`) : elle est la trace de la décision.
+
+### `user_profiles` — profil déclaré
+
+Prénom, nom, postnom (`additional_name`), date de naissance, adresse, fuseau horaire : une
+ligne par compte, créée à la première modification. Ces informations sont **déclarées** par
+le titulaire ; rien ne les a vérifiées. Contraintes : noms non vides, naissance ≥ 1900 (la
+majorité est vérifiée par l'API, qui connaît la date du jour).
+
+Lorsqu'un dossier de vérification est accepté, ce qu'il établit **prime** sur cette table,
+sans y être recopié : l'API lit l'identité et l'adresse vérifiées dans `kyc_cases`. Si la
+vérification est retirée, le profil déclaré réapparaît tel qu'il était.
+
+### `user_totp_credentials`, `user_recovery_codes` — validation en deux étapes
+
+`user_totp_credentials` : une ligne par compte. `secret_ciphertext` est le secret TOTP
+**chiffré** (AES-256-GCM, clé hors base) : version (1 octet) ‖ nonce (12) ‖ secret chiffré
+(20) ‖ sceau (16) — une contrainte refuse toute autre forme, donc un secret en clair.
+`confirmed_at` est `NULL` tant que l'enrôlement n'est pas confirmé ; `last_used_step` retient
+le dernier pas de temps accepté (un code ne sert qu'une fois).
+`user_recovery_codes` : une ligne par code de secours, **empreinte HMAC-SHA-256 uniquement**
+(contrainte de longueur), `used_at` marque l'usage.
+
+### `verification_challenges` — codes à usage unique
+
+| Colonne                                       | Notes                                                                  |
+| --------------------------------------------- | ---------------------------------------------------------------------- |
+| `purpose`                                     | `EMAIL_VERIFICATION`, `PASSWORD_RESET`, `PHONE_VERIFICATION`           |
+| `target`                                      | adresse à laquelle le code est envoyé — la seule qu'il vérifie         |
+| `code_hash`                                   | HMAC-SHA-256 du code, clé hors base ; `NULL` tant qu'il n'est pas émis |
+| `attempts`, `max_attempts`                    | essais comptés ; la base refuse tout dépassement                       |
+| `expires_at`, `consumed_at`, `invalidated_at` | cycle de vie                                                           |
+
+Le code n'est jamais stocké. Un index unique partiel garantit **un seul code en cours** par
+compte et par usage.
+
+### `user_sessions`, `session_tokens` — sessions
+
+`user_sessions` : une ligne par connexion (appareil, adresse IP, agent utilisateur, échéances
+d'inactivité et absolue, révocation et son motif). `device_fingerprint` est l'empreinte
+SHA-256 de l'identifiant d'appareil (jamais l'identifiant lui-même) : elle sert à reconnaître
+un appareil déjà utilisé par le compte. `session_tokens` : une ligne par paire de
+jetons émise ; seules les **empreintes SHA-256** des jetons sont stockées (contrainte de
+longueur : 32 octets), `consumed_at` marque le renouvellement. Les paires renouvelées depuis
+plus de 24 heures sont supprimées au renouvellement suivant.
+
+### `account_closures` — trace de la clôture d'un compte
+
+Une ligne par compte clôturé, écrite dans la transaction de la clôture.
+
+| Colonne                 | Notes                                                                                         |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `user_id`               | clé primaire : le compte clôturé                                                              |
+| `closed_at`             | date de la clôture                                                                            |
+| `origin`, `closed_by`   | `HOLDER` (le titulaire, `closed_by = user_id`) ou `STAFF` (un membre du personnel)            |
+| `email`, `phone`        | adresse et numéro que portait le compte — **effacés à l'échéance**                            |
+| `legal_retention_until` | terme de la conservation imposée par la loi ; `NULL` si rien n'est conservé à ce titre        |
+| `erasure_due_at`        | échéance d'effacement : jamais avant le terme légal                                           |
+| `erased_at`             | date à laquelle l'adresse, le numéro et les dossiers conservés ont été effacés ; sinon `NULL` |
+
+- contraintes : l'origine s'accorde avec l'auteur (`account_closures_author_check`) ; forme de
+  l'adresse et du numéro ; l'échéance suit la clôture et n'est jamais antérieure au terme
+  légal (`account_closures_schedule_check`) ; **avant l'effacement, la trace garde
+  l'adresse ; après, plus aucun identifiant** (`account_closures_erasure_check`) ;
+- index : `(email)`, `(phone)` — recherche d'un compte clôturé par son ancienne adresse —,
+  `(erasure_due_at)` — file de l'effacement ;
+- déclencheur `account_closures_enforce` (fonction `mgx_enforce_account_closure()`), erreur
+  `MGX04` :
+  - **à l'écriture** : le compte est actif ou suspendu (sa ligne est verrouillée) ; la trace
+    porte exactement son adresse et son numéro ; elle n'est pas déjà effacée ; la clôture
+    n'est **pas antidatée** de plus de vingt-quatre heures ; une clôture `STAFF` vient d'un
+    compte **actif détenant `users.close`** ; si une décision a été prise sur un dossier de
+    vérification du compte, `legal_retention_until` vaut **au moins dix ans** après la
+    clôture (dix années civiles, comptées en UTC) ;
+  - **ensuite**, la trace ne change qu'une fois, pour constater l'effacement — rien d'autre
+    ne se réécrit —, et seulement **une fois le terme légal atteint à l'horloge de la base**
+    et les dossiers de vérification du compte effacés ;
+  - elle ne se supprime pas ; la table ne se vide pas (`account_closures_no_truncate`) ; le
+    rôle applicatif n'a ni `DELETE` ni `TRUNCATE` ;
+- déclencheur de contrainte **différé** `account_closures_applied` (fonction
+  `mgx_check_closure_applied()`), vérifié à la validation de la transaction : **une clôture est
+  entière ou n'est pas** — une trace n'existe que pour un compte clôturé, et un compte
+  clôturé n'a plus de dossier de vérification en préparation, en attente ou en vigueur.
+
+## Tables (phase 2 — vérification d'identité)
+
+### `kyc_cases` — dossiers de vérification
+
+Un dossier par compte, par niveau et par tentative. Le **niveau vérifié d'un compte n'est
+stocké nulle part** : il se lit sur ses dossiers acceptés (`status = 'APPROVED'`).
+
+| Colonne                                                                                                        | Notes                                                                                   |
+| -------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `user_id`, `level`                                                                                             | titulaire ; niveau `1` identité, `2` adresse, `3` origine des fonds                     |
+| `status`                                                                                                       | `DRAFT`, `SUBMITTED`, `APPROVED`, `REJECTED`, `SUPERSEDED`, `REVOKED`, `ACCOUNT_CLOSED` |
+| `submitted_at`                                                                                                 | date du dépôt — ordre de la file d'examen                                               |
+| `decided_by`, `decided_at`, `rejection_reasons`, `decision_note`                                               | décision ; motifs communiqués au titulaire, note interne                                |
+| `ended_at`, `revoked_by`, `revocation_reason`                                                                  | fin de validité d'un dossier accepté : remplacement ou retrait                          |
+| `given_name` … `nationality`                                                                                   | niveau 1 : identité déclarée                                                            |
+| `document_type`, `document_issuing_country`, `document_issued_on`, `document_issued_at`, `document_expires_on` | niveau 1 : pièce présentée                                                              |
+| `document_number_encrypted`                                                                                    | numéro de la pièce, **chiffré** (AES-256-GCM, lié au compte)                            |
+| `document_number_digest`                                                                                       | empreinte à clé (HMAC-SHA-256) de nature + pays + numéro : doublons                     |
+| `address_line1` … `address_country`, `address_proof_type`, `address_proof_issued_on`                           | niveau 2 : adresse et justificatif                                                      |
+| `funds_sources`, `occupation`, `employer_name`, `funds_explanation`                                            | niveau 3 : origine des fonds                                                            |
+
+**Le parcours est porté par la base**, quel que soit le code qui écrit :
+
+- contraintes : à chaque statut ses dates et ses acteurs ; un refus porte un à cinq motifs et
+  une note, aucun autre statut n'en porte ; un retrait est motivé ; **nul ne décide de son
+  propre dossier ni ne retire sa propre vérification** ; un dossier porte la déclaration de
+  son niveau, complète, et **elle seule** ;
+- index uniques partiels : un seul dossier ouvert (`kyc_cases_open_key`) et un seul dossier
+  accepté (`kyc_cases_approved_key`) par compte et par niveau ; **une même pièce d'identité
+  ne vérifie qu'un seul compte** (`kyc_cases_verified_document_key`) ;
+- déclencheur `kyc_cases_enforce` (fonction `mgx_enforce_kyc_case()`, chemin de recherche
+  figé) : un dossier naît en préparation ; son titulaire et son niveau ne changent jamais ;
+  il n'est **déposé** qu'avec ses pièces obligatoires et, au-delà du niveau 1, si le niveau
+  précédent est vérifié ; déposé, **rien de ce qui a été déclaré ne change plus** ; la
+  **décision** vient d'un compte actif détenant `kyc.review` ; un niveau ne s'accepte pas si
+  le précédent n'est plus vérifié ; l'acceptation fait passer à `SUPERSEDED` le dossier
+  accepté précédent du même niveau — transition que rien d'autre ne peut écrire ; un
+  **retrait** vient d'un compte actif détenant `kyc.revoke` ; un dossier accepté **prend fin
+  avec son compte** (`ACCOUNT_CLOSED`), et seulement si le compte est clôturé ; un dossier
+  refusé, remplacé, retiré ou clos avec son compte ne change plus. Toute règle enfreinte lève
+  l'erreur `MGX03`.
+- **effacement** (fonction `mgx_kyc_case_erasable()`) : un dossier en préparation s'efface
+  toujours ; un dossier déposé mais jamais examiné, seulement si le compte est clôturé ; un
+  dossier sur lequel une décision a été prise, seulement si le compte est clôturé **et** que
+  la conservation légale inscrite à sa clôture est écoulée — **à l'horloge de la base**.
+  Tant que le compte est ouvert, un dossier déposé ne s'efface pas.
+
+À la différence des rôles (ADR 0018), ces fonctions ne sont pas `SECURITY DEFINER` : elles
+n'écrivent dans aucune table interdite au rôle applicatif.
+
+### `kyc_documents` — pièces d'un dossier
+
+| Colonne                     | Notes                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `id`                        | attribué par l'API avant le chiffrement : il est lié au contenu chiffré                        |
+| `case_id`, `kind`           | dossier ; `IDENTITY_FRONT`, `IDENTITY_BACK`, `SELFIE`, `PROOF_OF_ADDRESS`, `SOURCE_OF_FUNDS`   |
+| `content_type`, `byte_size` | type constaté sur le contenu (JPEG, PNG, PDF) ; taille du fichier reçu                         |
+| `sha256`                    | empreinte du fichier **reçu** : intégrité à la relecture, mêmes fichiers sur plusieurs comptes |
+| `storage_key`               | emplacement du fichier chiffré dans le stockage des pièces                                     |
+| `wrapped_key`               | clé du fichier, chiffrée par la clé maîtresse                                                  |
+
+**Le fichier n'est pas en base** : seul ce qui le décrit et la clé (chiffrée) qui l'ouvre.
+Supprimer la ligne rend le fichier définitivement illisible.
+
+- contraintes : types de contenu acceptés ; un autoportrait n'est pas un PDF ; taille bornée ;
+  longueurs de l'empreinte et de la clé ; forme de l'emplacement ;
+- index unique partiel `kyc_documents_single_kind_key` : un recto, un verso et un autoportrait
+  au plus par dossier ;
+- déclencheur `kyc_documents_enforce` (fonction `mgx_enforce_kyc_document()`) : une pièce ne
+  s'ajoute qu'à un dossier **en préparation**, de son niveau, **ne se modifie jamais**, et ne
+  se retire que d'un dossier qui peut lui-même être effacé (voir `mgx_kyc_case_erasable()`
+  ci-dessus). La fonction verrouille la ligne du dossier (`FOR SHARE`) : un dépôt
+  simultané attend, de sorte qu'une pièce n'entre jamais dans un dossier déjà déposé, et
+  qu'un dossier n'est jamais déposé sans une pièce en cours de retrait ;
+- le rôle applicatif n'a pas le privilège `UPDATE` sur cette table.
+
+## Éléments écrits à la main dans les migrations
+
+Prisma ne modélise ni les contraintes `CHECK`, ni les index partiels, ni les déclencheurs.
+Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** :
+
+| Objet                                                                                                                                                                                                                                                                                  | Table                                                    |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `system_settings_key_format_check`, `system_settings_version_check`                                                                                                                                                                                                                    | `system_settings`                                        |
+| `audit_logs_actor_id_check`, `audit_logs_action_format_check`, `audit_logs_metadata_is_object_check`                                                                                                                                                                                   | `audit_logs`                                             |
+| fonction `mgx_forbid_mutation()` ; déclencheurs `audit_logs_append_only_row`, `audit_logs_append_only_truncate`                                                                                                                                                                        | `audit_logs`                                             |
+| retrait des privilèges `UPDATE`, `DELETE`, `TRUNCATE` aux rôles non propriétaires                                                                                                                                                                                                      | `audit_logs`                                             |
+| `outbox_events_attempts_check`, `outbox_events_published_at_check`, `outbox_events_event_type_format_check`                                                                                                                                                                            | `outbox_events`                                          |
+| index partiel `outbox_events_pending_idx`                                                                                                                                                                                                                                              | `outbox_events`                                          |
+| retrait de tout privilège aux rôles non propriétaires                                                                                                                                                                                                                                  | `_prisma_migrations`                                     |
+| `users_email_normalized_check`, `users_phone_format_check`, `users_country_code_check`, `users_active_requires_verified_email_check`, `users_phone_verified_requires_phone_check`                                                                                                      | `users`                                                  |
+| index unique partiel `users_verified_phone_key`                                                                                                                                                                                                                                        | `users`                                                  |
+| `user_credentials_password_hash_format_check`                                                                                                                                                                                                                                          | `user_credentials`                                       |
+| `permissions_key_format_check`, `roles_key_format_check`                                                                                                                                                                                                                               | `permissions`, `roles`                                   |
+| `verification_challenges_attempts_check`, `…_code_hash_length_check`, `…_single_outcome_check`, `…_expiry_check`                                                                                                                                                                       | `verification_challenges`                                |
+| index unique partiel `verification_challenges_active_key`                                                                                                                                                                                                                              | `verification_challenges`                                |
+| `user_sessions_revocation_check`, `user_sessions_expiry_check`                                                                                                                                                                                                                         | `user_sessions`                                          |
+| `session_tokens_hash_length_check`                                                                                                                                                                                                                                                     | `session_tokens`                                         |
+| données initiales : catalogue des permissions, rôle `super_admin`                                                                                                                                                                                                                      | `permissions`, `roles`, `role_permissions`               |
+| retrait des privilèges d'écriture aux rôles non propriétaires                                                                                                                                                                                                                          | `permissions`, `roles`, `role_permissions`, `user_roles` |
+| `user_totp_credentials_ciphertext_format_check`, `user_totp_credentials_last_used_step_check`                                                                                                                                                                                          | `user_totp_credentials`                                  |
+| `user_recovery_codes_hash_length_check`                                                                                                                                                                                                                                                | `user_recovery_codes`                                    |
+| `user_profiles_names_not_blank_check`, `user_profiles_date_of_birth_check`                                                                                                                                                                                                             | `user_profiles`                                          |
+| `user_sessions_device_fingerprint_length_check`                                                                                                                                                                                                                                        | `user_sessions`                                          |
+| `role_change_requests_reason_not_blank_check`, `…_expiry_check`, `…_not_self_requested_check`, `…_decision_check`, `…_four_eyes_check`, `…_cancelled_by_requester_check`                                                                                                               | `role_change_requests`                                   |
+| index unique partiel `role_change_requests_pending_key`                                                                                                                                                                                                                                | `role_change_requests`                                   |
+| fonction `mgx_enforce_role_change()` (`SECURITY DEFINER`, `search_path` figé, `EXECUTE` retiré à `PUBLIC`) ; déclencheur `role_change_requests_enforce`                                                                                                                                | `role_change_requests`, `user_roles`                     |
+| déclencheurs `role_change_requests_no_delete`, `role_change_requests_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                      | `role_change_requests`                                   |
+| index partiel `users_pending_registration_idx` (purge des inscriptions jamais vérifiées)                                                                                                                                                                                               | `users`                                                  |
+| données initiales : permissions du back-office, rôle `support`                                                                                                                                                                                                                         | `permissions`, `roles`, `role_permissions`               |
+| `kyc_cases_level_check`, `…_lists_not_null_check`, `…_lifecycle_check`, `…_rejection_check`, `…_decision_note_check`, `…_revocation_reason_check`, `…_not_self_decided_check`, `…_not_self_revoked_check`, `…_identity_fields_check`, `…_address_fields_check`, `…_funds_fields_check` | `kyc_cases`                                              |
+| index uniques partiels `kyc_cases_open_key`, `kyc_cases_approved_key`, `kyc_cases_verified_document_key`                                                                                                                                                                               | `kyc_cases`                                              |
+| fonction `mgx_enforce_kyc_case()` (`search_path` figé) ; déclencheurs `kyc_cases_enforce`, `kyc_cases_no_truncate`                                                                                                                                                                     | `kyc_cases`                                              |
+| `kyc_documents_content_type_check`, `…_selfie_is_image_check`, `…_byte_size_check`, `…_sha256_check`, `…_wrapped_key_check`, `…_storage_key_check`                                                                                                                                     | `kyc_documents`                                          |
+| index unique partiel `kyc_documents_single_kind_key`                                                                                                                                                                                                                                   | `kyc_documents`                                          |
+| fonction `mgx_enforce_kyc_document()` (`search_path` figé) ; déclencheurs `kyc_documents_enforce`, `kyc_documents_no_truncate`                                                                                                                                                         | `kyc_documents`                                          |
+| retrait de `TRUNCATE` (et de `UPDATE` sur `kyc_documents`) aux rôles non propriétaires                                                                                                                                                                                                 | `kyc_cases`, `kyc_documents`                             |
+| données initiales : permissions `kyc.read`, `kyc.review`, `kyc.revoke`, rôle `compliance`                                                                                                                                                                                              | `permissions`, `roles`, `role_permissions`               |
+| valeur `ACCOUNT_CLOSED` du type `kyc_case_status` (migration séparée : PostgreSQL interdit d'utiliser une valeur dans la transaction qui l'ajoute)                                                                                                                                     | `kyc_cases`                                              |
+| `users_closed_is_anonymous_check`, `users_reserved_email_domain_check` ; fonction `mgx_enforce_user_closure()`, déclencheur `users_enforce_closure`                                                                                                                                    | `users`                                                  |
+| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                      | huit tables rattachées à un compte (voir `users`)        |
+| `account_closures_author_check`, `…_email_check`, `…_phone_check`, `…_schedule_check`, `…_erasure_check`                                                                                                                                                                               | `account_closures`                                       |
+| fonctions `mgx_enforce_account_closure()`, `mgx_check_closure_applied()` ; déclencheurs `account_closures_enforce`, `account_closures_no_truncate`, déclencheur de contrainte différé `account_closures_applied` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires       | `account_closures`                                       |
+| fonction `mgx_kyc_case_erasable()` ; `kyc_cases_lifecycle_check`, `mgx_enforce_kyc_case()` et `mgx_enforce_kyc_document()` **remplacées** (fin d'une vérification à la clôture, effacement)                                                                                            | `kyc_cases`, `kyc_documents`                             |
+| données initiales : permission `users.close`, attribuée à `super_admin` et `compliance`                                                                                                                                                                                                | `permissions`, `role_permissions`, `roles`               |
+
+Leur présence et leur effet sont vérifiés par les tests d'intégration
+`database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
+`back-office-schema.spec.ts`, `kyc-schema.spec.ts` et `account-closure-schema.spec.ts` (dans
+`apps/api/test/integration/`).
+
+**Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
+
+| Code    | Signification                                                   |
+| ------- | --------------------------------------------------------------- |
+| `MGX01` | modification ou suppression interdite d'une table en ajout seul |
+| `MGX02` | règle de la double validation d'un changement de rôle enfreinte |
+| `MGX03` | règle du parcours d'un dossier de vérification enfreinte        |
+| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte        |
+| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`    |
+
+`MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
+une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
+soucier. Les autres sont interceptés par le dépôt (_repository_) du module concerné : les
+contrôles du service auraient dû écarter le cas, de sorte que la réponse est un `409 CONFLICT`
+et l'incident est journalisé.
+
+## Migrations
+
+```bash
+pnpm db:migrate:dev --create-only --name <description>   # génère le SQL sans l'appliquer
+# relire le SQL, y ajouter contraintes / déclencheurs, puis :
+pnpm db:migrate:dev          # applique en développement
+pnpm db:check-drift          # les migrations correspondent-elles au schéma Prisma ?
+pnpm db:migrate:deploy       # applique les migrations en attente (CI, staging, production)
+```
+
+### Base fantôme
+
+Pour comparer les migrations au schéma, Prisma les rejoue dans une base **distincte et
+jetable**, qu'il vide au préalable : la base fantôme (`SHADOW_DATABASE_URL`).
+
+| Commande                 | Base fantôme                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------- |
+| `pnpm db:check-drift`    | **obligatoire** : sans `SHADOW_DATABASE_URL`, la commande échoue                |
+| `pnpm db:migrate:dev`    | utilisée si elle est définie ; sinon Prisma en crée une temporaire (`CREATEDB`) |
+| `pnpm db:migrate:deploy` | jamais utilisée                                                                 |
+
+En local, Docker Compose crée cette base au premier démarrage (`<MGX_DB_NAME>_shadow`,
+`mgx_shadow` par défaut) : elle appartient au rôle propriétaire et le rôle applicatif ne peut
+pas s'y connecter. Elle ne doit **jamais** désigner une base contenant des données — Prisma
+refuse d'ailleurs qu'elle soit la base principale. Elle n'existe ni en staging ni en
+production, où seule `pnpm db:migrate:deploy` s'exécute.
+
+### Règles
+
+- une migration appliquée n'est **jamais modifiée** : toute correction est une nouvelle migration ;
+- aucune modification manuelle d'une base ; `prisma db push` est proscrit ;
+- en production, les migrations s'exécutent comme une étape distincte, avec le rôle
+  propriétaire, avant le démarrage de la nouvelle version ;
+- les changements destructifs suivent le schéma « étendre, migrer, contracter » sur
+  plusieurs versions.
+
+## Conservation des données
+
+| Table                        | Règle actuelle                                                                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audit_logs`                 | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                                                                                                                                                                                |
+| `outbox_events`              | événements **publiés** : supprimés **30 jours** après leur publication. Événements en attente ou abandonnés (`DEAD`) : conservés jusqu'à leur traitement                                                                                                        |
+| `system_settings`            | historique complet des changements dans `audit_logs`                                                                                                                                                                                                            |
+| `users`, `user_credentials`  | conservés tant que le compte est ouvert. **Inscription jamais vérifiée : supprimée après 7 jours.** **Compte clôturé** : secret supprimé à la clôture ; la ligne `users` reste, sans adresse ni numéro                                                          |
+| `account_closures`           | trace conservée indéfiniment ; son adresse et son numéro sont **effacés à l'échéance** : 30 jours après la clôture, ou au terme de la conservation légale (dix ans) si des dossiers de vérification sont conservés                                              |
+| `user_sessions`              | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte                                                                                                                                                                |
+| `session_tokens`             | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                                                                                                                                                                    |
+| `verification_challenges`    | supprimés **7 jours** après leur expiration                                                                                                                                                                                                                     |
+| `user_totp_credentials`      | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                                                                  |
+| `role_change_requests`       | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                                                         |
+| `user_profiles`              | conservés tant que le compte est ouvert ; **supprimés à la clôture**, comme les sessions, les codes et le second facteur                                                                                                                                        |
+| `kyc_cases`, `kyc_documents` | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces |
+
+La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file
+`account-maintenance`), bornée à 500 lignes par catégorie et par exécution — 200 comptes pour
+l'effacement des comptes clôturés, de l'échéance la plus ancienne à la plus récente. Chaque
+suppression d'inscription est écrite au journal d'audit (`user.registration_purged`), chaque
+suppression d'un dossier de vérification abandonné (`kyc_case.draft_purged`) et chaque
+effacement d'un compte clôturé (`user.data_erased`) aussi. Les fichiers des pièces sont
+effacés après la validation de la transaction ; un fichier resté sans ligne est de toute
+façon indéchiffrable. La dernière session de chaque compte ouvert est conservée : elle atteste
+qu'il s'est déjà connecté, ce dont dépend l'avertissement de connexion depuis un nouvel
+appareil.
+
+L'échéance d'effacement est lue à l'horloge de l'application ; la conservation légale, elle,
+est **relue par la base à sa propre horloge**, qui refuse tout effacement prématuré : l'étape
+échoue alors, le signale, et recommence au passage suivant. Un compte qui ne peut pas être
+effacé n'empêche pas les autres de l'être, mais il reste en tête de file : au-delà de 200
+comptes durablement bloqués, les suivants attendraient (voir `DEPLOYMENT.md`).
+
+Ces durées sont des valeurs de départ. Celles qui touchent aux données personnelles
+s'appuient sur une lecture non confirmée de la loi (ADR 0022 et 0023) : elles sont à valider
+par un conseil juridique avant l'ouverture au public.
+
+## Tables à venir
+
+Le modèle cible (vérification des entreprises, portefeuilles, grand livre en partie double,
+échanges, paiements, blockchain, P2P, séquestre, risque, support…) sera introduit phase par phase,
+chaque table arrivant avec le module qui l'utilise, ses contraintes et ses tests.

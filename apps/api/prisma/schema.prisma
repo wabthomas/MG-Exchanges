@@ -1,0 +1,741 @@
+// Schéma de données MG-Exchange — PostgreSQL 18+.
+//
+// Conventions (détail : docs/DATABASE.md)
+//  - tables au pluriel et colonnes en snake_case ; modèles et champs Prisma en camelCase ;
+//  - clés primaires UUID v7 générées par PostgreSQL (`uuidv7()`), ordonnées dans le temps ;
+//  - horodatages `timestamptz(6)` en UTC ;
+//  - les contraintes CHECK, index partiels et déclencheurs sont écrits à la main dans les
+//    migrations (Prisma ne les modélise pas) et recensés dans docs/DATABASE.md ;
+//  - toute évolution passe par `prisma migrate` : jamais de modification manuelle d'une base.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------------------
+// Paramètres système
+// ---------------------------------------------------------------------------------------
+
+/// Paramètres de la plateforme modifiables à chaud (maintenance, activation des
+/// fonctionnalités réglementées). Les clés autorisées et le schéma de leurs valeurs sont
+/// définis dans le code ; chaque modification est tracée dans `audit_logs`.
+model SystemSetting {
+  key       String   @id @db.VarChar(128)
+  value     Json
+  /// Verrou optimiste : incrémenté à chaque modification.
+  version   Int      @default(1)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("system_settings")
+}
+
+// ---------------------------------------------------------------------------------------
+// Journal d'audit
+// ---------------------------------------------------------------------------------------
+
+enum AuditActorType {
+  /// Utilisateur ou administrateur authentifié.
+  USER
+  /// La plateforme elle-même (tâche planifiée, traitement asynchrone).
+  SYSTEM
+  /// Système tiers authentifié (prestataire de paiement, webhook signé).
+  SERVICE
+
+  @@map("audit_actor_type")
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+
+  @@map("audit_outcome")
+}
+
+/// Journal d'audit des actions sensibles. Table en ajout seul : toute modification ou
+/// suppression est refusée par la base elle-même (déclencheurs `audit_logs_append_only_*`).
+model AuditLog {
+  id           String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  occurredAt   DateTime       @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  actorType    AuditActorType @map("actor_type")
+  /// Identifiant de l'acteur ; NULL uniquement pour l'acteur SYSTEM.
+  actorId      String?        @map("actor_id") @db.VarChar(64)
+  /// Action au format `ressource.verbe`, par exemple `system_setting.updated`.
+  action       String         @db.VarChar(128)
+  resourceType String         @map("resource_type") @db.VarChar(64)
+  resourceId   String?        @map("resource_id") @db.VarChar(128)
+  outcome      AuditOutcome
+  requestId    String?        @map("request_id") @db.VarChar(128)
+  ipAddress    String?        @map("ip_address") @db.Inet
+  userAgent    String?        @map("user_agent") @db.VarChar(512)
+  /// Contexte de l'action (valeurs avant/après…), expurgé de toute donnée secrète.
+  metadata     Json           @default("{}")
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([actorType, actorId, occurredAt(sort: Desc)])
+  @@index([resourceType, resourceId, occurredAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------------------
+// Boîte d'envoi transactionnelle (outbox)
+// ---------------------------------------------------------------------------------------
+
+enum OutboxStatus {
+  /// En attente de publication (ou de nouvelle tentative).
+  PENDING
+  /// Remis à la file de traitement.
+  PUBLISHED
+  /// Abandonné après le nombre maximal de tentatives : intervention requise.
+  DEAD
+
+  @@map("outbox_status")
+}
+
+/// Événements de domaine écrits dans la même transaction que les données métier, puis
+/// publiés de façon asynchrone (au moins une fois) par le relais.
+model OutboxEvent {
+  id            String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  aggregateType String       @map("aggregate_type") @db.VarChar(64)
+  aggregateId   String       @map("aggregate_id") @db.VarChar(128)
+  eventType     String       @map("event_type") @db.VarChar(128)
+  payload       Json
+  /// Corrélation : identifiant de requête, acteur…
+  metadata      Json         @default("{}")
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?      @map("last_error") @db.VarChar(1024)
+  occurredAt    DateTime     @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  /// Date à partir de laquelle l'événement peut être (re)publié.
+  availableAt   DateTime     @default(now()) @map("available_at") @db.Timestamptz(6)
+  publishedAt   DateTime?    @map("published_at") @db.Timestamptz(6)
+
+  @@index([aggregateType, aggregateId])
+  // Purge des événements publiés.
+  @@index([publishedAt])
+  @@map("outbox_events")
+}
+
+// ---------------------------------------------------------------------------------------
+// Identité : comptes, secrets d'authentification, rôles et permissions
+// ---------------------------------------------------------------------------------------
+
+enum AccountType {
+  INDIVIDUAL
+  BUSINESS
+
+  @@map("account_type")
+}
+
+enum UserStatus {
+  /// Compte créé, adresse e-mail pas encore vérifiée : connexion impossible.
+  PENDING_VERIFICATION
+  ACTIVE
+  /// Bloqué par la plateforme (sécurité, conformité) : réversible.
+  SUSPENDED
+  /// Clôturé : définitif.
+  CLOSED
+
+  @@map("user_status")
+}
+
+/// Compte d'un utilisateur — client ou membre du personnel. Un compte n'est jamais supprimé
+/// physiquement : il est clôturé (`CLOSED`). Seule exception : une inscription dont l'adresse
+/// n'a jamais été vérifiée, qui n'est pas encore un compte, est purgée après quelques jours.
+///
+/// La ligne d'un compte clôturé ne porte plus aucun identifiant : son adresse est remplacée par
+/// une adresse factice (`closed-<id>@closed.invalid`), son numéro effacé — la base l'impose. Ce
+/// qui doit en être gardé un temps l'est dans `account_closures`.
+model User {
+  id              String      @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  accountType     AccountType @default(INDIVIDUAL) @map("account_type")
+  status          UserStatus  @default(PENDING_VERIFICATION)
+  /// Adresse e-mail normalisée (minuscules) : identifiant de connexion.
+  email           String      @unique @db.VarChar(254)
+  emailVerifiedAt DateTime?   @map("email_verified_at") @db.Timestamptz(6)
+  /// Numéro de téléphone au format E.164. Unique seulement une fois vérifié (index partiel) :
+  /// un numéro simplement déclaré ne doit pas empêcher son vrai titulaire de s'inscrire.
+  phone           String?     @db.VarChar(16)
+  phoneVerifiedAt DateTime?   @map("phone_verified_at") @db.Timestamptz(6)
+  /// Pays de résidence déclaré (ISO 3166-1 alpha-2).
+  countryCode     String      @map("country_code") @db.Char(2)
+  /// Langue des messages adressés à l'utilisateur.
+  locale          String      @default("fr") @db.VarChar(10)
+  /// Acceptation des conditions d'utilisation.
+  termsAcceptedAt DateTime    @map("terms_accepted_at") @db.Timestamptz(6)
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  credential    UserCredential?
+  profile       UserProfile?
+  totp          UserTotpCredential?
+  recoveryCodes UserRecoveryCode[]
+  roles         UserRole[]              @relation("RoleHolder")
+  grantedRoles  UserRole[]              @relation("RoleGrantor")
+  sessions      UserSession[]
+  challenges    VerificationChallenge[]
+
+  roleChanges          RoleChangeRequest[] @relation("RoleChangeTarget")
+  requestedRoleChanges RoleChangeRequest[] @relation("RoleChangeRequester")
+  decidedRoleChanges   RoleChangeRequest[] @relation("RoleChangeDecider")
+
+  kycCases        KycCase[] @relation("KycCaseHolder")
+  decidedKycCases KycCase[] @relation("KycCaseDecider")
+  revokedKycCases KycCase[] @relation("KycCaseRevoker")
+
+  closure        AccountClosure?  @relation("ClosedAccount")
+  closedAccounts AccountClosure[] @relation("AccountCloser")
+
+  // Recherche d'un compte par son numéro, vérifié ou non (back-office).
+  @@index([phone])
+  @@map("users")
+}
+
+enum AccountClosureOrigin {
+  /// Clôture demandée par le titulaire, depuis son compte.
+  HOLDER
+  /// Clôture prononcée par un membre du personnel habilité.
+  STAFF
+
+  @@map("account_closure_origin")
+}
+
+/// Clôture d'un compte : qui l'a faite, quand, et ce qui reste à effacer.
+///
+/// La ligne est écrite dans la transaction qui clôt le compte ; elle garde l'adresse e-mail et
+/// le numéro que le compte portait, retirés au même instant de `users`. À l'échéance
+/// (`erasureDueAt`), ce que les autres modules ont conservé est effacé, puis ces deux
+/// identifiants : il ne reste que la trace de la clôture.
+///
+/// `legalRetentionUntil` est renseignée lorsque la loi impose de conserver des pièces du compte
+/// (dossiers de vérification sur lesquels une décision a été prise) : la base refuse alors tout
+/// effacement avant cette date. Les règles sont dans la migration.
+model AccountClosure {
+  userId              String               @id @map("user_id") @db.Uuid
+  closedAt            DateTime             @map("closed_at") @db.Timestamptz(6)
+  origin              AccountClosureOrigin
+  /// Auteur de la clôture : le titulaire lui-même, ou le membre du personnel.
+  closedBy            String               @map("closed_by") @db.Uuid
+  /// Adresse e-mail du compte à sa clôture ; NULL une fois effacée.
+  email               String?              @db.VarChar(254)
+  /// Numéro de téléphone du compte à sa clôture, s'il en avait un ; NULL une fois effacé.
+  phone               String?              @db.VarChar(16)
+  /// Terme de la conservation imposée par la loi ; NULL si rien n'est conservé à ce titre.
+  legalRetentionUntil DateTime?            @map("legal_retention_until") @db.Timestamptz(6)
+  /// Date à partir de laquelle ce qui reste du compte est effacé.
+  erasureDueAt        DateTime             @map("erasure_due_at") @db.Timestamptz(6)
+  /// Date de l'effacement ; NULL tant qu'il n'a pas eu lieu.
+  erasedAt            DateTime?            @map("erased_at") @db.Timestamptz(6)
+
+  user   User @relation("ClosedAccount", fields: [userId], references: [id], onDelete: Restrict)
+  closer User @relation("AccountCloser", fields: [closedBy], references: [id], onDelete: Restrict)
+
+  // Recherche d'un compte clôturé par l'adresse ou le numéro qu'il portait (back-office).
+  @@index([email])
+  @@index([phone])
+  // Effacements à faire, par échéance.
+  @@index([erasureDueAt])
+  @@map("account_closures")
+}
+
+/// Profil déclaré par l'utilisateur : identité, adresse, préférences. Ces informations sont
+/// déclaratives tant que l'identité n'a pas été vérifiée (KYC).
+model UserProfile {
+  userId         String    @id @map("user_id") @db.Uuid
+  /// Prénom.
+  givenName      String?   @map("given_name") @db.VarChar(100)
+  /// Nom.
+  familyName     String?   @map("family_name") @db.VarChar(100)
+  /// Postnom (usage congolais).
+  additionalName String?   @map("additional_name") @db.VarChar(100)
+  dateOfBirth    DateTime? @map("date_of_birth") @db.Date
+  addressLine1   String?   @map("address_line1") @db.VarChar(200)
+  addressLine2   String?   @map("address_line2") @db.VarChar(200)
+  city           String?   @db.VarChar(100)
+  /// Province ou région.
+  region         String?   @db.VarChar(100)
+  postalCode     String?   @map("postal_code") @db.VarChar(20)
+  /// Fuseau horaire IANA choisi par l'utilisateur.
+  timeZone       String?   @map("time_zone") @db.VarChar(64)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_profiles")
+}
+
+/// Secret d'authentification, isolé du compte : aucune lecture de `users` ne le renvoie.
+model UserCredential {
+  userId            String   @id @map("user_id") @db.Uuid
+  /// Empreinte Argon2id au format PHC : `$argon2id$v=19$m=…,t=…,p=…$sel$empreinte`.
+  passwordHash      String   @map("password_hash") @db.VarChar(255)
+  passwordChangedAt DateTime @default(now()) @map("password_changed_at") @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_credentials")
+}
+
+/// Second facteur : secret TOTP (RFC 6238) de l'application d'authentification.
+///
+/// Contrairement à un mot de passe, ce secret doit pouvoir être relu pour vérifier un code :
+/// il est donc **chiffré** (AES-256-GCM) avec une clé absente de la base de données.
+model UserTotpCredential {
+  userId           String    @id @map("user_id") @db.Uuid
+  /// version (1 octet) ‖ nonce (12) ‖ secret chiffré (20) ‖ étiquette d'authenticité (16).
+  secretCiphertext Bytes     @map("secret_ciphertext")
+  /// NULL tant que l'enrôlement n'a pas été confirmé par un premier code valide : le second
+  /// facteur n'est alors pas exigé.
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  /// Dernier pas de temps (30 s) dont le code a été accepté : un code ne sert qu'une fois.
+  lastUsedStep     Int?      @map("last_used_step")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("user_totp_credentials")
+}
+
+/// Code de secours du second facteur, à usage unique. Seule son empreinte (HMAC-SHA-256,
+/// clé absente de la base) est conservée.
+model UserRecoveryCode {
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  codeHash  Bytes     @map("code_hash")
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, codeHash])
+  @@map("user_recovery_codes")
+}
+
+/// Catalogue des permissions du back-office, copie de celui du code (`@mgx/contracts`).
+/// Modifié uniquement par migration.
+model Permission {
+  key         String   @id @db.VarChar(96)
+  description String   @db.VarChar(512)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  roles RolePermission[]
+
+  @@map("permissions")
+}
+
+/// Rôle du back-office : un ensemble nommé de permissions.
+model Role {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  key         String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(128)
+  description String   @db.VarChar(512)
+  /// Rôle système : défini par migration.
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  permissions RolePermission[]
+  users       UserRole[]
+  changes     RoleChangeRequest[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  roleId        String   @map("role_id") @db.Uuid
+  permissionKey String   @map("permission_key") @db.VarChar(96)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Restrict)
+
+  @@id([roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+/// Attribution d'un rôle à un compte.
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  /// Auteur de l'attribution ; NULL lorsqu'elle provient de l'amorçage en ligne de commande.
+  grantedBy String?  @map("granted_by") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+
+  user    User  @relation("RoleHolder", fields: [userId], references: [id], onDelete: Restrict)
+  role    Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  grantor User? @relation("RoleGrantor", fields: [grantedBy], references: [id], onDelete: Restrict)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+enum RoleChangeAction {
+  GRANT
+  REVOKE
+
+  @@map("role_change_action")
+}
+
+enum RoleChangeStatus {
+  PENDING
+  /// Approuvée par un second administrateur : le changement a été appliqué.
+  APPROVED
+  /// Refusée par un second administrateur.
+  REJECTED
+  /// Retirée par son auteur.
+  CANCELLED
+  /// Restée sans décision jusqu'à son échéance.
+  EXPIRED
+
+  @@map("role_change_status")
+}
+
+/// Demande d'attribution ou de retrait d'un rôle, soumise à **double validation** : elle n'est
+/// appliquée qu'une fois approuvée par un second administrateur.
+///
+/// C'est le seul moyen, pour l'API, de modifier `user_roles` : elle n'a aucun droit d'écriture
+/// sur cette table. L'approbation d'une demande déclenche l'application du changement par la
+/// base elle-même, qui vérifie que la règle est respectée (voir la migration).
+model RoleChangeRequest {
+  id           String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Compte dont les rôles changent.
+  userId       String           @map("user_id") @db.Uuid
+  roleId       String           @map("role_id") @db.Uuid
+  action       RoleChangeAction
+  /// Justification de la demande.
+  reason       String           @db.VarChar(500)
+  status       RoleChangeStatus @default(PENDING)
+  requestedBy  String           @map("requested_by") @db.Uuid
+  requestedAt  DateTime         @default(now()) @map("requested_at") @db.Timestamptz(6)
+  /// Échéance : une demande restée sans décision ne peut plus être approuvée.
+  expiresAt    DateTime         @map("expires_at") @db.Timestamptz(6)
+  /// Auteur de la décision ; NULL pour une demande en attente ou échue.
+  decidedBy    String?          @map("decided_by") @db.Uuid
+  decidedAt    DateTime?        @map("decided_at") @db.Timestamptz(6)
+  decisionNote String?          @map("decision_note") @db.VarChar(500)
+
+  user      User  @relation("RoleChangeTarget", fields: [userId], references: [id], onDelete: Restrict)
+  role      Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  requester User  @relation("RoleChangeRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+  decider   User? @relation("RoleChangeDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+
+  @@index([status, id])
+  @@index([userId])
+  @@map("role_change_requests")
+}
+
+// ---------------------------------------------------------------------------------------
+// Identité : codes à usage unique et sessions
+// ---------------------------------------------------------------------------------------
+
+enum ChallengePurpose {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+  PHONE_VERIFICATION
+
+  @@map("challenge_purpose")
+}
+
+/// Code à usage unique envoyé à l'utilisateur (vérification de l'adresse e-mail ou du numéro
+/// de téléphone, réinitialisation du mot de passe). Le code lui-même n'est jamais stocké ; le
+/// nombre d'essais est borné.
+model VerificationChallenge {
+  id            String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId        String           @map("user_id") @db.Uuid
+  purpose       ChallengePurpose
+  /// Destinataire du code — adresse e-mail ou numéro de téléphone : c'est cette adresse, et
+  /// elle seule, que le code vérifie.
+  target        String           @db.VarChar(254)
+  /// HMAC-SHA-256 du code, calculé avec une clé absente de la base. NULL tant que le code
+  /// n'a pas été émis (il l'est de façon asynchrone, à l'envoi du message).
+  codeHash      Bytes?           @map("code_hash")
+  attempts      Int              @default(0)
+  maxAttempts   Int              @map("max_attempts")
+  expiresAt     DateTime         @map("expires_at") @db.Timestamptz(6)
+  consumedAt    DateTime?        @map("consumed_at") @db.Timestamptz(6)
+  /// Remplacé par un code plus récent, ou annulé.
+  invalidatedAt DateTime?        @map("invalidated_at") @db.Timestamptz(6)
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, purpose])
+  // Purge des codes expirés.
+  @@index([expiresAt])
+  @@map("verification_challenges")
+}
+
+enum SessionRevocationReason {
+  /// Déconnexion par l'utilisateur, depuis la session elle-même.
+  LOGOUT
+  /// Révoquée par l'utilisateur depuis une autre session (gestion des appareils).
+  USER_REVOKED
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  /// Un jeton de renouvellement déjà utilisé a été présenté : vol de jeton présumé.
+  TOKEN_REUSE
+  /// Compte suspendu ou clôturé.
+  ACCOUNT_DISABLED
+  ADMIN_REVOKED
+  /// Second facteur activé, désactivé ou réinitialisé : les autres sessions sont fermées.
+  SECOND_FACTOR_CHANGED
+
+  @@map("session_revocation_reason")
+}
+
+/// Session ouverte par une connexion, sur un appareil.
+model UserSession {
+  id                String                   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId            String                   @map("user_id") @db.Uuid
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastUsedAt        DateTime                 @default(now()) @map("last_used_at") @db.Timestamptz(6)
+  /// Expiration par inactivité : repoussée à chaque renouvellement des jetons.
+  idleExpiresAt     DateTime                 @map("idle_expires_at") @db.Timestamptz(6)
+  /// Expiration absolue : jamais repoussée.
+  expiresAt         DateTime                 @map("expires_at") @db.Timestamptz(6)
+  revokedAt         DateTime?                @map("revoked_at") @db.Timestamptz(6)
+  revocationReason  SessionRevocationReason? @map("revocation_reason")
+  ipAddress         String?                  @map("ip_address") @db.Inet
+  userAgent         String?                  @map("user_agent") @db.VarChar(512)
+  deviceName        String?                  @map("device_name") @db.VarChar(64)
+  /// Empreinte SHA-256 de l'identifiant d'appareil (à défaut, de l'agent utilisateur) : sert
+  /// à reconnaître un appareil déjà utilisé par ce compte.
+  deviceFingerprint Bytes?                   @map("device_fingerprint")
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokens SessionToken[]
+
+  @@index([userId])
+  // Purge des sessions terminées.
+  @@index([idleExpiresAt])
+  @@map("user_sessions")
+}
+
+/// Paire de jetons émise pour une session. Seules les empreintes SHA-256 sont stockées.
+/// Chaque renouvellement consomme la paire présentée et en émet une nouvelle ; présenter
+/// un jeton de renouvellement déjà consommé révoque la session.
+model SessionToken {
+  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  sessionId        String    @map("session_id") @db.Uuid
+  accessTokenHash  Bytes     @unique @map("access_token_hash")
+  accessExpiresAt  DateTime  @map("access_expires_at") @db.Timestamptz(6)
+  refreshTokenHash Bytes     @unique @map("refresh_token_hash")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Date d'utilisation du jeton de renouvellement.
+  consumedAt       DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  session UserSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("session_tokens")
+}
+
+// ---------------------------------------------------------------------------------------
+// Vérification d'identité (KYC)
+// ---------------------------------------------------------------------------------------
+
+/// Parcours d'un dossier de vérification.
+///
+///   DRAFT ──▶ SUBMITTED ──▶ APPROVED ──▶ SUPERSEDED     (remplacé par un dossier plus récent)
+///     │           │             ├──────▶ REVOKED        (vérification retirée)
+///  (effacé)       │             └──────▶ ACCOUNT_CLOSED (compte clôturé)
+///                 └──▶ REJECTED
+///
+/// Les transitions, et qui peut les faire, sont imposées par la base (voir les migrations).
+/// À la clôture du compte, un dossier jamais examiné (DRAFT, SUBMITTED) est effacé ; un dossier
+/// sur lequel une décision a été prise est conservé jusqu'au terme de la conservation légale.
+enum KycCaseStatus {
+  /// En préparation par le titulaire : modifiable, effaçable.
+  DRAFT
+  /// Déposé : figé, en attente d'examen.
+  SUBMITTED
+  /// Accepté : le niveau est vérifié.
+  APPROVED
+  /// Refusé, avec ses motifs. Le titulaire peut déposer un nouveau dossier.
+  REJECTED
+  /// Accepté puis remplacé par un dossier plus récent du même niveau.
+  SUPERSEDED
+  /// Accepté puis retiré par la conformité.
+  REVOKED
+  /// Accepté, jusqu'à la clôture du compte : la vérification a pris fin avec lui.
+  ACCOUNT_CLOSED
+
+  @@map("kyc_case_status")
+}
+
+enum KycIdentityDocumentType {
+  NATIONAL_ID_CARD
+  /// Carte d'électeur : tient lieu de pièce d'identité en RDC.
+  VOTER_CARD
+  PASSPORT
+  DRIVING_LICENCE
+
+  @@map("kyc_identity_document_type")
+}
+
+enum KycAddressProofType {
+  UTILITY_BILL
+  BANK_STATEMENT
+  /// Attestation de résidence délivrée par l'autorité locale.
+  RESIDENCE_CERTIFICATE
+  LEASE_AGREEMENT
+  TAX_DOCUMENT
+  OTHER
+
+  @@map("kyc_address_proof_type")
+}
+
+enum KycFundsSource {
+  EMPLOYMENT
+  BUSINESS
+  SAVINGS
+  INVESTMENTS
+  INHERITANCE
+  SALE_OF_PROPERTY
+  FAMILY_SUPPORT
+  PENSION
+  OTHER
+
+  @@map("kyc_funds_source")
+}
+
+/// Motifs de refus communiqués au titulaire (la note interne ne l'est jamais).
+enum KycRejectionReason {
+  DOCUMENT_UNREADABLE
+  DOCUMENT_EXPIRED
+  DOCUMENT_NOT_ACCEPTED
+  DOCUMENT_INCOMPLETE
+  INFORMATION_MISMATCH
+  SELFIE_UNUSABLE
+  SELFIE_MISMATCH
+  PROOF_TOO_OLD
+  INSUFFICIENT_EVIDENCE
+  OTHER
+
+  @@map("kyc_rejection_reason")
+}
+
+enum KycDocumentKind {
+  IDENTITY_FRONT
+  IDENTITY_BACK
+  SELFIE
+  PROOF_OF_ADDRESS
+  SOURCE_OF_FUNDS
+
+  @@map("kyc_document_kind")
+}
+
+/// Dossier de vérification d'un niveau, pour un compte : ce que le titulaire déclare, les
+/// pièces qu'il joint (`kyc_documents`) et la décision prise.
+///
+/// Niveau 1 : identité (pièce officielle avec photographie + autoportrait) ; niveau 2 :
+/// adresse (justificatif) ; niveau 3 : origine des fonds. Un dossier déposé est une **preuve** :
+/// il ne se modifie plus et ne s'efface pas. Le niveau vérifié d'un compte se déduit de ses
+/// dossiers acceptés — il n'est stocké nulle part ailleurs.
+model KycCase {
+  id        String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  /// 1, 2 ou 3.
+  level     Int           @db.SmallInt
+  status    KycCaseStatus @default(DRAFT)
+  createdAt DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Date du dépôt, à la milliseconde : elle ordonne la file d'examen et sert de curseur.
+  submittedAt      DateTime?            @map("submitted_at") @db.Timestamptz(3)
+  /// Auteur de la décision (acceptation ou refus) : jamais le titulaire du dossier.
+  decidedBy        String?              @map("decided_by") @db.Uuid
+  decidedAt        DateTime?            @map("decided_at") @db.Timestamptz(6)
+  /// Motifs d'un refus, communiqués au titulaire.
+  rejectionReasons KycRejectionReason[] @default([]) @map("rejection_reasons")
+  /// Note interne de la décision : jamais communiquée au titulaire.
+  decisionNote     String?              @map("decision_note") @db.VarChar(500)
+  /// Fin de validité d'un dossier accepté : remplacement ou retrait.
+  endedAt          DateTime?            @map("ended_at") @db.Timestamptz(6)
+  revokedBy        String?              @map("revoked_by") @db.Uuid
+  revocationReason String?              @map("revocation_reason") @db.VarChar(500)
+
+  // --- Niveau 1 : identité déclarée et pièce présentée ---
+  givenName               String?                  @map("given_name") @db.VarChar(100)
+  familyName              String?                  @map("family_name") @db.VarChar(100)
+  /// Postnom (usage congolais).
+  additionalName          String?                  @map("additional_name") @db.VarChar(100)
+  dateOfBirth             DateTime?                @map("date_of_birth") @db.Date
+  placeOfBirth            String?                  @map("place_of_birth") @db.VarChar(100)
+  /// Nationalité (ISO 3166-1 alpha-2).
+  nationality             String?                  @db.Char(2)
+  documentType            KycIdentityDocumentType? @map("document_type")
+  /// Numéro de la pièce, chiffré (AES-256-GCM, clé hors de la base).
+  documentNumberEncrypted Bytes?                   @map("document_number_encrypted")
+  /// Empreinte à clé du numéro (HMAC-SHA-256) : permet de retrouver une même pièce présentée
+  /// sur plusieurs comptes sans déchiffrer.
+  documentNumberDigest    Bytes?                   @map("document_number_digest")
+  documentIssuingCountry  String?                  @map("document_issuing_country") @db.Char(2)
+  documentIssuedOn        DateTime?                @map("document_issued_on") @db.Date
+  /// Lieu de délivrance.
+  documentIssuedAt        String?                  @map("document_issued_at") @db.VarChar(100)
+  documentExpiresOn       DateTime?                @map("document_expires_on") @db.Date
+
+  // --- Niveau 2 : adresse déclarée et justificatif ---
+  addressLine1         String?              @map("address_line1") @db.VarChar(200)
+  addressLine2         String?              @map("address_line2") @db.VarChar(200)
+  city                 String?              @db.VarChar(100)
+  region               String?              @db.VarChar(100)
+  postalCode           String?              @map("postal_code") @db.VarChar(20)
+  addressCountry       String?              @map("address_country") @db.Char(2)
+  addressProofType     KycAddressProofType? @map("address_proof_type")
+  addressProofIssuedOn DateTime?            @map("address_proof_issued_on") @db.Date
+
+  // --- Niveau 3 : origine des fonds ---
+  fundsSources     KycFundsSource[] @default([]) @map("funds_sources")
+  occupation       String?          @db.VarChar(100)
+  employerName     String?          @map("employer_name") @db.VarChar(200)
+  fundsExplanation String?          @map("funds_explanation") @db.VarChar(1000)
+
+  user      User          @relation("KycCaseHolder", fields: [userId], references: [id], onDelete: Restrict)
+  decider   User?         @relation("KycCaseDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+  revoker   User?         @relation("KycCaseRevoker", fields: [revokedBy], references: [id], onDelete: Restrict)
+  documents KycDocument[]
+
+  // File d'attente de l'examen : par statut, du plus ancien dépôt au plus récent.
+  @@index([status, submittedAt, id])
+  @@index([userId, level])
+  @@index([documentNumberDigest])
+  @@map("kyc_cases")
+}
+
+/// Pièce jointe à un dossier de vérification. Le fichier, chiffré, est conservé hors de la
+/// base ; cette ligne en porte la description, l'empreinte et la clé (elle-même chiffrée) :
+/// sans la ligne, le fichier est indéchiffrable.
+model KycDocument {
+  id          String          @id @db.Uuid
+  caseId      String          @map("case_id") @db.Uuid
+  kind        KycDocumentKind
+  /// Type du contenu, vérifié à la réception : `image/jpeg`, `image/png` ou `application/pdf`.
+  contentType String          @map("content_type") @db.VarChar(32)
+  byteSize    Int             @map("byte_size")
+  /// SHA-256 du fichier en clair.
+  sha256      Bytes
+  /// Emplacement du fichier chiffré dans le stockage des pièces.
+  storageKey  String          @unique @map("storage_key") @db.VarChar(128)
+  /// Clé du fichier, chiffrée par la clé maîtresse (hors de la base).
+  wrappedKey  Bytes           @map("wrapped_key")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  case KycCase @relation(fields: [caseId], references: [id], onDelete: Restrict)
+
+  @@index([caseId])
+  @@index([sha256])
+  @@map("kyc_documents")
+}

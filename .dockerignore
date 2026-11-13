@@ -1,0 +1,14 @@
+# Le contexte de build ne contient que les sources : ni dépendances, ni artefacts, ni secrets.
+.git
+.github
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+apps/api/src/generated
+**/.env
+**/.env.*
+!**/.env.example
+docs
+infrastructure
+*.md

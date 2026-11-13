@@ -1,0 +1,71 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Politique chaîne d'approvisionnement (voir docs/SECURITY.md) :
+# une version publiée depuis moins de 3 jours n'est jamais résolue.
+minimumReleaseAge: 4320
+
+# Scripts d'installation : refus par défaut, autorisation explicite et justifiée.
+allowBuilds:
+  # Vérifie la version de Node.js avant l'installation de la CLI Prisma.
+  prisma: true
+  # Télécharge le moteur de migration (schema-engine) correspondant à la version de Prisma.
+  '@prisma/engines': true
+  # Module natif optionnel (surveillance de fichiers) : binaires précompilés suffisants.
+  '@parcel/watcher': false
+  # Accélérateur natif optionnel de msgpackr (BullMQ) : le repli JavaScript suffit.
+  msgpackr-extract: false
+  # Télémétrie d'installation (dépendance de swagger-ui-dist) : refusée.
+  '@scarf/scarf': false
+
+# Versions uniques pour tout le monorepo (épinglées, mises à jour par PR dédiée).
+catalog:
+  # --- NestJS ---
+  '@nestjs/bullmq': 12.0.1
+  '@nestjs/cli': 12.0.12
+  '@nestjs/common': 12.4.0
+  '@nestjs/core': 12.4.0
+  '@nestjs/platform-express': 12.4.0
+  '@nestjs/schematics': 12.0.13
+  '@nestjs/swagger': 12.1.1
+  '@nestjs/terminus': 12.1.0
+  '@nestjs/testing': 12.4.0
+  reflect-metadata: 0.2.2
+  rxjs: 7.8.2
+  # --- Données, cache, files d'attente ---
+  '@prisma/adapter-pg': 7.10.1
+  '@prisma/client': 7.10.1
+  prisma: 7.10.1
+  bullmq: 6.7.2
+  ioredis: 6.0.0
+  pg: 8.23.1
+  # --- Envoi des e-mails (SMTP) ---
+  nodemailer: 10.3.1
+  # --- HTTP, sécurité, journalisation ---
+  nestjs-pino: 5.3.1
+  pino: 10.4.0
+  pino-http: 11.0.0
+  pino-pretty: 13.2.0
+  # --- Validation ---
+  zod: 4.6.7
+  # --- Outillage ---
+  '@eslint/js': 10.0.1
+  '@jest/globals': 30.5.2
+  '@types/express': 5.0.6
+  '@types/node': 24.19.2
+  '@types/pg': 8.23.1
+  '@types/supertest': 7.2.1
+  eslint: 10.14.0
+  eslint-config-prettier: 10.1.8
+  fast-check: 4.10.2
+  globals: 17.14.0
+  jest: 30.5.2
+  # Tests de l'envoi SMTP : serveur SMTP en mémoire et lecture des messages reçus.
+  mailparser: 3.14.1
+  prettier: 3.9.10
+  smtp-server: 3.21.3
+  supertest: 7.3.2
+  ts-jest: 29.4.15
+  typescript: 6.0.3
+  typescript-eslint: 8.72.1
