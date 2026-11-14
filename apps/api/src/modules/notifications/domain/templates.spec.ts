@@ -83,6 +83,38 @@ const SAMPLES: {
     { template: 'data_exported', occurredAt: '2026-11-12T09:30:00.123Z', ipAddress: '203.0.113.7' },
     { template: 'data_exported', occurredAt: '2026-11-12T09:30:00.123Z', ipAddress: null },
   ],
+  transfer_sent: [
+    {
+      template: 'transfer_sent',
+      amount: '12.50',
+      assetCode: 'USD',
+      counterparty: 'bob@example.cd',
+      occurredAt: '2026-11-14T09:30:00.123Z',
+    },
+    {
+      template: 'transfer_sent',
+      amount: '12.50',
+      assetCode: 'USD',
+      counterparty: null,
+      occurredAt: '2026-11-14T09:30:00.123Z',
+    },
+  ],
+  transfer_received: [
+    {
+      template: 'transfer_received',
+      amount: '0.00012000',
+      assetCode: 'BTC',
+      counterparty: 'alice@example.cd',
+      occurredAt: '2026-11-14T09:30:00.123Z',
+    },
+    {
+      template: 'transfer_received',
+      amount: '0.00012000',
+      assetCode: 'BTC',
+      counterparty: null,
+      occurredAt: '2026-11-14T09:30:00.123Z',
+    },
+  ],
 };
 
 const CONTENTS: readonly NotificationContent[] = Object.values(SAMPLES).flat();
@@ -316,6 +348,51 @@ describe('avis de clôture et de copie des données', () => {
         locale,
       ).text;
       expect(unknown).toMatch(locale === 'fr' ? /Adresse IP : inconnue/ : /IP address: unknown/);
+    },
+  );
+
+  it.each(SUPPORTED_LOCALES)(
+    '%s : un transfert est annoncé à ses deux parties avec son montant, l’autre partie et sa date',
+    (locale) => {
+      const fr = locale === 'fr';
+      const details = {
+        amount: '1250.00',
+        assetCode: 'USD',
+        counterparty: 'autre@example.cd',
+        occurredAt: '2026-11-14T09:30:00.123Z',
+      };
+
+      const sent = rendered({ template: 'transfer_sent', ...details }, locale);
+      expect(sent.text).toContain(fr ? 'Montant : 1250.00 USD' : 'Amount: 1250.00 USD');
+      expect(sent.text).toContain(
+        fr ? 'Destinataire : autre@example.cd' : 'Recipient: autre@example.cd',
+      );
+      expect(sent.text).toContain('2026-11-14 09:30 UTC');
+      // L'émetteur est mis en garde : ce transfert n'est peut-être pas le sien.
+      expect(sent.text).toMatch(
+        fr ? /changez immédiatement votre mot de passe/ : /change your password immediately/,
+      );
+
+      const received = rendered({ template: 'transfer_received', ...details }, locale);
+      expect(received.text).toContain(fr ? 'Montant : 1250.00 USD' : 'Amount: 1250.00 USD');
+      expect(received.text).toContain(
+        fr ? 'Expéditeur : autre@example.cd' : 'Sender: autre@example.cd',
+      );
+      expect(received.text).toContain('2026-11-14 09:30 UTC');
+      expect(received.text).not.toMatch(/mot de passe|password/);
+      expect(received.subject).not.toBe(sent.subject);
+
+      for (const message of [sent, received]) {
+        // Ni le montant ni l'autre partie dans l'objet : il s'affiche sur un écran verrouillé.
+        expect(message.subject).not.toMatch(/1250|USD|autre@/);
+      }
+
+      // L'autre partie a clôturé son compte depuis : le message le dit, sans adresse.
+      for (const template of ['transfer_sent', 'transfer_received'] as const) {
+        const closed = rendered({ template, ...details, counterparty: null }, locale).text;
+        expect(closed).toMatch(fr ? /un compte clôturé depuis/ : /an account closed since/);
+        expect(closed).not.toContain('@');
+      }
     },
   );
 });

@@ -30,6 +30,10 @@ const PUBLIC_OPERATIONS = [
   'GET /health/live',
   'GET /health/ready',
   'GET /api/v1/system/status',
+  // Les conditions d'utilisation se lisent avant de s'inscrire.
+  'GET /api/v1/terms/current',
+  'GET /api/v1/terms/versions',
+  'GET /api/v1/terms/versions/{number}',
   'POST /api/v1/auth/register',
   'POST /api/v1/auth/email/verify',
   'POST /api/v1/auth/email/resend',
@@ -78,7 +82,8 @@ describe('Contrôle d’accès — bout en bout', () => {
             method: method as Operation['method'],
             path: path
               .replace('{sessionId}', '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d')
-              .replace('{key}', 'features.exchange'),
+              .replace('{key}', 'features.exchange')
+              .replace('{number}', '1'),
             secured: (operation.security ?? []).length > 0,
           })),
         );
@@ -376,7 +381,7 @@ describe('Contrôle d’accès — bout en bout', () => {
       await http
         .post('/api/v1/auth/register')
         .set(from(newClientIp()))
-        .send({ email: newEmail(), password: PASSWORD, countryCode: 'CD', acceptTerms: true })
+        .send({ email: newEmail(), password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 })
         .expect(503);
 
       // Restent ouverts : l'état de la plateforme, la connexion, le compte, l'administration.
@@ -415,7 +420,7 @@ describe('Identité selon l’environnement — bout en bout', () => {
       for (const [path, body] of [
         [
           '/api/v1/auth/register',
-          { email, password: PASSWORD, countryCode: 'CD', acceptTerms: true },
+          { email, password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 },
         ],
         ['/api/v1/auth/email/resend', { email }],
         ['/api/v1/auth/password/forgot', { email }],

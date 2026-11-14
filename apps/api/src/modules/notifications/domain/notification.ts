@@ -61,7 +61,20 @@ export type NotificationContent =
       /** Date de la remise de la copie (ISO 8601, UTC). */
       readonly occurredAt: string;
       readonly ipAddress: string | null;
-    };
+    }
+  | ({ readonly template: 'transfer_sent' } & TransferNoticeDetails)
+  | ({ readonly template: 'transfer_received' } & TransferNoticeDetails);
+
+/** Ce que dit d'un transfert le message adressé à l'une de ses deux parties. */
+export interface TransferNoticeDetails {
+  /** Montant, en chaîne décimale au nombre de décimales de l'actif. */
+  readonly amount: string;
+  readonly assetCode: string;
+  /** Adresse de l'autre partie ; `null` si son compte a été clôturé depuis. */
+  readonly counterparty: string | null;
+  /** Date du transfert (ISO 8601, UTC). */
+  readonly occurredAt: string;
+}
 
 export type NotificationTemplate = NotificationContent['template'];
 

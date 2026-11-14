@@ -18,6 +18,8 @@ const DESCRIPTION = [
   '- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.',
   '- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.',
   '- Every response carries an `X-Request-Id` header for support and log correlation.',
+  '- Every route that moves funds requires an `Idempotency-Key` header: send the same value ' +
+    'when retrying the same request, and the operation is carried out once.',
 ].join('\n');
 
 export function buildOpenApiDocument(
@@ -37,6 +39,8 @@ export function buildOpenApiDocument(
     .addTag('System', 'Platform status and feature availability')
     .addTag('Authentication', 'Sign-up, sign-in, session tokens, password')
     .addTag('Account', 'The signed-in account and its sessions')
+    .addTag('Wallets', 'Balances and movements of the signed-in account (read-only)')
+    .addTag('Transfers', 'Transfers of funds between account holders, and their limits')
     .addTag('Administration', 'Back-office (requires permissions)')
     .addTag('Health', 'Liveness and readiness probes (infrastructure)')
     .build();

@@ -356,7 +356,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       // Le schéma publié décrit tout le document : aucune clé n'en sort.
       expect(response.body).toEqual(copy);
 
-      expect(copy.formatVersion).toBe(1);
+      expect(copy.formatVersion).toBe(4);
       expect(copy.account).toMatchObject({
         id: member.id,
         email: member.email,
@@ -391,6 +391,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
         'IDENTITY_VERIFICATION_SUBMITTED',
         'SIGN_IN',
         'EMAIL_VERIFIED',
+        'TERMS_ACCEPTED',
         'ACCOUNT_CREATED',
       ]);
       expect(copy.activity.truncated).toBe(false);
@@ -413,6 +414,18 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
         'SELFIE',
       ]);
 
+      // Les conditions d'utilisation acceptées : la version et la date, pas le texte — il se
+      // relit, version par version, sur `GET /terms/versions/{number}`.
+      expect(copy.terms).toEqual({
+        acceptances: [{ version: 1, acceptedAt: expect.any(String) }],
+      });
+      expect(copy.account).not.toHaveProperty('termsAcceptedAt');
+
+      // Les portefeuilles : ceux qui ont reçu au moins un mouvement — ici, aucun. De même
+      // des transferts.
+      expect(copy.wallets).toEqual([]);
+      expect(copy.transfers).toEqual({ items: [], truncated: false });
+
       // Ce qui n'y figure jamais.
       const text = JSON.stringify(response.body);
       expect(text).not.toContain(number);
@@ -428,10 +441,13 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       const [entry] = await auditEntries('user.data_exported', member.id);
       expect(entry).toMatchObject({ actorId: member.id, outcome: 'SUCCESS', ipAddress: ip });
       expect(entry?.metadata).toEqual({
-        formatVersion: 1,
+        formatVersion: 4,
+        transfers: 0,
         sessions: 1,
         activityEntries: copy.activity.entries.length,
         verificationCases: 1,
+        termsAcceptances: 1,
+        wallets: 0,
       });
 
       // Signalée au titulaire : si ce n'était pas lui, il le sait.
@@ -502,16 +518,21 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
     it('l’historique d’une copie est borné aux événements les plus récents, et dit s’il en manque', async () => {
       const member = await customer();
       const activity = testApp.app.get(ActivityService);
-      // Compte neuf : création, vérification de l'adresse, connexion.
+      // Compte neuf : création, conditions acceptées, vérification de l'adresse, connexion.
       const all = await activity.collect(member.id, 10);
       expect(all.entries.map(({ type }) => type)).toEqual([
         'SIGN_IN',
         'EMAIL_VERIFIED',
+        'TERMS_ACCEPTED',
         'ACCOUNT_CREATED',
       ]);
       expect(all.truncated).toBe(false);
-      expect(await activity.collect(member.id, 3)).toEqual(all);
+      expect(await activity.collect(member.id, 4)).toEqual(all);
       // La borne retient les plus récents.
+      expect(await activity.collect(member.id, 3)).toEqual({
+        entries: all.entries.slice(0, 3),
+        truncated: true,
+      });
       expect(await activity.collect(member.id, 2)).toEqual({
         entries: all.entries.slice(0, 2),
         truncated: true,
@@ -532,10 +553,10 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
           outcome: 'SUCCESS' as const,
         })),
       });
-      const long = await activity.collect(member.id, 1203);
-      expect(long.entries).toHaveLength(1203);
+      const long = await activity.collect(member.id, 1204);
+      expect(long.entries).toHaveLength(1204);
       expect(long.truncated).toBe(false);
-      expect(new Set(long.entries.map(({ id }) => id)).size).toBe(1203);
+      expect(new Set(long.entries.map(({ id }) => id)).size).toBe(1204);
       expect(long.entries.at(-1)).toEqual(all.entries.at(-1));
       const bounded = await activity.collect(member.id, 1100);
       expect(bounded.entries).toEqual(long.entries.slice(0, 1100));
@@ -928,7 +949,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
             email,
             password: 'kasai-river-crossing-44',
             countryCode: 'CD',
-            acceptTerms: true,
+            acceptedTermsVersion: 1,
           })
           .expect(400);
         expect(problemDetailsSchema.parse(response.body)).toMatchObject({
@@ -1361,7 +1382,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
           email: pendingEmail,
           password: 'kasai-river-crossing-44',
           countryCode: 'CD',
-          acceptTerms: true,
+          acceptedTermsVersion: 1,
         })
         .expect(202);
       const pending = await prisma.user.findUniqueOrThrow({ where: { email: pendingEmail } });

@@ -1,11 +1,11 @@
 # Déploiement
 
-> **Avertissement.** L'environnement de développement ne disposait pas de Docker : l'image,
-> la pile Compose et Nginx **n'ont jamais été exécutés par Docker**. Leur contenu a été
-> exécuté hors Docker avec les vrais logiciels (détail dans `PROJECT_STATUS.md`), et la CI
-> les construit et les teste — mais **elle n'est pas encore activée** (voir « Intégration
-> continue »). Considérer ce document comme à confirmer tant qu'elle n'est pas passée au
-> vert. Le déploiement en production est l'objet de la phase 9.
+> **Avertissement.** L'environnement de développement ne disposait pas de Docker : le contenu
+> de l'image, de la pile Compose et de Nginx y est exécuté hors Docker, avec les vrais
+> logiciels (détail dans `PROJECT_STATUS.md`). **L'intégration continue, elle, les construit
+> et les teste avec Docker à chaque modification** — au vert depuis sa première exécution, le
+> 2026-11-13 (voir « Intégration continue »). Rien de tout cela n'a encore servi en
+> production : le déploiement est l'objet de la phase 9.
 
 ## Environnements
 
@@ -82,6 +82,28 @@ docker build -f infrastructure/docker/api.Dockerfile --target migrator -t mgx-ap
 Les migrations doivent donc rester compatibles avec la version précédente du code le temps
 de la bascule (schéma « étendre, migrer, contracter »).
 
+> **Exception : la migration `terms_of_use` (conditions d'utilisation).** Elle **renomme**
+> une colonne de `users` (`terms_accepted_at` devient `registered_at`) : une fois appliquée,
+> la version précédente de l'API ne lit plus aucun compte. **Arrêter l'API avant de migrer**,
+> puis démarrer la nouvelle version — une courte interruption, admise parce qu'aucun
+> environnement n'est encore en service. Pour la même raison, **revenir à l'image
+> précédente n'est plus possible une fois cette migration appliquée**, sauf à restaurer la
+> base. Sans objet pour une base neuve. La règle ci-dessus vaut de nouveau pour les
+> migrations suivantes.
+
+La migration `ledger` (grand livre), elle, **n'ajoute que** des tables, des règles et deux
+permissions : elle suit la règle, et la version précédente de l'API continue de fonctionner
+sur la base migrée. Constaté sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet — inscription, vérification d'identité, back-office, copie des données, clôture —
+sans une erreur.
+
+La migration `internal_transfers` (transferts entre titulaires) fait de même : deux tables,
+leurs règles, deux permissions. Elle ne fixe aucun plafond et n'ouvre aucune fonctionnalité.
+Constaté de la même façon, sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet sans une erreur ; puis la nouvelle version a passé le sien, transferts compris.
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -112,7 +134,8 @@ toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **
 données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
 déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
-échéance** — durées dans `DATABASE.md`). Un échec est journalisé
+échéance** — durées dans `DATABASE.md` ; puis **vérification du grand livre**, voir « Grand
+livre »). Un échec est journalisé
 (`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
 l'exécution suivante réessaie.
 
@@ -160,7 +183,7 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   le passage : elle n'attend aucun verrou plus de 300 ms, puis recommence. Ce délai doit
   rester inférieur à `deadlock_timeout` de PostgreSQL (une seconde par défaut) : **ne pas
   abaisser ce réglage sous une seconde**, faute de quoi la base interromprait elle-même l'une
-  des deux requêtes, au hasard (`500`).
+  des deux requêtes, au hasard (`409` : rien n'est écrit, mais la requête est à refaire).
 - **Surveiller l'effacement.** L'étape `erase-closed-accounts` traite au plus 200 comptes par
   heure, de l'échéance la plus ancienne à la plus récente. Un compte qui ne peut pas être
   effacé est journalisé (`Closed account not erased`, avec son identifiant) et retenté à
@@ -186,6 +209,132 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   rouvrir le service.
 - **Journal d'audit.** Il n'est jamais purgé (identifiant technique du compte, adresse IP,
   appareil). Sa durée de conservation reste à fixer avec le conseil juridique.
+
+## Grand livre
+
+Décisions : ADR 0025. Une seule opération passe des écritures à ce jour — le transfert
+entre titulaires, décrit à la section suivante — et **aucune route ne crédite un
+portefeuille**. Ce que l'exploitation doit savoir :
+
+- **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
+  aucun ne l'est par les migrations. Un administrateur (`super_admin`, validation en deux
+  étapes) les enregistre par l'API :
+
+  ```bash
+  curl -X POST https://<hôte>/api/v1/admin/ledger/assets \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"code":"USD","name":"US dollar","kind":"FIAT","scale":2,"reason":"Comptes en dollars : décision du 12/03"}'
+  ```
+
+  **C'est définitif** : ni le code, ni le libellé, ni la nature, ni le nombre de décimales
+  (`scale` : 2 pour le dollar et le franc congolais, 8 pour le bitcoin, 18 au plus) ne se
+  modifient ensuite, et un actif ne se retire pas. Un nombre de décimales erroné oblige à
+  enregistrer l'actif sous un autre code. Enregistrer un actif ne déplace aucun fonds et
+  n'ouvre aucune opération : chaque titulaire voit apparaître un portefeuille à zéro.
+
+- **Vérification horaire.** L'étape `verify-ledger` de la tâche de maintenance relit **tout**
+  le grand livre. Une anomalie produit :
+  - une erreur dans les journaux, `Ledger verification failed`, avec la liste des anomalies
+    (nature et identifiant — jamais de montant ; cinquante au plus) ;
+  - une entrée `ledger.verification_failed` au journal d'audit ;
+  - l'échec de l'étape (`Account maintenance step failed`), à chaque passage tant que
+    l'anomalie demeure.
+
+  **Cette alerte doit être traitée sans délai** — et aucune alerte automatique n'est encore
+  branchée (phase 9) : c'est à la supervision des journaux de la relever. Une anomalie ne
+  peut venir que d'une écriture faite hors des règles de la base (déclencheurs désactivés
+  avec le rôle propriétaire, restauration partielle) ou d'un défaut de ces règles. **Ne rien
+  corriger à la main** : passer en mode maintenance, conserver les journaux, examiner. Rien
+  n'est corrigé automatiquement.
+
+- **Rôle propriétaire.** Il peut désactiver les règles du grand livre ; le rôle de l'API ne
+  le peut pas. Ses identifiants (`DATABASE_MIGRATION_URL`) ne servent qu'aux migrations et
+  aux outils d'exploitation, et ne sont jamais donnés à l'API.
+- **Requêtes qui se croisent.** Avertissement
+  `Request abandoned: its transaction conflicted with another one` : PostgreSQL a annulé une
+  transaction qui en croisait une autre, y compris après ses nouvelles tentatives ; la
+  requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans gravité ; répété,
+  il désigne des requêtes qui se disputent les mêmes lignes — à signaler.
+- **Sauvegarde et restauration.** Le grand livre se restaure **en entier, avec le reste de la
+  base** : restaurer une partie de ses tables le rendrait incohérent, ce que la vérification
+  relèverait. Après une restauration, laisser passer la vérification horaire avant de
+  rouvrir le service.
+- **Clôture d'un compte.** Un compte dont un portefeuille détient des fonds ne se clôt pas,
+  pas même par le personnel (`409`). Le titulaire peut les transférer à un autre compte, si
+  les transferts lui sont ouverts ; le personnel, lui, n'a aucun moyen de les sortir : la
+  procédure de sortie des fonds d'un compte à fermer devra exister avant l'ouverture des
+  dépôts.
+- **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
+  bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
+  puis à borner, avant que le grand livre ne compte des millions de lignes.
+
+## Transferts entre titulaires
+
+Décisions : ADR 0026. Ce que l'exploitation doit savoir :
+
+- **La mise à jour n'ouvre rien.** Après la migration, aucun plafond n'existe et la
+  fonctionnalité est fermée : `POST /api/v1/me/transfers` répond `403 FEATURE_DISABLED`.
+- **Ouvrir les transferts : trois décisions, dans cet ordre**, chacune par un administrateur
+  (`super_admin`, validation en deux étapes) et chacune justifiée :
+  1. **l'actif est enregistré** (voir « Grand livre ») ;
+  2. **des plafonds sont fixés**, dans cet actif, pour chaque niveau de vérification qui doit
+     y prendre part — un appel par niveau :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/transfer-limits/USD/1 \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"perTransfer":"<montant>","daily":"<montant>","monthly":"<montant>","reason":"Plafonds du niveau 1 : décision du 12/03"}'
+     ```
+
+     Les montants sont des chaînes décimales dans l'unité de l'actif (`"100.00"`), par
+     transfert, sur 24 heures glissantes et sur 31 jours glissants, et croissants.
+     **Aucune valeur n'est proposée ici : elles sont à arrêter par le propriétaire, avec la
+     conformité.** `GET /api/v1/admin/transfer-limits` relit ce qui est fixé ;
+
+  3. **la fonctionnalité est ouverte** :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/system-settings/features.internal_transfers \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"value":true,"reason":"Ouverture des transferts : décision du 12/03"}'
+     ```
+
+- **Un niveau sans plafonds n'envoie ni ne reçoit.** Niveau 0 : adresse e-mail vérifiée,
+  aucun dossier accepté ; niveaux 1 à 3 : ceux de la vérification d'identité. Pour qu'un
+  compte **reçoive**, son niveau doit avoir des plafonds non nuls dans l'actif — ce qui lui
+  permet aussi d'envoyer, dans cette limite : il n'existe pas de réglage « réception seule ».
+- **Un changement de plafonds prend effet aussitôt**, y compris pour ce qui a déjà été
+  envoyé : un compte dont les envois dépassent déjà un plafond abaissé n'envoie plus rien
+  tant qu'ils ne sont pas sortis de la fenêtre. Une valeur erronée prend effet aussitôt elle
+  aussi : relire la réponse, qui rend les plafonds tels qu'ils sont enregistrés.
+- **Refermer.** Toute la fonctionnalité : le même appel avec `"value":false` — effectif en
+  moins de cinq secondes sur chaque instance. Un niveau dans un actif : ses trois montants à
+  `"0"` — effectif aussitôt. Des plafonds ne se suppriment pas.
+- **À ne pas ouvrir en production en l'état.** Aucune route ne crédite un portefeuille : il
+  n'y a rien à transférer tant que les dépôts n'existent pas. Les valeurs des plafonds ne
+  sont pas arrêtées, et l'autorisation d'opérer reste à établir pays par pays (voir
+  `SECURITY.md`).
+- **E-mail.** Chaque transfert prévient ses deux parties. Sans serveur d'envoi configuré
+  (voir « Notifications »), ces messages ne partent pas — et le transfert a lieu quand même.
+- **Horloge de la base.** Les fenêtres de 24 heures et de 31 jours sont comptées à l'horloge
+  de PostgreSQL : elle doit être synchronisée (NTP), y compris sur un serveur de secours.
+- **Journal d'audit.** `transfer.created` (un transfert), `transfer.refused` (un refus, avec
+  son motif), `transfer.proof_failed` (mot de passe ou second facteur erroné),
+  `transfer_limit.set` (plafonds remplacés et nouveaux, justification),
+  `transfer_limit.listed_by_admin` (consultation).
+- **Journaux.** Avertissement
+  `Transfer refused by the database after the application admitted it` : l'état d'un compte a
+  changé pendant la requête — vérification retirée, plafonds abaissés, destinataire
+  suspendu ; la requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans
+  gravité ; **répété, il signale que l'application et la base ne s'accordent plus sur une
+  règle** — un défaut, à signaler.
+- **Sauvegarde et restauration.** Les transferts se restaurent avec le grand livre, **en
+  entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La
+  vérification horaire du grand livre ne relit pas cette correspondance ; la base, elle, la
+  vérifie à chaque écriture.
+- **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre désormais les
+  transferts, fixe des plafonds sur son actif de test, et **les laisse ouverts** : il est
+  fait pour une pile de test, jamais pour une plateforme en service.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -257,9 +406,71 @@ production, quel que soit l'environnement.
 se connecter, puis `POST /api/v1/me/mfa/totp/enroll` et `POST /api/v1/me/mfa/totp/confirm`
 (voir `API.md`). Tant que ce n'est pas fait, toute route du back-office répond
 `403 MFA_ENROLLMENT_REQUIRED`. Conserver les codes de secours en lieu sûr. Le compte peut
-ensuite ouvrir les fonctionnalités
+ensuite publier les conditions d'utilisation (section suivante), ouvrir les fonctionnalités
 (`PUT /api/v1/admin/system-settings/features.registration`…) et demander l'attribution du
 rôle `support` aux agents (`POST /api/v1/admin/role-changes`).
+
+## Conditions d'utilisation
+
+**Avant d'ouvrir l'inscription, publier la version 1.** Tant qu'aucune version n'est publiée,
+`POST /auth/register` répond `503` ; dès qu'elle l'est, **tout compte existant doit
+l'accepter** avant de continuer — personnel compris, pour ses routes de client (le back-office,
+lui, reste ouvert). Le texte n'est pas fourni par le dépôt : il revient au propriétaire et à
+son conseil.
+
+**Publier est définitif.** Une version ne se modifie pas et ne se retire pas ; une erreur se
+corrige en publiant la version suivante. Relire le fichier avant de lancer la commande.
+
+Deux moyens, mêmes règles (`API.md`, « Conditions d'utilisation : publication ») :
+
+- le **back-office**, `POST /api/v1/admin/terms/versions`, par un administrateur ;
+- l'**outil en ligne de commande**, sur le serveur, avec le **rôle propriétaire** de la base —
+  le rôle même qui a exécuté les migrations. Il sert à installer la première version avant
+  l'ouverture, ou à publier sans back-office. Avec le rôle de l'API, la base refuse.
+
+```bash
+sha256sum conditions-fr.md        # à comparer avec l'empreinte que l'outil affichera
+
+# poste de développement (DATABASE_MIGRATION_URL lue dans apps/api/.env)
+pnpm build && pnpm terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr ./conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+
+# pile conteneurisée : le dossier des textes est monté en lecture seule dans l'image de migration
+docker compose --profile app run --rm --volume "$PWD/conditions:/terms:ro" \
+  migrate node dist/cli/main.js terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr /terms/conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+```
+
+- `--number` : le numéro de la version en vigueur plus un (`1` pour la première). Tout autre
+  numéro est refusé, et l'outil rappelle celui qui est attendu : une commande relancée par
+  mégarde ne publie pas deux fois.
+- `--requires-acceptance yes|no` : la règle de cette version — `yes`, chaque compte doit
+  l'accepter ; `no`, elle est seulement signalée. La version 1 exige `yes`.
+- `--fr <fichier>` et `--fr-summary <texte>` sont obligatoires ; `--en <fichier>` et
+  `--en-summary <texte>` vont ensemble ou pas du tout. Texte brut ou Markdown, **en UTF-8** :
+  un fichier dans un autre encodage est refusé. 200 000 caractères au plus par texte.
+- Un chemin relatif s'entend depuis le dossier où la commande est lancée (avec
+  `pnpm --dir <dossier>`, depuis ce dossier-là). Si un fichier est introuvable, l'outil nomme
+  le chemin complet qu'il a cherché, et ne publie rien.
+- `--reason` : la justification, écrite au journal d'audit (10 à 500 caractères).
+- L'outil affiche le numéro publié, l'heure et **l'empreinte SHA-256 de chaque texte
+  conservé** : elle doit être celle de `sha256sum`. Si le fichier commençait par une marque
+  d'ordre des octets (certains éditeurs Windows en placent une), l'outil la retire et le dit :
+  l'empreinte affichée est alors celle du texte sans ces trois octets.
+- Codes de sortie : `0` publié ; `1` rien n'a été publié, la commande est à corriger (option,
+  fichier, numéro, rôle de base) ; `2` échec technique (base injoignable…) — vérifier avec
+  `GET /api/v1/terms/current` avant de relancer.
+- Dans la pile conteneurisée, le dossier monté et ses fichiers doivent être lisibles par
+  l'utilisateur de l'image (`node`, uid 1000) : `chmod -R a+rX conditions`.
+- Vérifier ensuite : `curl -s https://…/api/v1/terms/current | jq '{number, sha256}'`.
+
+> La commande `pnpm terms:publish` et l'outil dans l'image de migration ont été exécutés hors
+> Docker (voir l'avertissement en tête). **La commande `docker compose run --volume …`
+> ci-dessus n'a pas encore été exécutée par Docker** : le script
+> `infrastructure/ci/publish-terms-cli.sh` la lance et vérifie son résultat, mais le workflow
+> ne l'appelle pas encore (voir « Intégration continue »).
 
 ## Notifications
 
@@ -278,7 +489,8 @@ Définir `SMTP_HOST` suffit à activer l'envoi. La connexion est toujours chiffr
 pré-production et en production, et le certificat du serveur toujours vérifié (un relais
 interne signé par une autorité privée se déclare à Node.js par `NODE_EXTRA_CA_CERTS`).
 
-Avant d'ouvrir l'inscription :
+Avant d'ouvrir l'inscription (et après avoir publié la version 1 des conditions
+d'utilisation, voir plus haut) :
 
 1. **Autoriser le domaine expéditeur** chez le prestataire (enregistrements SPF et DKIM, puis
    DMARC). Sans cela, les messages partent mais finissent en indésirables.
@@ -330,17 +542,21 @@ attribution de `X-Request-Id` et transmission de l'adresse réelle du client (un
 `X-Forwarded-For` fourni par le client est écrasé). Seuls `/api/` et `/health/live` sont
 relayés ; `/health/ready` est réservée au réseau interne.
 
-Les corps sont bornés à 128 Ko, sauf sur **une** route : l'envoi d'une pièce de vérification
-(6 Mio). Le fichier y est transmis à l'API au fil de l'eau, **sans copie sur le disque du
-proxy**, avec au plus quatre envois simultanés par adresse.
+Les corps sont bornés à 128 Ko, sauf sur **deux** routes, où ils sont transmis à l'API au fil
+de l'eau, **sans copie sur le disque du proxy** — une requête sans droit est ainsi refusée
+par l'API avant que son contenu n'ait été reçu :
+
+- l'envoi d'une pièce de vérification (6 Mio), avec au plus quatre envois simultanés par
+  adresse ;
+- la publication des conditions d'utilisation (1 100 Ko ; l'API, elle, s'arrête à 1 Mio).
 
 **Aucune réponse de l'API n'est copiée sur le disque du proxy non plus**
 (`proxy_max_temp_file_size 0`) : une réponse plus grande que ses tampons — une pièce
 téléchargée par un examinateur, la copie des données d'un compte — est relayée au rythme du
 client, depuis la mémoire. Une pièce d'identité ne passe donc en clair par aucun fichier
 temporaire, dans un sens comme dans l'autre. Un proxy ou un répartiteur placé devant Nginx
-doit admettre des corps de 6 Mio sur la route d'envoi, et ne rien mettre en tampon sur
-disque — ni les envois, ni les réponses.
+doit admettre des corps de 6 Mio sur la route d'envoi et de 1 100 Ko sur la route de
+publication, et ne rien mettre en tampon sur disque — ni les envois, ni les réponses.
 
 Les erreurs que Nginx produit lui-même (route non relayée, corps trop volumineux, limitation
 de débit, API injoignable) sont renvoyées au format d'erreur de l'API (voir `API.md`). Leur
@@ -358,29 +574,47 @@ configuration TLS en phase 9.
 
 ## Intégration continue
 
-Le workflow GitHub Actions est fourni dans `infrastructure/ci/ci.yml`. **Il n'est pas
-encore actif** : GitHub n'exécute que les fichiers de `.github/workflows/`, dossier dans lequel
-l'outil qui a préparé le dépôt n'était pas autorisé à écrire. Pour l'activer :
-
-```bash
-git mv infrastructure/ci/ci.yml .github/workflows/ci.yml
-git commit -m "ci: activer l'intégration continue" && git push
-```
-
-Il s'exécute ensuite à chaque demande de fusion et sur `main` :
+Le workflow GitHub Actions (`.github/workflows/ci.yml`) s'exécute à chaque demande de fusion
+et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
 
 1. **verify** — installation figée, mise en forme, build, lint, types, cohérence
    migrations/schéma, tous les tests sur PostgreSQL 18 et Redis 8 réels, audit des dépendances ;
 2. **docker** — validation de la configuration Compose, construction des images, démarrage
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
    à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
-   activation de sa validation en deux étapes, ouverture de l'inscription, inscription,
-   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office,
+   activation de sa validation en deux étapes, ouverture de l'inscription, **publication
+   des conditions d'utilisation** — un texte de 185 Ko relu à l'octet près à travers le
+   proxy, refus au-delà des limites —, inscription, vérification, connexion, contrôle des
+   droits, connexion en deux étapes, back-office, **nouvelle version à accepter** — le
+   compte est arrêté, accepte, reprend —,
    **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
    maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
-   acceptation), contrôle que le volume ne contient que des pièces chiffrées, puis contrôle
-   de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme créée par le
-   script d'initialisation.
+   acceptation, **grand livre** : enregistrement d'un actif, portefeuille à zéro, balance,
+   **transferts** : ouverture, rien ne part sans plafonds, plafonds fixés puis lus par le
+   titulaire, demandes refusées — sans clé d'idempotence, sans le bon mot de passe, au-delà
+   du plafond, au-delà du solde — sans que rien ne bouge,
+   puis copie des données et clôture du compte), contrôle que le volume
+   ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
+   sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
+   propriétaire et la base fantôme créée par le script d'initialisation.
+
+**Une étape reste à ajouter au workflow.** `infrastructure/ci/publish-terms-cli.sh` publie
+une version des conditions d'utilisation avec l'outil en ligne de commande, dans la pile
+Compose, comme la section « Conditions d'utilisation » le décrit : dossier des textes monté
+en lecture seule dans l'image de migration, numéro inexact refusé, texte relu à l'octet près
+à travers Nginx. Ce script a été exécuté hors Docker. Pour que la CI l'exécute, ajouter au
+job `docker` de `.github/workflows/ci.yml`, juste après l'étape « Parcours d'identité et de
+vérification d'identité à travers Nginx » :
+
+```yaml
+- name: Conditions d'utilisation publiées en ligne de commande
+  run: infrastructure/ci/publish-terms-cli.sh
+```
+
+(avec le même retrait que les étapes voisines : six espaces devant le tiret.)
+
+L'outil qui prépare ce dépôt n'est pas autorisé à modifier les fichiers de
+`.github/workflows/` : cet ajout revient au propriétaire du dépôt.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.

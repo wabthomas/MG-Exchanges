@@ -39,7 +39,7 @@ async function register(http: Http, email: string): Promise<void> {
   await http
     .post('/api/v1/auth/register')
     .set(from(newClientIp()))
-    .send({ email, password: PASSWORD, countryCode: 'CD', acceptTerms: true })
+    .send({ email, password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 })
     .expect(202);
 }
 

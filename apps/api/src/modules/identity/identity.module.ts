@@ -38,6 +38,9 @@ import { RoleChangeService } from './application/role-change.service.js';
 import { SecurityNoticeDispatcher } from './application/security-notice.dispatcher.js';
 import { SessionRepository } from './application/session.repository.js';
 import { SessionService } from './application/session.service.js';
+import { TermsAdministrationService } from './application/terms-administration.service.js';
+import { TermsRepository } from './application/terms.repository.js';
+import { TermsService } from './application/terms.service.js';
 import { UserDirectory } from './application/user-directory.js';
 import { UserRepository } from './application/user.repository.js';
 import { VerificationCodeDispatcher } from './application/verification-code.dispatcher.js';
@@ -53,6 +56,7 @@ import { PrismaMfaRepository } from './infrastructure/prisma-mfa.repository.js';
 import { PrismaProfileRepository } from './infrastructure/prisma-profile.repository.js';
 import { PrismaRoleChangeRepository } from './infrastructure/prisma-role-change.repository.js';
 import { PrismaSessionRepository } from './infrastructure/prisma-session.repository.js';
+import { PrismaTermsRepository } from './infrastructure/prisma-terms.repository.js';
 import { PrismaUserDirectory } from './infrastructure/prisma-user-directory.js';
 import { PrismaUserRepository } from './infrastructure/prisma-user.repository.js';
 import { PrismaVerificationStatusReader } from './infrastructure/prisma-verification-status.reader.js';
@@ -63,6 +67,7 @@ import { SecretCipher } from './infrastructure/secret-cipher.js';
 import { VerificationCodes } from './infrastructure/verification-codes.js';
 import { AccountLifecycleController } from './presentation/account-lifecycle.controller.js';
 import { AdminRolesController } from './presentation/admin-roles.controller.js';
+import { AdminTermsController } from './presentation/admin-terms.controller.js';
 import { AdminUsersController } from './presentation/admin-users.controller.js';
 import { AuthController } from './presentation/auth.controller.js';
 import { AuthenticationGuard } from './presentation/authentication.guard.js';
@@ -70,15 +75,18 @@ import { MeController } from './presentation/me.controller.js';
 import { MfaController } from './presentation/mfa.controller.js';
 import { PermissionsGuard } from './presentation/permissions.guard.js';
 import { ProfileController } from './presentation/profile.controller.js';
+import { TermsAcceptanceGuard } from './presentation/terms-acceptance.guard.js';
+import { MyTermsController, TermsController } from './presentation/terms.controller.js';
 
 /**
  * Identité : comptes, authentification, second facteur, sessions, profil, autorisations et
- * administration des comptes par le back-office, copie des données, clôture et effacement,
- * purge périodique.
+ * administration des comptes par le back-office, conditions d'utilisation, copie des données,
+ * clôture et effacement, purge périodique.
  *
- * Ce module installe les deux gardes globales d'accès — authentification (refus par
- * défaut), puis permissions. Elles s'exécutent après la limitation de débit et la garde
- * de maintenance (ordre d'import des modules dans `AppModule`).
+ * Ce module installe les trois gardes globales d'accès — authentification (refus par
+ * défaut), permissions, puis acceptation des conditions d'utilisation (refus par défaut).
+ * Elles s'exécutent dans cet ordre, après la limitation de débit et la garde de maintenance
+ * (ordre d'import des modules dans `AppModule`).
  */
 @Module({
   imports: [AuditModule, OutboxModule, NotificationsModule, RateLimitModule],
@@ -88,8 +96,11 @@ import { ProfileController } from './presentation/profile.controller.js';
     MfaController,
     ProfileController,
     AccountLifecycleController,
+    TermsController,
+    MyTermsController,
     AdminUsersController,
     AdminRolesController,
+    AdminTermsController,
   ],
   providers: [
     { provide: UserRepository, useClass: PrismaUserRepository },
@@ -102,6 +113,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     { provide: VerificationStatusReader, useClass: PrismaVerificationStatusReader },
     { provide: AccountClosureRepository, useClass: PrismaAccountClosureRepository },
     { provide: AccountDataReader, useClass: PrismaAccountDataReader },
+    { provide: TermsRepository, useClass: PrismaTermsRepository },
     { provide: PendingLoginStore, useClass: RedisPendingLoginStore },
     { provide: Clock, useClass: SystemClock },
     {
@@ -117,6 +129,8 @@ import { ProfileController } from './presentation/profile.controller.js';
     SecondFactorThrottle,
     VerificationService,
     ReauthenticationService,
+    TermsService,
+    TermsAdministrationService,
     AccountService,
     MfaService,
     RegistrationService,
@@ -142,6 +156,7 @@ import { ProfileController } from './presentation/profile.controller.js';
     SecurityNoticeDispatcher,
     { provide: APP_GUARD, useClass: AuthenticationGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
+    { provide: APP_GUARD, useClass: TermsAcceptanceGuard },
   ],
   exports: [
     AuthenticationService,
@@ -154,6 +169,8 @@ import { ProfileController } from './presentation/profile.controller.js';
     VerificationStatusReader,
     MaintenanceStepRegistry,
     AccountDataRegistry,
+    // À l'usage des opérations financières : la preuve du titulaire avant de déplacer des fonds.
+    HolderProofService,
   ],
 })
 export class IdentityModule {}

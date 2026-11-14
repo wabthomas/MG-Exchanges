@@ -1,20 +1,33 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+  acceptTermsRequestSchema,
+  ACCOUNT_CLOSURE_BLOCKERS,
   ACCOUNT_CLOSURE_PERMISSION,
   ACTIVITY_TYPES,
   activityQuerySchema,
   ADMIN_KYC_CASE_STATUSES,
   adminKycCaseListQuerySchema,
+  adminLedgerAccountListQuerySchema,
+  adminLedgerPostingListQuerySchema,
+  adminLedgerEntrySchema,
   adminUserListQuerySchema,
   adminUserLookupRequestSchema,
   approveKycCaseRequestSchema,
   approveRoleChangeRequestSchema,
+  ASSET_KINDS,
+  ASSET_NAME_MAX_LENGTH,
+  ASSET_REGISTRATION_PERMISSION,
+  ASSET_SCALE_MAX,
   createRoleChangeRequestSchema,
+  DATA_EXPORT_FORMAT_VERSION,
+  DATA_EXPORT_MOVEMENTS_MAX_ENTRIES,
   ERROR_CODE_VALUES,
   ERROR_CODES,
+  exportedWalletSchema,
   FEATURE_KEYS,
   featureFlagsSchema,
+  FINANCIAL_RECORDS_RETENTION_YEARS,
   isErrorCode,
   KYC_ADDRESS_PROOF_MAX_AGE_DAYS,
   KYC_CASE_STATUSES,
@@ -42,6 +55,15 @@ import {
   kycIdentitySchema,
   kycLevelSchema,
   kycVerifiedLevelSchema,
+  LEDGER_ACCOUNT_TYPE_KEY_PATTERN,
+  LEDGER_ACCOUNT_TYPE_KEYS,
+  LEDGER_ACCOUNT_TYPES,
+  LEDGER_ACTOR_TYPES,
+  LEDGER_CURSOR_PATTERN,
+  LEDGER_ENTRY_KIND_MAX_LENGTH,
+  LEDGER_ENTRY_KIND_PATTERN,
+  LEDGER_PAGE_MAX_SIZE,
+  LEDGER_SIDES,
   loginRequestSchema,
   loginResponseSchema,
   mfaLoginRequestSchema,
@@ -50,6 +72,8 @@ import {
   permissionKeySchema,
   PERMISSIONS,
   problemDetailsSchema,
+  publishTermsVersionRequestSchema,
+  registerAssetRequestSchema,
   registerRequestSchema,
   rejectKycCaseRequestSchema,
   rejectRoleChangeRequestSchema,
@@ -61,10 +85,43 @@ import {
   SYSTEM_ROLE_KEYS,
   SYSTEM_ROLES,
   systemStatusSchema,
+  TERMS_BODY_MAX_LENGTH,
+  TERMS_PUBLICATION_MAX_BYTES,
+  TERMS_PUBLICATION_PERMISSION,
+  TERMS_SUMMARY_MAX_LENGTH,
+  termsLocaleQuerySchema,
+  termsVersionNumberParamSchema,
   totpDisableRequestSchema,
+  trialBalanceSchema,
   updateProfileRequestSchema,
   updateSystemSettingRequestSchema,
   verifyEmailRequestSchema,
+  walletMovementListQuerySchema,
+  walletMovementSchema,
+  walletSchema,
+  adminTransferLimitListSchema,
+  adminTransferLimitSchema,
+  CLIENT_IDEMPOTENCY_KEY_PATTERN,
+  clientIdempotencyKeySchema,
+  createTransferRequestSchema,
+  DATA_EXPORT_TRANSFERS_MAX_ENTRIES,
+  dataExportSchema,
+  exportedTransfersSchema,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
+  INTERNAL_TRANSFER_ENTRY_KIND,
+  nonNegativeAmountSchema,
+  positiveAmountSchema,
+  setTransferLimitRequestSchema,
+  TRANSFER_DIRECTIONS,
+  TRANSFER_LIMIT_DAILY_WINDOW_HOURS,
+  TRANSFER_LIMIT_MONTHLY_WINDOW_DAYS,
+  TRANSFER_LIMITS_PERMISSION,
+  transferAllowanceListSchema,
+  transferLimitLevelParamSchema,
+  transferListQuerySchema,
+  transferListSchema,
+  transferSchema,
 } from './index.js';
 
 describe('catalogue des codes d’erreur', () => {
@@ -137,16 +194,26 @@ describe('systemStatusSchema', () => {
 });
 
 describe('contrats d’identité', () => {
-  it('l’inscription exige l’acceptation explicite des conditions et refuse toute propriété inconnue', () => {
+  it('l’inscription exige le numéro de la version des conditions acceptée et refuse toute propriété inconnue', () => {
     const valid = {
       email: ' Jean@Example.com ',
       password: 'correct horse battery',
       countryCode: 'CD',
-      acceptTerms: true,
+      acceptedTermsVersion: 3,
     };
     expect(registerRequestSchema.parse(valid)).toEqual({ ...valid, email: 'jean@example.com' });
 
-    expect(registerRequestSchema.safeParse({ ...valid, acceptTerms: false }).success).toBe(false);
+    const { acceptedTermsVersion: _version, ...withoutVersion } = valid;
+    expect(registerRequestSchema.safeParse(withoutVersion).success).toBe(false);
+    // Une case cochée ne dit pas quel texte a été accepté : seul un numéro de version le dit.
+    expect(registerRequestSchema.safeParse({ ...withoutVersion, acceptTerms: true }).success).toBe(
+      false,
+    );
+    for (const version of [0, -1, 1.5, '3', true, null, 1_000_000_000]) {
+      expect(
+        registerRequestSchema.safeParse({ ...valid, acceptedTermsVersion: version }).success,
+      ).toBe(false);
+    }
     expect(registerRequestSchema.safeParse({ ...valid, role: 'super_admin' }).success).toBe(false);
     expect(registerRequestSchema.safeParse({ ...valid, status: 'ACTIVE' }).success).toBe(false);
     expect(registerRequestSchema.safeParse({ ...valid, password: 'short' }).success).toBe(false);
@@ -327,6 +394,25 @@ describe('contrats du back-office', () => {
     }
     expect(KYC_REVIEW_PERMISSION).toBe('kyc.review');
     expect(KYC_REVOCATION_PERMISSION).toBe('kyc.revoke');
+    // Publier les conditions d'utilisation engage la plateforme : super_admin seulement.
+    expect(TERMS_PUBLICATION_PERMISSION).toBe('terms.publish');
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.includes(TERMS_PUBLICATION_PERMISSION)).toBe(key === 'super_admin');
+    }
+    // Le grand livre — les opérations de tous les titulaires — n'est ouvert ni au support ni à
+    // la conformité ; enregistrer un actif est définitif.
+    expect(ASSET_REGISTRATION_PERMISSION).toBe('ledger.manage_assets');
+    expect(PERMISSION_KEYS.filter((permission) => permission.startsWith('ledger.'))).toEqual([
+      'ledger.read',
+      'ledger.manage_assets',
+    ]);
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.some((permission) => permission.startsWith('ledger.'))).toBe(
+        key === 'super_admin',
+      );
+    }
   });
 
   it('la recherche d’un compte prend exactement un identifiant, complet', () => {
@@ -758,5 +844,770 @@ describe('contrats de la vérification d’identité', () => {
   it('délais : justificatif de trois mois au plus, brouillon effacé après trente jours', () => {
     expect(KYC_ADDRESS_PROOF_MAX_AGE_DAYS).toBe(92);
     expect(KYC_DRAFT_RETENTION_DAYS).toBe(30);
+  });
+});
+
+describe('contrats des conditions d’utilisation', () => {
+  const REASON = 'Version validée par le conseil le 12 novembre';
+  const fr = { summary: 'Première version.', body: '# Conditions\n\nArticle 1 — Objet.\n' };
+  const publication = {
+    number: 1,
+    requiresAcceptance: true,
+    reason: REASON,
+    fr,
+  };
+
+  it('une publication désigne son numéro, sa règle et sa justification', () => {
+    expect(publishTermsVersionRequestSchema.parse(publication)).toEqual(publication);
+    const en = { summary: 'First version.', body: '# Terms\n\nArticle 1 — Purpose.\n' };
+    expect(publishTermsVersionRequestSchema.parse({ ...publication, en })).toEqual({
+      ...publication,
+      en,
+    });
+    // La justification est débarrassée de ses espaces superflus ; le texte, jamais.
+    expect(
+      publishTermsVersionRequestSchema.parse({
+        ...publication,
+        reason: `  ${REASON} `,
+        fr: { summary: ' Résumé \n', body: '\n  Texte.  \n\n' },
+      }),
+    ).toEqual({ ...publication, fr: { summary: ' Résumé \n', body: '\n  Texte.  \n\n' } });
+
+    for (const field of ['number', 'requiresAcceptance', 'reason', 'fr']) {
+      const { [field]: _omitted, ...incomplete } = publication as Record<string, unknown>;
+      expect(publishTermsVersionRequestSchema.safeParse(incomplete).success).toBe(false);
+    }
+    for (const override of [
+      { number: 0 },
+      { number: 1.5 },
+      { number: '1' },
+      { requiresAcceptance: 'true' },
+      { requiresAcceptance: 1 },
+      // L'annonce par e-mail n'existe pas : la demander est une erreur, pas un oubli silencieux.
+      { notifyHolders: true },
+      // Neuf caractères : un de moins que le minimum.
+      { reason: 'trop bref' },
+      { reason: 'x'.repeat(501) },
+      { fr: { summary: 'Résumé.' } },
+      { fr: { body: 'Texte.' } },
+      { fr: { summary: '   ', body: 'Texte.' } },
+      { fr: { summary: 'Résumé.', body: ' \n\t ' } },
+      { fr: { summary: 'Résumé.', body: 'nul\u0000' } },
+      { fr: { summary: 'sonnerie\u0007', body: 'Texte.' } },
+      { fr: { summary: 'Résumé.', body: 'Texte.', title: 'Conditions' } },
+      { en: { summary: 'Summary.' } },
+      { en: null },
+      // Une langue que la plateforme ne connaît pas.
+      { sw: fr },
+      { publishedAt: '2026-01-01T00:00:00.000Z' },
+    ]) {
+      expect(
+        publishTermsVersionRequestSchema.safeParse({ ...publication, ...override }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('la première version exige toujours d’être acceptée ; les suivantes, au choix', () => {
+    const informative = { ...publication, requiresAcceptance: false };
+    const refused = publishTermsVersionRequestSchema.safeParse({ ...informative, number: 1 });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues.map((issue) => issue.path.join('.'))).toEqual([
+      'requiresAcceptance',
+    ]);
+    expect(publishTermsVersionRequestSchema.safeParse({ ...publication, number: 1 }).success).toBe(
+      true,
+    );
+    for (const number of [2, 3, 40]) {
+      for (const requiresAcceptance of [true, false]) {
+        expect(
+          publishTermsVersionRequestSchema.safeParse({ ...publication, number, requiresAcceptance })
+            .success,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it('le texte et son résumé sont bornés ; la requête entière aussi', () => {
+    expect(TERMS_BODY_MAX_LENGTH).toBe(200_000);
+    expect(TERMS_SUMMARY_MAX_LENGTH).toBe(1000);
+    expect(TERMS_PUBLICATION_MAX_BYTES).toBe(1_048_576);
+
+    const atLimit = { summary: 's'.repeat(1000), body: 'b'.repeat(200_000) };
+    expect(
+      publishTermsVersionRequestSchema.safeParse({ ...publication, fr: atLimit, en: atLimit })
+        .success,
+    ).toBe(true);
+    for (const text of [
+      { ...atLimit, summary: 's'.repeat(1001) },
+      { ...atLimit, body: 'b'.repeat(200_001) },
+    ]) {
+      expect(publishTermsVersionRequestSchema.safeParse({ ...publication, fr: text }).success).toBe(
+        false,
+      );
+      expect(publishTermsVersionRequestSchema.safeParse({ ...publication, en: text }).success).toBe(
+        false,
+      );
+    }
+    // Deux textes de la longueur maximale tiennent dans une requête. Ceux-ci sont sans
+    // caractère accentué : un caractère y vaut un octet.
+    const { reason: _reason, ...fixed } = publication;
+    const largest = { ...fixed, reason: 'r'.repeat(500), fr: atLimit, en: atLimit };
+    expect(JSON.stringify(largest).length).toBeLessThan(TERMS_PUBLICATION_MAX_BYTES / 2);
+  });
+
+  it('une acceptation désigne la version lue, par son numéro', () => {
+    expect(acceptTermsRequestSchema.parse({ version: 2 })).toEqual({ version: 2 });
+    for (const body of [
+      {},
+      { version: 0 },
+      { version: '2' },
+      { version: 2.5 },
+      { version: 2, accept: true },
+      { number: 2 },
+    ]) {
+      expect(acceptTermsRequestSchema.safeParse(body).success).toBe(false);
+    }
+  });
+
+  it('un numéro de version, dans une adresse, s’écrit en chiffres sans zéro de tête', () => {
+    expect(termsVersionNumberParamSchema.parse('1')).toBe(1);
+    expect(termsVersionNumberParamSchema.parse('42')).toBe(42);
+    expect(termsVersionNumberParamSchema.parse('999999999')).toBe(999_999_999);
+    for (const value of ['0', '01', '-1', '1.0', '1e3', ' 1', '1 ', 'current', '', '1000000000']) {
+      expect(termsVersionNumberParamSchema.safeParse(value).success).toBe(false);
+    }
+  });
+
+  it('la langue demandée est le français, sauf mention contraire', () => {
+    expect(termsLocaleQuerySchema.parse({})).toEqual({ locale: 'fr' });
+    expect(termsLocaleQuerySchema.parse({ locale: 'en' })).toEqual({ locale: 'en' });
+    for (const query of [{ locale: 'sw' }, { locale: 'FR' }, { locale: 'fr', version: '1' }]) {
+      expect(termsLocaleQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+});
+
+describe('contrats du grand livre', () => {
+  const UUID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
+  const REASON = 'Ouverture du service en dollars';
+  const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
+
+  it('le plan de comptes : à qui appartient chaque type, et quel sens augmente son solde', () => {
+    expect(LEDGER_ACCOUNT_TYPES).toEqual({
+      // Ce que la plateforme doit à un titulaire : un crédit l'augmente.
+      user_available: { owner: 'USER', normalSide: 'CREDIT', description: expect.any(String) },
+      // Ce qu'elle conserve pour eux hors du grand livre : un débit l'augmente.
+      platform_custody: { owner: 'PLATFORM', normalSide: 'DEBIT', description: expect.any(String) },
+      platform_fees: { owner: 'PLATFORM', normalSide: 'CREDIT', description: expect.any(String) },
+    });
+    expect(LEDGER_ACCOUNT_TYPE_KEYS).toEqual([
+      'user_available',
+      'platform_custody',
+      'platform_fees',
+    ]);
+    for (const key of LEDGER_ACCOUNT_TYPE_KEYS) {
+      expect(key).toMatch(LEDGER_ACCOUNT_TYPE_KEY_PATTERN);
+      expect(key.length).toBeLessThanOrEqual(64);
+      expect(LEDGER_ACCOUNT_TYPES[key].description.length).toBeGreaterThan(10);
+      // Le préfixe dit à qui appartient le compte.
+      expect(key.startsWith('user_')).toBe(LEDGER_ACCOUNT_TYPES[key].owner === 'USER');
+      expect(key.startsWith('platform_')).toBe(LEDGER_ACCOUNT_TYPES[key].owner === 'PLATFORM');
+    }
+    expect(LEDGER_SIDES).toEqual(['DEBIT', 'CREDIT']);
+    expect(LEDGER_ACTOR_TYPES).toEqual(['USER', 'SYSTEM', 'SERVICE']);
+  });
+
+  it('le type d’une écriture : des mots en minuscules séparés par des points, 64 caractères au plus', () => {
+    for (const kind of [
+      'transfer',
+      'transfer.internal',
+      'deposit.mobile_money.confirmed',
+      'a1.b2',
+    ]) {
+      expect(kind).toMatch(LEDGER_ENTRY_KIND_PATTERN);
+    }
+    for (const kind of [
+      '',
+      'Transfer',
+      'transfer.',
+      '.transfer',
+      'transfer..internal',
+      '1transfer',
+      'transfer.1',
+      'transfer-internal',
+      'transfer internal',
+      'transfer.internal\n',
+    ]) {
+      expect(kind).not.toMatch(LEDGER_ENTRY_KIND_PATTERN);
+    }
+    expect(LEDGER_ENTRY_KIND_MAX_LENGTH).toBe(64);
+  });
+
+  it('enregistrer un actif : un code, un libellé, une nature, de 0 à 18 décimales — et une raison', () => {
+    const request = { ...usd, reason: REASON };
+    expect(registerAssetRequestSchema.parse(request)).toEqual(request);
+    expect(
+      registerAssetRequestSchema.parse({ ...request, name: '  US dollar ', reason: ` ${REASON} ` }),
+    ).toEqual(request);
+    expect(ASSET_KINDS).toEqual(['FIAT', 'CRYPTO']);
+    expect(ASSET_SCALE_MAX).toBe(18);
+    expect(ASSET_NAME_MAX_LENGTH).toBe(64);
+    for (const scale of [0, 8, 18]) {
+      expect(registerAssetRequestSchema.safeParse({ ...request, scale }).success).toBe(true);
+    }
+    expect(registerAssetRequestSchema.safeParse({ ...request, name: 'n'.repeat(64) }).success).toBe(
+      true,
+    );
+
+    for (const invalid of [
+      { ...request, code: 'usd' },
+      { ...request, code: 'U' },
+      { ...request, code: undefined },
+      { ...request, name: '' },
+      { ...request, name: '   ' },
+      { ...request, name: 'n'.repeat(65) },
+      { ...request, name: 'US\tdollar' },
+      { ...request, kind: 'STABLECOIN' },
+      { ...request, kind: 'fiat' },
+      { ...request, scale: -1 },
+      { ...request, scale: 19 },
+      { ...request, scale: 2.5 },
+      { ...request, scale: '2' },
+      { ...request, scale: undefined },
+      { ...request, reason: undefined },
+      { ...request, reason: 'trop bref' },
+      { ...request, reason: 'r'.repeat(501) },
+      { ...request, decimals: 2 },
+    ]) {
+      expect(registerAssetRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('un montant est une chaîne décimale, jamais un nombre', () => {
+    expect(walletSchema.parse({ asset: usd, available: '12.34' })).toEqual({
+      asset: usd,
+      available: '12.34',
+    });
+    for (const available of [12.34, 12, '12,34', '1e3', ' 12.34', '', null]) {
+      expect(walletSchema.safeParse({ asset: usd, available }).success).toBe(false);
+    }
+    const movement = {
+      id: UUID,
+      entryId: UUID,
+      kind: 'transfer.internal',
+      side: 'DEBIT',
+      amount: '10.00',
+      balanceAfter: '2.34',
+      postedAt: '2026-11-13T10:00:00.000Z',
+    };
+    expect(walletMovementSchema.parse(movement)).toEqual(movement);
+    for (const invalid of [
+      { ...movement, amount: 10 },
+      { ...movement, balanceAfter: 2.34 },
+      { ...movement, side: 'debit' },
+      { ...movement, side: 'IN' },
+      { ...movement, postedAt: '13/11/2026' },
+      { ...movement, id: 'not-an-id' },
+    ]) {
+      expect(walletMovementSchema.safeParse(invalid).success).toBe(false);
+    }
+    // Un type d'écriture inconnu du client reste lisible : les types arrivent avec les opérations.
+    expect(walletMovementSchema.safeParse({ ...movement, kind: 'something.new' }).success).toBe(
+      true,
+    );
+  });
+
+  it('les mouvements se lisent par pages de 1 à 100, vingt par défaut, avec un curseur opaque', () => {
+    expect(walletMovementListQuerySchema.parse({})).toEqual({ limit: 20 });
+    // Les paramètres d'une URL arrivent en texte.
+    expect(walletMovementListQuerySchema.parse({ limit: '100', after: 'Mw' })).toEqual({
+      limit: 100,
+      after: 'Mw',
+    });
+    expect(LEDGER_PAGE_MAX_SIZE).toBe(100);
+    expect(walletMovementListQuerySchema.safeParse({ limit: '1' }).success).toBe(true);
+    for (const invalid of [
+      { limit: '0' },
+      { limit: '101' },
+      { limit: '1.5' },
+      { limit: 'ten' },
+      { after: '' },
+      { after: 'a+b' },
+      { after: 'a/b' },
+      { after: 'a=' },
+      { after: 'A'.repeat(129) },
+      { userId: UUID },
+      { before: 'Mw' },
+    ]) {
+      expect(walletMovementListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+    expect('A'.repeat(128)).toMatch(LEDGER_CURSOR_PATTERN);
+    expect('aZ09_-').toMatch(LEDGER_CURSOR_PATTERN);
+    expect('Mw\n').not.toMatch(LEDGER_CURSOR_PATTERN);
+  });
+
+  it('la liste des comptes se filtre par titulaire, actif ou type — rien d’autre', () => {
+    expect(adminLedgerAccountListQuerySchema.parse({})).toEqual({ limit: 20 });
+    const query = { userId: UUID, assetCode: 'USD', type: 'user_available', limit: '50' };
+    expect(adminLedgerAccountListQuerySchema.parse(query)).toEqual({ ...query, limit: 50 });
+    for (const type of LEDGER_ACCOUNT_TYPE_KEYS) {
+      expect(adminLedgerAccountListQuerySchema.safeParse({ type }).success).toBe(true);
+    }
+    for (const invalid of [
+      { userId: 'alice' },
+      { assetCode: 'usd' },
+      { type: 'user_locked' },
+      { type: 'USER_AVAILABLE' },
+      { limit: '101' },
+      { email: 'alice@example.cd' },
+      { owner: 'USER' },
+    ]) {
+      expect(adminLedgerAccountListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('les lignes d’un compte se lisent par pages, sans aucun filtre', () => {
+    expect(adminLedgerPostingListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(adminLedgerPostingListQuerySchema.parse({ limit: '100', after: 'Mw' })).toEqual({
+      limit: 100,
+      after: 'Mw',
+    });
+    for (const invalid of [
+      { limit: '0' },
+      { limit: '101' },
+      { after: '' },
+      { after: 'a+b' },
+      { assetCode: 'USD' },
+      { userId: UUID },
+      { before: 'Mw' },
+    ]) {
+      expect(adminLedgerPostingListQuerySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('une écriture rendue au back-office porte son auteur, sa clé et ses lignes', () => {
+    const entry = {
+      id: UUID,
+      kind: 'transfer.internal',
+      idempotencyKey: 'transfer:0195f3a2',
+      actor: { type: 'USER', id: UUID },
+      requestId: 'req-1',
+      metadata: { transferId: 'tr_1', attempt: 1, confirmed: true, note: null },
+      postedAt: '2026-11-13T10:00:00.000Z',
+      postings: [
+        {
+          id: UUID,
+          lineNumber: 1,
+          account: { id: UUID, type: 'user_available', owner: 'USER', userId: UUID },
+          asset: usd,
+          side: 'DEBIT',
+          amount: '10.00',
+          balanceAfter: '2.34',
+          accountSequence: 7,
+        },
+      ],
+    };
+    expect(adminLedgerEntrySchema.parse(entry)).toEqual(entry);
+    // La plateforme elle-même : sans identifiant d'auteur ni requête.
+    expect(
+      adminLedgerEntrySchema.safeParse({
+        ...entry,
+        actor: { type: 'SYSTEM', id: null },
+        requestId: null,
+        metadata: {},
+      }).success,
+    ).toBe(true);
+    for (const invalid of [
+      { ...entry, actor: { type: 'ADMIN', id: UUID } },
+      { ...entry, postings: [{ ...entry.postings[0], amount: 10 }] },
+      { ...entry, postings: [{ ...entry.postings[0], lineNumber: 0 }] },
+      { ...entry, postings: [{ ...entry.postings[0], accountSequence: 0 }] },
+      { ...entry, postings: [{ ...entry.postings[0], side: 'BOTH' }] },
+    ]) {
+      expect(adminLedgerEntrySchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('la balance donne, par actif, un total pour chaque type du plan de comptes', () => {
+    const balance = {
+      generatedAt: '2026-11-13T10:00:00.000Z',
+      balanced: true,
+      assets: [
+        {
+          asset: usd,
+          debitBalance: '117.50',
+          creditBalance: '117.50',
+          balanced: true,
+          accountTypes: LEDGER_ACCOUNT_TYPE_KEYS.map((type) => ({
+            type,
+            owner: LEDGER_ACCOUNT_TYPES[type].owner,
+            normalSide: LEDGER_ACCOUNT_TYPES[type].normalSide,
+            accounts: 1,
+            balance: '0.00',
+          })),
+        },
+      ],
+    };
+    expect(trialBalanceSchema.parse(balance)).toEqual(balance);
+    expect(trialBalanceSchema.safeParse({ ...balance, assets: [] }).success).toBe(true);
+    expect(
+      trialBalanceSchema.safeParse({
+        ...balance,
+        assets: [{ ...balance.assets[0], debitBalance: 117.5 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('clôture et copie des données : des fonds s’opposent à la clôture, les écritures se gardent dix ans', () => {
+    expect(ACCOUNT_CLOSURE_BLOCKERS).toEqual([
+      'ROLE_HELD',
+      'VERIFICATION_PENDING_REVIEW',
+      'FUNDS_REMAINING',
+    ]);
+    expect(FINANCIAL_RECORDS_RETENTION_YEARS).toBe(10);
+    // Le format de la copie a changé de version avec les portefeuilles (3), puis avec les
+    // transferts (4).
+    expect(DATA_EXPORT_FORMAT_VERSION).toBe(4);
+    expect(DATA_EXPORT_MOVEMENTS_MAX_ENTRIES).toBe(2000);
+    const wallet = { asset: usd, available: '2.34', movements: [], truncated: false };
+    expect(exportedWalletSchema.parse(wallet)).toEqual(wallet);
+    expect(exportedWalletSchema.safeParse({ asset: usd, available: '2.34' }).success).toBe(false);
+  });
+});
+
+describe('contrats des transferts', () => {
+  const UUID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
+  const REASON = 'Ouverture des transferts en dollars';
+  const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
+  const transfer = {
+    id: UUID,
+    direction: 'SENT',
+    asset: usd,
+    amount: '25.50',
+    counterparty: { email: 'bob@example.cd' },
+    entryId: UUID,
+    createdAt: '2026-11-14T09:30:00.000Z',
+  };
+
+  it('la clé d’idempotence : 16 à 128 caractères sûrs, dont le premier est une lettre ou un chiffre', () => {
+    expect(IDEMPOTENCY_KEY_HEADER).toBe('Idempotency-Key');
+    expect(IDEMPOTENT_REPLAYED_HEADER).toBe('Idempotent-Replayed');
+    for (const key of [
+      UUID,
+      'a'.repeat(16),
+      'Z'.repeat(128),
+      '0000000000000000',
+      'order_42:retry.3-final',
+    ]) {
+      expect({ key, valid: clientIdempotencyKeySchema.safeParse(key).success }).toEqual({
+        key,
+        valid: true,
+      });
+      expect(key).toMatch(CLIENT_IDEMPOTENCY_KEY_PATTERN);
+    }
+    for (const key of [
+      undefined,
+      null,
+      42,
+      '',
+      'a'.repeat(15),
+      'a'.repeat(129),
+      `-${'a'.repeat(20)}`,
+      `.${'a'.repeat(20)}`,
+      'retry number one 0001',
+      'orders/42/retries/0001',
+      'clé-de-la-requête-0001',
+      `${'a'.repeat(20)}\n`,
+      `${UUID}, ${UUID}`,
+    ]) {
+      expect({ key, valid: clientIdempotencyKeySchema.safeParse(key).success }).toEqual({
+        key,
+        valid: false,
+      });
+    }
+  });
+
+  it('un montant est une chaîne décimale : strictement positive pour un transfert, positive ou nulle pour un plafond', () => {
+    for (const amount of ['0.01', '1', '25.50', '0.00000001', '1000000']) {
+      expect(positiveAmountSchema.safeParse(amount).success).toBe(true);
+      expect(nonNegativeAmountSchema.safeParse(amount).success).toBe(true);
+    }
+    for (const amount of ['0', '0.0', '0.00000000']) {
+      expect({ amount, positive: positiveAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        positive: false,
+      });
+      expect(nonNegativeAmountSchema.safeParse(amount).success).toBe(true);
+    }
+    for (const amount of [
+      '-1',
+      '-0.01',
+      '-0',
+      25.5,
+      1,
+      '1e3',
+      '1,5',
+      '.5',
+      '01',
+      ' 1',
+      '+1',
+      '',
+      null,
+    ]) {
+      expect({ amount, positive: positiveAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        positive: false,
+      });
+      expect({ amount, allowed: nonNegativeAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        allowed: false,
+      });
+    }
+  });
+
+  it('demander un transfert : un destinataire, un actif, un montant et la preuve du titulaire', () => {
+    const request = {
+      recipientEmail: 'bob@example.cd',
+      assetCode: 'USD',
+      amount: '25.50',
+      currentPassword: 'old-password-1',
+    };
+    expect(createTransferRequestSchema.parse(request)).toEqual(request);
+    // L'adresse est normalisée : c'est sous cette forme qu'elle désigne un compte.
+    expect(
+      createTransferRequestSchema.parse({ ...request, recipientEmail: '  Bob@Example.CD ' })
+        .recipientEmail,
+    ).toBe('bob@example.cd');
+    expect(createTransferRequestSchema.parse({ ...request, code: '123456' }).code).toBe('123456');
+    expect(
+      createTransferRequestSchema.safeParse({ ...request, recoveryCode: 'ABCDE-FGHIJ' }).success,
+    ).toBe(true);
+
+    for (const body of [
+      {},
+      { ...request, recipientEmail: undefined },
+      { ...request, recipientEmail: 'bob' },
+      { ...request, assetCode: 'usd' },
+      { ...request, assetCode: undefined },
+      { ...request, amount: 25.5 },
+      { ...request, amount: '0' },
+      { ...request, amount: '-25.50' },
+      { ...request, amount: undefined },
+      { ...request, currentPassword: undefined },
+      { ...request, currentPassword: '' },
+      { ...request, code: '12345' },
+      // Un second facteur au plus.
+      { ...request, code: '123456', recoveryCode: 'ABCDE-FGHIJ' },
+      // Ni identifiant de compte, ni libellé, ni clé dans le corps : la clé est un en-tête.
+      { ...request, recipientId: UUID },
+      { ...request, memo: 'loyer' },
+      { ...request, idempotencyKey: UUID },
+    ]) {
+      expect({ body, valid: createTransferRequestSchema.safeParse(body).success }).toEqual({
+        body,
+        valid: false,
+      });
+    }
+    const both = createTransferRequestSchema.safeParse({
+      ...request,
+      code: '123456',
+      recoveryCode: 'ABCDE-FGHIJ',
+    });
+    expect(both.error?.issues.map(({ path }) => path.join('.'))).toEqual(['code']);
+  });
+
+  it('un transfert, vu d’une de ses parties : son sens, et l’adresse de l’autre — ou rien si son compte est clôturé', () => {
+    expect(TRANSFER_DIRECTIONS).toEqual(['SENT', 'RECEIVED']);
+    expect(INTERNAL_TRANSFER_ENTRY_KIND).toBe('transfer.internal');
+    expect(transferSchema.parse(transfer)).toEqual(transfer);
+    expect(
+      transferSchema.safeParse({
+        ...transfer,
+        direction: 'RECEIVED',
+        counterparty: { email: null },
+      }).success,
+    ).toBe(true);
+    for (const invalid of [
+      { ...transfer, direction: 'INTERNAL' },
+      { ...transfer, amount: 25.5 },
+      { ...transfer, counterparty: {} },
+      { ...transfer, counterparty: undefined },
+      { ...transfer, entryId: 'entry-1' },
+      { ...transfer, createdAt: '14/11/2026' },
+    ]) {
+      expect(transferSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    const page = { transfers: [transfer], nextCursor: null };
+    expect(transferListSchema.parse(page)).toEqual(page);
+    expect(transferListSchema.safeParse({ transfers: [transfer] }).success).toBe(false);
+    expect(transferListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(transferListQuerySchema.parse({ limit: '100', after: 'MDE5NWYzYTI' })).toEqual({
+      limit: 100,
+      after: 'MDE5NWYzYTI',
+    });
+    for (const query of [
+      { limit: '0' },
+      { limit: '101' },
+      { limit: '2.5' },
+      { direction: 'SENT' },
+    ]) {
+      expect(transferListQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+
+  it('les plafonds : par transfert, sur 24 heures glissantes, sur 31 jours glissants', () => {
+    expect(TRANSFER_LIMIT_DAILY_WINDOW_HOURS).toBe(24);
+    expect(TRANSFER_LIMIT_MONTHLY_WINDOW_DAYS).toBe(31);
+
+    const allowances = {
+      enabled: true,
+      level: 1,
+      allowances: [
+        {
+          asset: usd,
+          limit: { perTransfer: '100.00', daily: '250.00', monthly: '1000.00' },
+          used: { last24Hours: '190.00', last31Days: '190.00' },
+          remaining: '60.00',
+        },
+        // Aucun plafond fixé pour ce niveau dans cet actif : rien ne part, rien n'arrive.
+        {
+          asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
+          limit: null,
+          used: { last24Hours: '0.00000000', last31Days: '0.00000000' },
+          remaining: '0.00000000',
+        },
+      ],
+    };
+    expect(transferAllowanceListSchema.parse(allowances)).toEqual(allowances);
+    for (const invalid of [
+      { ...allowances, level: 4 },
+      { ...allowances, level: -1 },
+      { ...allowances, enabled: 'yes' },
+      { ...allowances, allowances: [{ ...allowances.allowances[0], limit: undefined }] },
+      { ...allowances, allowances: [{ ...allowances.allowances[0], remaining: 60 }] },
+    ]) {
+      expect(transferAllowanceListSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('fixer des plafonds : trois montants positifs ou nuls, un niveau de 0 à 3, une justification', () => {
+    const request = { perTransfer: '100', daily: '250.5', monthly: '1000.00', reason: REASON };
+    expect(setTransferLimitRequestSchema.parse(request)).toEqual(request);
+    // Zéro referme le niveau : c'est une valeur admise.
+    expect(
+      setTransferLimitRequestSchema.safeParse({
+        ...request,
+        perTransfer: '0',
+        daily: '0',
+        monthly: '0',
+      }).success,
+    ).toBe(true);
+    expect(
+      setTransferLimitRequestSchema.parse({ ...request, reason: `  ${REASON}  ` }).reason,
+    ).toBe(REASON);
+    for (const body of [
+      {},
+      { ...request, perTransfer: undefined },
+      { ...request, daily: undefined },
+      { ...request, monthly: undefined },
+      { ...request, perTransfer: 100 },
+      { ...request, daily: '-1' },
+      { ...request, monthly: '1e6' },
+      { ...request, reason: undefined },
+      { ...request, reason: 'ok' },
+      { ...request, reason: 'r'.repeat(501) },
+      { ...request, weekly: '500' },
+      { ...request, level: 1 },
+      { ...request, assetCode: 'USD' },
+    ]) {
+      expect({ body, valid: setTransferLimitRequestSchema.safeParse(body).success }).toEqual({
+        body,
+        valid: false,
+      });
+    }
+
+    // Le niveau vient du chemin de l'URL : un texte, rendu en nombre.
+    for (const [text, level] of [
+      ['0', 0],
+      ['1', 1],
+      ['2', 2],
+      ['3', 3],
+    ] as const) {
+      expect(transferLimitLevelParamSchema.parse(text)).toBe(level);
+    }
+    for (const text of ['4', '-1', '1.5', '01', ' 1', '1 ', 'one', '', 1, null, undefined]) {
+      expect({ text, valid: transferLimitLevelParamSchema.safeParse(text).success }).toEqual({
+        text,
+        valid: false,
+      });
+    }
+
+    const limit = {
+      asset: usd,
+      level: 1,
+      perTransfer: '100.00',
+      daily: '250.00',
+      monthly: '1000.00',
+      setBy: UUID,
+      setAt: '2026-11-14T09:30:00.000Z',
+    };
+    expect(adminTransferLimitSchema.parse(limit)).toEqual(limit);
+    // Fixés hors de l'API, avec le rôle propriétaire de la base : sans auteur.
+    expect(adminTransferLimitSchema.safeParse({ ...limit, setBy: null }).success).toBe(true);
+    expect(adminTransferLimitSchema.safeParse({ ...limit, setBy: undefined }).success).toBe(false);
+    expect(adminTransferLimitSchema.safeParse({ ...limit, level: 4 }).success).toBe(false);
+    expect(adminTransferLimitListSchema.parse({ limits: [limit] })).toEqual({ limits: [limit] });
+    expect(adminTransferLimitListSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('deux permissions : consulter les plafonds, les fixer — à super_admin seulement', () => {
+    expect(PERMISSION_KEYS.filter((key) => key.startsWith('transfer_limits.'))).toEqual([
+      'transfer_limits.read',
+      'transfer_limits.write',
+    ]);
+    expect(PERMISSION_KEYS).toHaveLength(17);
+    // Celle que la base de données vérifie elle-même à chaque modification d'un plafond.
+    expect(TRANSFER_LIMITS_PERMISSION).toBe('transfer_limits.write');
+    // Les plafonds engagent la plateforme : ni le support, ni la conformité ne les consultent
+    // ni ne les fixent.
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.some((permission) => permission.startsWith('transfer_limits.'))).toBe(
+        key === 'super_admin',
+      );
+    }
+  });
+
+  it('cinq codes d’erreur : ce qui fait refuser un transfert', () => {
+    expect({
+      TRANSFER_NOT_PERMITTED: ERROR_CODES.TRANSFER_NOT_PERMITTED.status,
+      IDEMPOTENCY_KEY_REUSED: ERROR_CODES.IDEMPOTENCY_KEY_REUSED.status,
+      INSUFFICIENT_FUNDS: ERROR_CODES.INSUFFICIENT_FUNDS.status,
+      TRANSFER_LIMIT_EXCEEDED: ERROR_CODES.TRANSFER_LIMIT_EXCEEDED.status,
+      RECIPIENT_UNAVAILABLE: ERROR_CODES.RECIPIENT_UNAVAILABLE.status,
+    }).toEqual({
+      TRANSFER_NOT_PERMITTED: 403,
+      IDEMPOTENCY_KEY_REUSED: 422,
+      INSUFFICIENT_FUNDS: 422,
+      TRANSFER_LIMIT_EXCEEDED: 422,
+      RECIPIENT_UNAVAILABLE: 422,
+    });
+  });
+
+  it('l’historique de sécurité du compte mentionne ses transferts : envoyés, sans preuve, refusés', () => {
+    expect(ACTIVITY_TYPES).toEqual(
+      expect.arrayContaining(['TRANSFER_SENT', 'TRANSFER_FAILED', 'TRANSFER_REFUSED']),
+    );
+  });
+
+  it('la copie des données : les 2 000 transferts les plus récents, envoyés et reçus', () => {
+    expect(DATA_EXPORT_TRANSFERS_MAX_ENTRIES).toBe(2000);
+    const exported = { items: [transfer], truncated: false };
+    expect(exportedTransfersSchema.parse(exported)).toEqual(exported);
+    expect(exportedTransfersSchema.safeParse({ items: [transfer] }).success).toBe(false);
+    expect(exportedTransfersSchema.safeParse({ truncated: false }).success).toBe(false);
+    // La section fait partie de la copie : un document sans elle n'en est pas une.
+    expect(Object.keys(dataExportSchema.shape)).toContain('transfers');
   });
 });

@@ -167,8 +167,9 @@ model User {
   countryCode     String      @map("country_code") @db.Char(2)
   /// Langue des messages adressés à l'utilisateur.
   locale          String      @default("fr") @db.VarChar(10)
-  /// Acceptation des conditions d'utilisation.
-  termsAcceptedAt DateTime    @map("terms_accepted_at") @db.Timestamptz(6)
+  /// Date de la demande d'inscription — la dernière, si une inscription restée inachevée a
+  /// été remplacée. Les conditions d'utilisation acceptées sont dans « terms_acceptances ».
+  registeredAt    DateTime    @map("registered_at") @db.Timestamptz(6)
   createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -191,6 +192,16 @@ model User {
 
   closure        AccountClosure?  @relation("ClosedAccount")
   closedAccounts AccountClosure[] @relation("AccountCloser")
+
+  termsAcceptances       TermsAcceptance[]
+  publishedTermsVersions TermsVersion[]
+
+  ledgerAccounts   LedgerAccount[]
+  registeredAssets Asset[]
+
+  sentTransfers     Transfer[]      @relation("TransferSender")
+  receivedTransfers Transfer[]      @relation("TransferRecipient")
+  setTransferLimits TransferLimit[]
 
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
@@ -242,6 +253,60 @@ model AccountClosure {
   // Effacements à faire, par échéance.
   @@index([erasureDueAt])
   @@map("account_closures")
+}
+
+/// Version publiée des conditions d'utilisation.
+///
+/// Les versions se numérotent 1, 2, 3… sans trou ; la plus récente est en vigueur. Une version
+/// publiée est **immuable** : ni modifiée, ni retirée (corriger un texte, c'est publier la
+/// version suivante). La base l'impose elle-même, ainsi que la numérotation, l'heure de la
+/// publication, l'empreinte de chaque texte et le droit de publier — voir la migration
+/// « terms_of_use » et docs/DATABASE.md.
+model TermsVersion {
+  number             Int      @id
+  /// Vrai si chaque titulaire doit accepter cette version avant de continuer à utiliser son
+  /// compte ; faux si elle lui est seulement signalée. La version 1 l'exige toujours.
+  requiresAcceptance Boolean  @map("requires_acceptance")
+  /// Ce qui change dans cette version, en quelques phrases (français).
+  summaryFr          String   @map("summary_fr")
+  /// Texte français : il fait foi. Conservé tel qu'il a été publié, à l'octet près.
+  bodyFr             String   @map("body_fr")
+  /// Empreinte SHA-256 (hexadécimal) du texte français encodé en UTF-8, vérifiée par la base.
+  bodyFrSha256       String   @map("body_fr_sha256") @db.Char(64)
+  /// Traduction anglaise, facultative : résumé, texte et empreinte vont ensemble.
+  summaryEn          String?  @map("summary_en")
+  bodyEn             String?  @map("body_en")
+  bodyEnSha256       String?  @map("body_en_sha256") @db.Char(64)
+  /// Membre du personnel qui a publié la version ; NULL si elle l'a été par l'outil
+  /// d'exploitation en ligne de commande (rôle propriétaire de la base).
+  publishedBy        String?  @map("published_by") @db.Uuid
+  /// Heure de la publication, lue à l'horloge de la base.
+  publishedAt        DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
+
+  publisher   User?             @relation(fields: [publishedBy], references: [id], onDelete: Restrict)
+  acceptances TermsAcceptance[]
+
+  @@map("terms_versions")
+}
+
+/// Acceptation d'une version des conditions d'utilisation par un compte.
+///
+/// On n'accepte que la version en vigueur, et une acceptation ne se modifie pas. Elle ne
+/// s'efface qu'avec le compte : inscription jamais vérifiée, ou clôture (la trace de
+/// l'acceptation reste alors dans le journal d'audit).
+model TermsAcceptance {
+  userId        String   @map("user_id") @db.Uuid
+  versionNumber Int      @map("version_number")
+  /// Heure de l'acceptation, lue à l'horloge de la base.
+  acceptedAt    DateTime @default(now()) @map("accepted_at") @db.Timestamptz(6)
+
+  user    User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  version TermsVersion @relation(fields: [versionNumber], references: [number], onDelete: Restrict)
+
+  @@id([userId, versionNumber])
+  // Nombre d'acceptations d'une version (back-office).
+  @@index([versionNumber])
+  @@map("terms_acceptances")
 }
 
 /// Profil déclaré par l'utilisateur : identité, adresse, préférences. Ces informations sont
@@ -738,4 +803,229 @@ model KycDocument {
   @@index([caseId])
   @@index([sha256])
   @@map("kyc_documents")
+}
+
+// ---------------------------------------------------------------------------------------
+// Grand livre : actifs, plan de comptes, comptes, écritures en partie double
+// ---------------------------------------------------------------------------------------
+
+enum AssetKind {
+  /// Monnaie ayant cours légal (USD, CDF…).
+  FIAT
+  /// Cryptoactif (BTC, USDT…).
+  CRYPTO
+
+  @@map("asset_kind")
+}
+
+enum LedgerSide {
+  DEBIT
+  CREDIT
+
+  @@map("ledger_side")
+}
+
+enum LedgerAccountOwner {
+  /// Compte d'un titulaire.
+  USER
+  /// Compte de la plateforme elle-même.
+  PLATFORM
+
+  @@map("ledger_account_owner")
+}
+
+/// Actif dans lequel la plateforme tient des comptes. Tous les montants du grand livre sont des
+/// entiers d'unités minimales de l'actif (`scale` décimales) : un actif enregistré est donc
+/// **immuable** — ni modifié, ni retiré. La base l'impose, ainsi que le droit d'enregistrer —
+/// voir la migration « ledger » et docs/DATABASE.md.
+model Asset {
+  /// Code de l'actif : `USD`, `CDF`, `BTC`, `USDT`…
+  code         String    @id @db.VarChar(12)
+  name         String    @db.VarChar(64)
+  kind         AssetKind
+  /// Nombre de décimales de l'unité minimale : 2 pour USD et CDF, 8 pour BTC, 18 pour ETH.
+  scale        Int       @db.SmallInt
+  /// Membre du personnel qui a enregistré l'actif ; NULL s'il l'a été avec le rôle
+  /// propriétaire de la base (outil d'exploitation).
+  registeredBy String?   @map("registered_by") @db.Uuid
+  /// Heure de l'enregistrement, lue à l'horloge de la base.
+  registeredAt DateTime  @default(now()) @map("registered_at") @db.Timestamptz(6)
+
+  registrar      User?           @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
+  accounts       LedgerAccount[]
+  postings       LedgerPosting[]
+  transfers      Transfer[]
+  transferLimits TransferLimit[]
+
+  @@map("assets")
+}
+
+/// Plan de comptes : les types de compte du grand livre, et le sens qui augmente leur solde.
+/// Il ne change que par migration (copie du catalogue de @mgx/contracts) ; le rôle applicatif
+/// ne peut que le lire.
+model LedgerAccountType {
+  key         String             @id @db.VarChar(64)
+  owner       LedgerAccountOwner
+  /// Sens qui augmente le solde des comptes de ce type.
+  normalSide  LedgerSide         @map("normal_side")
+  description String             @db.VarChar(255)
+
+  accounts LedgerAccount[]
+
+  @@map("ledger_account_types")
+}
+
+/// Compte du grand livre : un par type, par actif et — pour un compte de titulaire — par
+/// titulaire (index uniques partiels, écrits dans la migration).
+///
+/// `balance` et `postingCount` ne sont que le reflet de la dernière ligne passée sur le compte :
+/// seule une ligne d'écriture les fait changer, et la base le vérifie à la validation de chaque
+/// transaction. Un solde n'est jamais négatif. Un compte ne se supprime pas.
+model LedgerAccount {
+  id           String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  typeKey      String     @map("type_key") @db.VarChar(64)
+  assetCode    String     @map("asset_code") @db.VarChar(12)
+  /// Titulaire ; NULL pour un compte de la plateforme.
+  userId       String?    @map("user_id") @db.Uuid
+  /// Sens qui augmente le solde : recopié du type à l'ouverture du compte.
+  normalSide   LedgerSide @map("normal_side")
+  /// Solde, en unités minimales de l'actif, exprimé dans le sens normal du compte.
+  balance      Decimal    @default(0) @db.Decimal(38, 0)
+  /// Nombre de lignes passées sur le compte : le rang de la dernière.
+  postingCount BigInt     @default(0) @map("posting_count")
+  /// Heure de l'ouverture, lue à l'horloge de la base.
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  type     LedgerAccountType @relation(fields: [typeKey], references: [key], onDelete: Restrict)
+  asset    Asset             @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  user     User?             @relation(fields: [userId], references: [id], onDelete: Restrict)
+  postings LedgerPosting[]
+
+  @@map("ledger_accounts")
+}
+
+/// Écriture du grand livre : l'en-tête de ses lignes. Elle déclare leur nombre ; à la validation
+/// de la transaction, la base vérifie qu'elles y sont toutes et que, pour chaque actif, le
+/// total des débits égale celui des crédits. Une écriture est **immuable** : une erreur se
+/// corrige par une écriture inverse, jamais par une modification.
+model LedgerEntry {
+  id             String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Clé qui rend l'écriture unique : la repasser ne l'écrit pas une seconde fois.
+  idempotencyKey String         @unique @map("idempotency_key") @db.VarChar(160)
+  /// Type de l'écriture : l'opération qui l'a produite (`transfer.internal`…).
+  kind           String         @db.VarChar(64)
+  /// Nombre de lignes de l'écriture, déclaré à sa création.
+  postingCount   Int            @map("posting_count") @db.SmallInt
+  actorType      AuditActorType @map("actor_type")
+  /// Identifiant de l'auteur ; NULL uniquement pour l'acteur SYSTEM.
+  actorId        String?        @map("actor_id") @db.VarChar(64)
+  requestId      String?        @map("request_id") @db.VarChar(128)
+  /// Références techniques de l'opération (identifiant du transfert…) : aucune donnée
+  /// personnelle — une écriture ne s'efface jamais.
+  metadata       Json           @default("{}")
+  /// Heure de l'écriture, lue à l'horloge de la base.
+  postedAt       DateTime       @default(now()) @map("posted_at") @db.Timestamptz(6)
+
+  postings LedgerPosting[]
+  transfer Transfer?
+
+  @@map("ledger_entries")
+}
+
+/// Ligne d'une écriture : elle débite ou crédite un compte d'un montant strictement positif.
+/// La base calcule elle-même son rang sur le compte (`accountSequence` : 1, 2, 3… sans trou) et
+/// le solde du compte après elle (`balanceAfter`). Une ligne est **immuable**.
+model LedgerPosting {
+  id              String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  entryId         String     @map("entry_id") @db.Uuid
+  /// Rang de la ligne dans l'écriture : 1, 2, 3…
+  lineNumber      Int        @map("line_number") @db.SmallInt
+  accountId       String     @map("account_id") @db.Uuid
+  /// Actif du montant : celui du compte — la base refuse tout autre.
+  assetCode       String     @map("asset_code") @db.VarChar(12)
+  side            LedgerSide
+  /// Montant, en unités minimales de l'actif : strictement positif.
+  amount          Decimal    @db.Decimal(38, 0)
+  accountSequence BigInt     @map("account_sequence")
+  balanceAfter    Decimal    @map("balance_after") @db.Decimal(38, 0)
+
+  entry   LedgerEntry   @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  account LedgerAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  asset   Asset         @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+
+  @@unique([entryId, lineNumber])
+  @@unique([accountId, accountSequence])
+  @@map("ledger_postings")
+}
+
+// ---------------------------------------------------------------------------------------
+// Transferts entre titulaires
+// ---------------------------------------------------------------------------------------
+
+/// Plafonds d'envoi d'un niveau de vérification d'identité dans un actif : par transfert, sur
+/// 24 heures glissantes, sur 31 jours glissants — en unités minimales de l'actif.
+///
+/// Tant qu'un niveau n'a pas de ligne dans un actif, ou que son plafond par transfert y est nul,
+/// ses comptes n'y envoient ni n'y reçoivent rien. Une ligne se modifie mais ne se supprime
+/// pas : refermer, c'est ramener les plafonds à zéro. La base impose elle-même l'ordre des
+/// trois montants, le droit de les fixer et l'heure de la modification — voir la migration
+/// « internal_transfers » et docs/DATABASE.md.
+model TransferLimit {
+  assetCode      String   @map("asset_code") @db.VarChar(12)
+  /// Niveau de vérification : de 0 (aucun niveau vérifié) à 3.
+  kycLevel       Int      @map("kyc_level") @db.SmallInt
+  perTransferMax Decimal  @map("per_transfer_max") @db.Decimal(38, 0)
+  dailyMax       Decimal  @map("daily_max") @db.Decimal(38, 0)
+  monthlyMax     Decimal  @map("monthly_max") @db.Decimal(38, 0)
+  /// Membre du personnel qui a fixé ces plafonds ; NULL s'ils l'ont été avec le rôle
+  /// propriétaire de la base (outil d'exploitation).
+  setBy          String?  @map("set_by") @db.Uuid
+  /// Heure de la dernière modification, lue à l'horloge de la base.
+  setAt          DateTime @default(now()) @map("set_at") @db.Timestamptz(6)
+
+  asset  Asset @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  setter User? @relation(fields: [setBy], references: [id], onDelete: Restrict)
+
+  @@id([assetCode, kycLevel])
+  @@map("transfer_limits")
+}
+
+/// Transfert de fonds entre deux titulaires : l'opération, et l'écriture du grand livre qui la
+/// réalise. **Immuable** : un transfert ne se modifie ni ne s'efface.
+///
+/// La base impose elle-même, à l'ajout : les plafonds du niveau de vérification de l'émetteur,
+/// que les deux comptes soient actifs, que le niveau du destinataire soit ouvert dans l'actif ;
+/// et, à la validation de la transaction, que l'écriture désignée soit bien celle de ce
+/// transfert — voir la migration « internal_transfers » et docs/DATABASE.md.
+model Transfer {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  senderId       String   @map("sender_id") @db.Uuid
+  recipientId    String   @map("recipient_id") @db.Uuid
+  assetCode      String   @map("asset_code") @db.VarChar(12)
+  /// Montant, en unités minimales de l'actif : strictement positif.
+  amount         Decimal  @db.Decimal(38, 0)
+  /// Écriture du grand livre qui réalise le transfert.
+  entryId        String   @unique @map("entry_id") @db.Uuid
+  /// Clé d'idempotence fournie par le client : unique pour un émetteur.
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(128)
+  /// Empreinte SHA-256 de la requête : la même clé ne vaut que pour la même requête.
+  requestDigest  Bytes    @map("request_digest")
+  /// Niveau de vérification de l'émetteur au moment du transfert : celui dont les plafonds
+  /// ont été appliqués.
+  senderLevel    Int      @map("sender_level") @db.SmallInt
+  /// Heure du transfert, lue à l'horloge de la base.
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sender    User        @relation("TransferSender", fields: [senderId], references: [id], onDelete: Restrict)
+  recipient User        @relation("TransferRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  asset     Asset       @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  entry     LedgerEntry @relation(fields: [entryId], references: [id], onDelete: Restrict)
+
+  @@unique([senderId, idempotencyKey])
+  // Cumul des envois d'un émetteur dans un actif, sur une fenêtre glissante (plafonds).
+  @@index([senderId, assetCode, createdAt])
+  // Transferts d'un compte, du plus récent au plus ancien (l'identifiant croît avec le temps).
+  @@index([senderId, id])
+  @@index([recipientId, id])
+  @@map("transfers")
 }

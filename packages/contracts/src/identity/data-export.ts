@@ -1,6 +1,8 @@
 import { isoDateSchema, isoDateTimeSchema, localeSchema, uuidSchema } from '@mgx/validation';
 import { z } from 'zod';
 
+import { exportedWalletSchema } from '../ledger/ledger.js';
+import { exportedTransfersSchema } from '../transfers/transfers.js';
 import {
   AT_MOST_ONE_SECOND_FACTOR,
   atMostOneSecondFactor,
@@ -10,13 +12,20 @@ import { ACCOUNT_TYPES, USER_STATUSES } from './auth.js';
 import { kycCaseSchema } from './kyc.js';
 import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { activityEntrySchema } from './profile.js';
+import { termsExportSchema } from './terms.js';
 
 export const dataExportRequestSchema = z
   .strictObject(holderProofShape)
   .refine(atMostOneSecondFactor, AT_MOST_ONE_SECOND_FACTOR);
 export type DataExportRequest = z.infer<typeof dataExportRequestSchema>;
 
-export const DATA_EXPORT_FORMAT_VERSION = 1;
+/**
+ * Version du format de la copie. `2` : les conditions d'utilisation acceptées figurent dans
+ * `terms` ; `account.termsAcceptedAt` a disparu. `3` : les portefeuilles du titulaire et leurs
+ * mouvements figurent dans `wallets`. `4` : ses transferts, envoyés et reçus, figurent dans
+ * `transfers`.
+ */
+export const DATA_EXPORT_FORMAT_VERSION = 4;
 
 /** Nombre maximal d'événements d'activité inclus dans une copie (les plus récents). */
 export const DATA_EXPORT_ACTIVITY_MAX_ENTRIES = 2000;
@@ -47,7 +56,6 @@ export const dataExportSchema = z.object({
     accountType: z.enum(ACCOUNT_TYPES),
     status: z.enum(USER_STATUSES),
     createdAt: isoDateTimeSchema,
-    termsAcceptedAt: isoDateTimeSchema,
     /** Rôles du back-office (vide pour un client). */
     roles: z.array(z.string()),
   }),
@@ -97,5 +105,19 @@ export const dataExportSchema = z.object({
     level: kycVerifiedLevelSchema,
     cases: z.array(kycCaseSchema),
   }),
+  /** Conditions d'utilisation : les versions que le compte a acceptées. */
+  terms: termsExportSchema,
+  /**
+   * Portefeuilles sur lesquels au moins un mouvement a été passé, dans l'ordre des codes
+   * d'actif, avec leurs mouvements — les plus récents si le portefeuille en compte davantage
+   * que la copie n'en contient.
+   */
+  wallets: z.array(exportedWalletSchema),
+  /**
+   * Transferts envoyés et reçus, du plus récent au plus ancien, avec l'adresse que porte
+   * aujourd'hui le compte de l'autre partie — les plus récents si le compte en compte davantage
+   * que la copie n'en contient.
+   */
+  transfers: exportedTransfersSchema,
 });
 export type DataExport = z.infer<typeof dataExportSchema>;

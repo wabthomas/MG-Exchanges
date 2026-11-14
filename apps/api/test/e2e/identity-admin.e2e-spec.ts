@@ -455,7 +455,8 @@ describe('Back-office des comptes — bout en bout', () => {
         );
         seen.push(...page.users.map((user) => user.id));
         cursor = page.nextCursor;
-      } while (cursor !== null);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (cursor !== null && seen.length <= total);
       expect(seen).toHaveLength(total);
       expect(new Set(seen).size).toBe(total);
     });
@@ -774,7 +775,7 @@ describe('Back-office des comptes — bout en bout', () => {
       await http
         .post('/api/v1/auth/register')
         .set(from(newClientIp()))
-        .send({ email, password: PASSWORD, countryCode: 'CD', acceptTerms: true })
+        .send({ email, password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 })
         .expect(202);
       const pending = await prisma.user.findUniqueOrThrow({ where: { email } });
       const refused = await post(alice.accessToken, `/admin/users/${pending.id}/suspend`, {

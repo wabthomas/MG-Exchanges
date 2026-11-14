@@ -20,6 +20,7 @@ import {
   revoke,
   submitted,
 } from '../support/kyc-sql.js';
+import { acceptTermsInSql, insertTermsVersion } from '../support/terms-sql.js';
 import {
   createTestDatabase,
   sqlState,
@@ -86,6 +87,8 @@ const ROWS: Record<string, (db: pg.Client, userId: string) => Promise<unknown>> 
       [userId],
     ),
   kyc_cases: (db, userId) => insertCase(db, userId, 1),
+  // L'acceptation de la version en vigueur des conditions d'utilisation.
+  terms_acceptances: (db, userId) => acceptTermsInSql(db, userId),
 };
 
 describe('Clôture d’un compte — règles portées par la base de données', () => {
@@ -99,6 +102,8 @@ describe('Clôture d’un compte — règles portées par la base de données', 
   beforeAll(async () => {
     database = await createTestDatabase();
     await asOwner(async (db) => {
+      // Une version des conditions d'utilisation, pour qu'un compte puisse l'accepter.
+      await insertTermsVersion(db);
       claire = await insertStaff(db, 'compliance');
       david = await insertStaff(db, 'compliance');
       support = await insertStaff(db, 'support');
@@ -124,7 +129,7 @@ describe('Clôture d’un compte — règles portées par la base de données', 
     const row: Record<string, unknown> = {
       email: `closure${String(sequence)}@example.cd`,
       country_code: 'CD',
-      terms_accepted_at: new Date(),
+      registered_at: new Date(),
       status: 'ACTIVE',
       email_verified_at: new Date(),
       ...overrides,

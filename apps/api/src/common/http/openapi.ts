@@ -34,10 +34,12 @@ const STATUS_DESCRIPTIONS: Readonly<Record<number, string>> = {
   401: 'Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).',
   403:
     'Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, ' +
-    '`MFA_ENROLLMENT_REQUIRED`).',
+    '`MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).',
   404: 'Not found (`NOT_FOUND`).',
   408: 'The request body took too long to arrive (`REQUEST_TIMEOUT`).',
-  409: 'The request conflicts with the current state of the resource (`CONFLICT`).',
+  409:
+    'The request conflicts with the current state of the resource (`CONFLICT`, ' +
+    '`TERMS_VERSION_NOT_CURRENT`).',
   413: 'The request body is too large (`PAYLOAD_TOO_LARGE`).',
   415: 'The content type of the request body is not accepted (`UNSUPPORTED_MEDIA_TYPE`).',
   422: 'Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).',

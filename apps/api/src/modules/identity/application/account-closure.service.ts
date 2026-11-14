@@ -40,6 +40,7 @@ const BLOCKER_MESSAGES: Record<AccountClosureBlocker, string> = {
   ROLE_HELD: 'it holds a back-office role, which must be removed first',
   VERIFICATION_PENDING_REVIEW:
     'an identity verification case awaits review, and must be decided first',
+  FUNDS_REMAINING: 'it still holds funds, which must be withdrawn or transferred first',
 };
 
 function blocked(blockers: readonly AccountClosureBlocker[]): AppError {

@@ -72,7 +72,7 @@ export async function createAdministrator(
     // L'opérateur répond de l'adresse : le compte est actif d'emblée.
     status: 'ACTIVE',
     emailVerifiedAt: now,
-    termsAcceptedAt: now,
+    registeredAt: now,
     passwordHash: await hasher.hash(password.data),
   });
   await users.grantRole(tx, user.id, BOOTSTRAP_ROLE, null);

@@ -3,6 +3,253 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 2 : transferts entre titulaires
+
+**Première opération qui déplace des fonds** — entre deux titulaires, à l'intérieur de la
+plateforme (ADR 0026). **Fermée par défaut**, et **aucun plafond n'est livré avec le code** :
+leurs valeurs restent à décider. **Aucune route ne crédite un portefeuille** : tant que les
+dépôts n'existent pas, il n'y a rien à transférer. Les **fonds réservés**, annoncés pour ce
+lot, n'y sont pas : un transfert immédiat n'en a pas l'usage, ils viendront avec la première
+opération en plusieurs temps.
+
+### Ajouté
+
+- **Transfert entre deux titulaires** : `POST /me/transfers` (`recipientEmail`, `assetCode`,
+  `amount`, `currentPassword`, `code` ou `recoveryCode`). Immédiat, définitif, sans frais :
+  une écriture du grand livre débite le portefeuille de l'émetteur et crédite celui du
+  destinataire, dans la même transaction que le transfert, son inscription au journal
+  d'audit et les messages aux deux parties.
+- **Clé d'idempotence fournie par le client** : en-tête `Idempotency-Key`, obligatoire (16 à
+  128 caractères). La même requête renvoyée sous la même clé ne transfère rien de plus : la
+  réponse est celle d'origine, avec l'en-tête `Idempotent-Replayed: true`. Une autre requête
+  sous la même clé répond `422 IDEMPOTENCY_KEY_REUSED`. Une requête refusée ne retient pas sa
+  clé.
+- **Preuve du titulaire à chaque transfert** : le mot de passe et, si la validation en deux
+  étapes est activée, un code — vérifiés avant tout examen de la requête.
+- **Plafonds par actif et par niveau de vérification** (0 à 3) : par transfert, sur 24 heures
+  glissantes, sur 31 jours glissants ; seuls comptent les envois. Un niveau sans plafonds
+  dans un actif n'y envoie ni n'y reçoit rien. **Ce sont des données du back-office** :
+  `GET /admin/transfer-limits`, `PUT /admin/transfer-limits/{assetCode}/{level}` (trois
+  montants, une justification ; effet immédiat ; des plafonds se remplacent, ils ne se
+  suppriment pas).
+- **Ce que je peux envoyer** : `GET /me/transfer-limits` — niveau du compte, plafonds, envois
+  des 24 dernières heures et des 31 derniers jours, montant encore admis, actif par actif.
+- **Mes transferts** : `GET /me/transfers` (envoyés et reçus, paginés) et
+  `GET /me/transfers/{transferId}`. Chaque partie voit l'adresse e-mail que porte aujourd'hui
+  le compte de l'autre — `null` s'il a été clôturé —, rien d'autre.
+- **Destinataire désigné par son adresse e-mail ; un seul refus**, quelle qu'en soit la
+  cause — adresse inconnue, compte suspendu, clôturé, pas encore vérifié, niveau fermé :
+  `422 RECIPIENT_UNAVAILABLE`, prononcé en dernier. Le dixième en 24 heures suspend les
+  transferts du compte pendant 24 heures.
+- Codes d'erreur nouveaux : `TRANSFER_NOT_PERMITTED` (403), `IDEMPOTENCY_KEY_REUSED`,
+  `INSUFFICIENT_FUNDS`, `TRANSFER_LIMIT_EXCEEDED`, `RECIPIENT_UNAVAILABLE` (422).
+- **Messages** : l'émetteur et le destinataire sont prévenus par e-mail, chacun dans sa
+  langue (`transfer_sent`, `transfer_received`).
+- **Bornes** : 60 demandes de transfert par minute et par adresse IP ; 30 transferts tentés
+  par heure et par compte.
+- Permissions nouvelles `transfer_limits.read` et `transfer_limits.write`, détenues par
+  `super_admin` seul.
+- **Règles portées par la base** (erreur `MGX10`) : plafonds positifs et croissants, fixés
+  par un compte actif détenant `transfer_limits.write` ou par le rôle propriétaire, jamais
+  supprimés ; transfert entre deux comptes actifs et distincts ; niveau de vérification de
+  l'émetteur recalculé par la base ; niveau ouvert, plafonds respectés — cumuls recomptés par
+  la base, à son horloge, sous le verrou de l'émetteur ; niveau du destinataire ouvert ; à la
+  validation de la transaction, un transfert a son écriture — exactement la sienne — et
+  toute écriture de transfert a son transfert ; transferts immuables.
+- CI : le parcours à travers Nginx ouvre les transferts, constate que rien ne part sans
+  plafonds, les fixe, les relit côté titulaire, et vérifie chaque refus — sans clé
+  d'idempotence, sans le bon mot de passe, sans plafonds, au-delà du plafond, au-delà du
+  solde, montant trop précis. Aucun transfert n'y aboutit : aucune route ne crédite un
+  portefeuille.
+- ADR 0026. Migration `20261114082147_internal_transfers`. Aucune dépendance nouvelle.
+
+### Modifié
+
+- Copie des données : `formatVersion` passe à `4` — `transfers` ajouté (transferts envoyés
+  et reçus, les 2 000 plus récents).
+- Historique du compte (`GET /me/activity`) : trois types de plus — `TRANSFER_SENT`,
+  `TRANSFER_FAILED` (preuve du titulaire refusée), `TRANSFER_REFUSED`.
+- `GET /admin/roles` : le catalogue compte dix-sept permissions.
+- CORS : `Idempotency-Key` s'ajoute aux en-têtes qu'une page peut envoyer,
+  `Idempotent-Replayed` à ceux qu'elle peut lire.
+- Portefeuilles : un mouvement peut désormais porter `kind: "transfer.internal"`.
+- Le parcours `infrastructure/ci/smoke-identity.sh` ouvre les transferts et **les laisse
+  ouverts** : il reste réservé à une pile de test.
+
+### Non réalisé
+
+- **Fonds réservés** — reportés à la première opération en plusieurs temps.
+- **Valeurs des plafonds** : aucune n'est fournie ; à arrêter par le propriétaire, avec la
+  conformité.
+- Ni dépôt, ni retrait, ni frais ; pas d'annulation d'un transfert, pas de délai de
+  rétractation, pas de bénéficiaires enregistrés, pas de message joint à un transfert.
+- Pas de double validation d'un changement de plafonds ; pas de plafond en réception, ni
+  tous actifs confondus ; pas de surveillance des transactions ni de filtrage.
+- Pas de crédit ni de débit manuel par le back-office ; pas de gel d'un portefeuille.
+
+## [Non publié] — Phase 3, lot 1 : grand livre en partie double
+
+**Aucune route ne déplace de fonds.** Ce lot livre l'endroit où les opérations écriront, et
+les règles qu'elles ne pourront pas enfreindre (ADR 0025). Les plafonds par niveau de
+vérification, le statut réglementaire et la liste des actifs à tenir restent à décider.
+
+### Ajouté
+
+- **Grand livre en partie double** : toute variation d'un solde est une écriture d'au moins
+  deux lignes, dont les débits égalent les crédits, actif par actif. Une écriture ne se
+  modifie ni ne s'efface ; chaque ligne garde son rang sur son compte et le solde qui en
+  résulte. Aucun compte ne devient négatif.
+- **Plan de comptes** : `user_available` (fonds dont un titulaire dispose),
+  `platform_custody` (fonds conservés pour les titulaires hors du grand livre),
+  `platform_fees` (frais gagnés). Il s'étendra avec les opérations.
+- **Actifs enregistrés par le back-office** : `POST /admin/ledger/assets` (code, libellé,
+  nature, nombre de décimales — 0 à 18 ; **définitif**) et `GET /admin/ledger/assets`.
+  Aucun actif n'est créé par migration.
+- **Portefeuilles du titulaire, en lecture** : `GET /me/wallets` — un portefeuille par actif
+  tenu, à zéro tant que rien n'y est passé — et `GET /me/wallets/{assetCode}/movements`, du
+  plus récent au plus ancien, paginés.
+- **Consultation par le back-office** : `GET /admin/ledger/accounts`,
+  `GET /admin/ledger/accounts/{accountId}/postings`, `GET /admin/ledger/entries/{entryId}`,
+  `GET /admin/ledger/trial-balance` (balance par actif et par type de compte). Chaque
+  consultation est inscrite au journal d'audit.
+- Permissions nouvelles `ledger.read` et `ledger.manage_assets`, détenues par `super_admin`
+  seul.
+- **`LedgerService`**, seul chemin du code vers un solde : `post` (dans sa propre
+  transaction) et `postWithin` (dans celle de l'opération). Écritures **idempotentes** par
+  leur clé ; comptes verrouillés dans un ordre unique — les titulaires, puis les comptes ;
+  fonds insuffisants et titulaire clôturé refusés sans rien écrire.
+- **Règles portées par la base** (erreurs `MGX08` et `MGX09`) : écriture entière et
+  équilibrée à la validation de la transaction ; ligne dans l'actif de son compte ; rang et
+  solde calculés par la base, sous le verrou du compte ; solde jamais négatif ; solde d'un
+  compte égal à celui de sa dernière ligne ; actifs, plan de comptes, écritures et lignes
+  immuables ; comptes jamais supprimés ; seul enregistre un actif un compte actif détenant
+  `ledger.manage_assets`, ou le rôle propriétaire ; dates lues à l'horloge de la base.
+- **Nouvelle tentative sur conflit** : `UnitOfWork.run(work, { retry })` relance entière une
+  transaction que PostgreSQL a annulée parce qu'elle en croisait une autre (interblocage,
+  conflit de sérialisation) — trois nouvelles tentatives au plus, espacées au hasard.
+- **Vérification périodique** : l'étape `verify-ledger` de la tâche horaire relit tout le
+  grand livre ; une anomalie est journalisée et inscrite au journal d'audit
+  (`ledger.verification_failed`). Rien n'est corrigé automatiquement.
+- **Clôture et grand livre** : un compte qui détient des fonds ne se clôt pas ; les écritures
+  ne s'effacent jamais ; dès qu'une écriture a été passée sur un compte du titulaire, la
+  trace de sa clôture garde son adresse et son numéro dix ans.
+- CI : le parcours à travers Nginx enregistre un actif, lit le portefeuille à zéro d'un
+  titulaire et la balance du grand livre.
+- ADR 0025. Migration `20261113160828_ledger`. Aucune dépendance nouvelle.
+
+### Modifié
+
+- **Une requête annulée parce qu'elle en croisait une autre répond `409 CONFLICT`**
+  (« The request conflicted with another one. Please try again. ») et non plus `500` : rien
+  n'a été écrit, elle est à refaire.
+- Copie des données : `formatVersion` passe à `3` — `wallets` ajouté (portefeuilles qui ont
+  servi et leurs mouvements, 2 000 au plus par portefeuille).
+- Clôture d'un compte : `409 CONFLICT` si l'un de ses portefeuilles détient encore des fonds
+  (motif `FUNDS_REMAINING`) ; `legalRetentionUntil` vaut aussi dix ans après la clôture
+  lorsqu'une écriture a été passée sur un de ses comptes.
+- Les routes des portefeuilles peuvent répondre `403 TERMS_ACCEPTANCE_REQUIRED` : elles sont
+  fermées au compte qui doit accepter les conditions d'utilisation.
+- `GET /admin/roles` : le catalogue compte quinze permissions.
+- Tâche horaire : une étape de plus, `verify-ledger`.
+
+### Non réalisé
+
+- **Aucune opération** : ni dépôt, ni retrait, ni transfert, ni frais. Les soldes valent
+  zéro. Pas d'en-tête `Idempotency-Key`, pas de fonds réservés, pas de plafonds : ils
+  viendront avec la première opération.
+- Pas d'écriture manuelle ni de correction par le back-office ; pas de rapprochement avec
+  les fonds réellement détenus ; pas d'alerte branchée sur une anomalie.
+
+## [Non publié] — Phase 2, lot 5 : conditions d'utilisation versionnées
+
+Le texte des conditions n'est pas fourni par ce lot, et la règle — faut-il accepter de nouveau
+à chaque changement ? — n'y est pas tranchée : le texte se publie comme une donnée, et la
+règle se choisit à chaque publication (ADR 0024).
+
+### Ajouté
+
+- **Versions publiées** : chaque version des conditions porte un numéro (1, 2, 3…), un texte
+  en français — il fait foi — et, facultativement, sa traduction anglaise, un résumé de ce
+  qui change, et sa règle `requiresAcceptance` : à accepter par chaque compte, ou seulement
+  signalée. La version en vigueur est la plus récente. **Une version publiée ne change plus
+  et ne se retire pas.**
+- **Lecture publique** : `GET /terms/current`, `GET /terms/versions`,
+  `GET /terms/versions/{number}` (`?locale=fr|en` ; le français est servi si la traduction
+  manque). Le texte est rendu à l'octet près, avec son empreinte SHA-256.
+- **Acceptation** : `GET /me/terms` dit où en est le compte ; `POST /me/terms/acceptance`
+  accepte la version en vigueur — et elle seule (`409 TERMS_VERSION_NOT_CURRENT` sinon).
+  L'acceptation est datée par la base, inscrite à l'historique et au journal d'audit avec
+  l'empreinte du texte.
+- **Accès conditionné, refus par défaut** : tant qu'un compte doit accepter, ses routes
+  répondent `403 TERMS_ACCEPTANCE_REQUIRED`, sauf celles qui déclarent rester ouvertes
+  (`@AllowBeforeTermsAcceptance()`) : voir son compte, accepter, se déconnecter, mot de passe,
+  sessions, validation en deux étapes, historique, **copie des données et clôture**. Le
+  back-office n'est pas concerné. Une route ajoutée plus tard est fermée d'office.
+- **Publication par le back-office** : `POST /admin/terms/versions` (définitif ; le numéro
+  publié est désigné par la requête, une publication ne se rejoue pas) et
+  `GET /admin/terms/versions` (auteur, règle, empreintes, nombre d'acceptations). Permission
+  nouvelle `terms.publish`, détenue par `super_admin` seul.
+- **Publication en ligne de commande** : `pnpm terms:publish`, à partir de fichiers, avec le
+  rôle propriétaire de la base — pour installer la première version avant l'ouverture.
+- **Règles portées par la base** (erreurs `MGX06` et `MGX07`) : numérotation sans trou ni
+  doublon, publications sérialisées ; versions immuables ; empreinte recalculée et comparée ;
+  seul publie un compte actif détenant `terms.publish`, ou le rôle propriétaire ; on n'accepte
+  que la version en vigueur ; une acceptation ne se modifie pas et ne s'efface qu'avec le
+  compte ; un compte ne se clôt pas en gardant une acceptation ; dates lues à l'horloge de la
+  base.
+- **Corps JSON volumineux lu après les gardes** : la publication admet un mébioctet ; son
+  corps n'est lu qu'après l'authentification et le contrôle des droits
+  (`common/http/deferred-json-body.ts`). La limite commune (100 Ko) vaut toujours ailleurs.
+- Reverse proxy : limite propre à la route de publication (1 100 Ko), corps transmis au fil
+  de l'eau.
+- CI : le parcours à travers Nginx publie un texte de 185 Ko et le relit à l'octet près,
+  vérifie les refus au-delà des limites, l'inscription liée à la version en vigueur, puis une
+  nouvelle version à accepter : compte arrêté, acceptation, reprise.
+- `infrastructure/ci/publish-terms-cli.sh` : publie une version avec l'outil en ligne de
+  commande dans la pile Compose, telle que `DEPLOYMENT.md` la donne — fichier monté en
+  lecture seule, numéro inexact refusé, texte servi par Nginx comparé au fichier. **Le
+  workflow ne l'appelle pas encore** : l'étape à y ajouter figure dans `DEPLOYMENT.md`.
+- ADR 0024. Migration `20261113043000_terms_of_use`. Aucune dépendance nouvelle.
+
+### Modifié — incompatible avec un client des lots précédents
+
+- **Inscription** : `acceptedTermsVersion` (numéro de la version lue) remplace
+  `acceptTerms: true`. `409 TERMS_VERSION_NOT_CURRENT` si ce n'est pas la version en vigueur ;
+  **`503 SERVICE_UNAVAILABLE` tant qu'aucune version n'est publiée**. Ces réponses sont les
+  mêmes que l'adresse soit libre ou déjà prise — y compris quand une version est publiée
+  pendant la demande.
+- **Comptes existants** : aucun n'a accepté de version. Dès la publication de la version 1,
+  chacun doit l'accepter avant de continuer — personnel compris, hors back-office.
+- Les routes du profil, du téléphone et de la vérification d'identité peuvent répondre
+  `403 TERMS_ACCEPTANCE_REQUIRED`.
+- `GET /me` et la réponse de connexion portent `termsAcceptanceRequired`.
+- Copie des données : `formatVersion` passe à `2` — `terms.acceptances` ajouté,
+  `account.termsAcceptedAt` retiré.
+- Fiche d'un compte au back-office : `terms` (`accepted`, `acceptanceRequired`) remplace
+  `termsAcceptedAt`.
+- Historique : type nouveau `TERMS_ACCEPTED`. Codes d'erreur nouveaux :
+  `TERMS_ACCEPTANCE_REQUIRED` (403), `TERMS_VERSION_NOT_CURRENT` (409).
+- `GET /admin/roles` : le catalogue compte treize permissions.
+- Base : la colonne `users.terms_accepted_at` est **renommée** `registered_at` (elle ne datait
+  que la demande d'inscription). **Cette migration n'est pas compatible avec la version
+  précédente de l'API : l'arrêter avant de migrer** (`DEPLOYMENT.md`).
+
+### Non réalisé
+
+- Aucun e-mail n'annonce une nouvelle version : le titulaire l'apprend à sa prochaine
+  connexion. Ni brouillon, ni date d'effet différée, ni double validation d'une publication.
+
+## [Non publié] — Intégration continue activée
+
+### Modifié
+
+- Le workflow de CI a quitté `infrastructure/ci/ci.yml` pour `.github/workflows/ci.yml` : il
+  s'exécute désormais sur chaque demande de fusion et sur `main`. Sa première exécution
+  (2026-11-13) est passée au vert sans correction — premières exécutions réelles de la
+  construction des images, de la pile Docker Compose, du parcours à travers le conteneur
+  Nginx et du moteur de migration natif de Prisma. Les scripts qu'il appelle restent dans
+  `infrastructure/ci/`.
+
 ## [Non publié] — Phase 2, lot 4 : clôture de compte, conservation légale, effacement, copie des données
 
 ### Ajouté

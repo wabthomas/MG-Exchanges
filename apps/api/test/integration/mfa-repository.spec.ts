@@ -38,7 +38,7 @@ describe('Second facteur — usage unique d’un code (PostgreSQL réel)', () =>
         email: `mfa-repository${String(sequence)}@example.cd`,
         countryCode: 'CD',
         status: 'ACTIVE',
-        termsAcceptedAt: now,
+        registeredAt: now,
         emailVerifiedAt: now,
         totp: {
           create: {

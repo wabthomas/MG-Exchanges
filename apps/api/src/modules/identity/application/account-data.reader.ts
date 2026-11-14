@@ -16,7 +16,6 @@ export interface AccountData {
     readonly accountType: AccountType;
     readonly status: UserStatus;
     readonly createdAt: Date;
-    readonly termsAcceptedAt: Date;
     readonly roles: readonly string[];
   };
   readonly profile: ProfileRecord | null;

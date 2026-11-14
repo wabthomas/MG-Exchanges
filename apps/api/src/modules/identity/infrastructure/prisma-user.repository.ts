@@ -7,6 +7,7 @@ import { Prisma } from '../../../generated/prisma/client.js';
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
 import {
   EmailAlreadyTakenError,
+  type HeldUser,
   type NewUser,
   type PendingRegistration,
   PhoneAlreadyVerifiedError,
@@ -39,9 +40,35 @@ export class PrismaUserRepository extends UserRepository {
     return db.user.findUnique({ where: { id: userId }, select: USER_FIELDS });
   }
 
+  async holdOpen(tx: DbClient, userIds: readonly string[]): Promise<HeldUser[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    // Si une clôture était en cours, la ligne rendue est celle qu'elle a validée.
+    return tx.$queryRaw<HeldUser[]>(Prisma.sql`
+      SELECT id::text AS id, status::text AS status
+      FROM users
+      WHERE id IN (${Prisma.join(userIds.map((id) => Prisma.sql`${id}::uuid`))})
+      ORDER BY id
+      FOR KEY SHARE
+    `);
+  }
+
   async findByEmail(db: DbClient, email: string): Promise<UserRecord | null> {
     const found = await db.user.findUnique({ where: { email }, select: USER_FIELDS });
     return found === null || found.status === 'CLOSED' ? null : found;
+  }
+
+  async findEmails(db: DbClient, userIds: readonly string[]): Promise<Map<string, string | null>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const found = await db.user.findMany({
+      where: { id: { in: [...new Set(userIds)] } },
+      select: { id: true, email: true, status: true },
+    });
+    // L'adresse d'un compte clôturé est une adresse factice : elle ne se montre pas.
+    return new Map(found.map(({ id, email, status }) => [id, status === 'CLOSED' ? null : email]));
   }
 
   async findByEmailWithPasswordHash(
@@ -97,7 +124,7 @@ export class PrismaUserRepository extends UserRepository {
     }
     await tx.userCredential.update({
       where: { userId },
-      data: { passwordHash, passwordChangedAt: registration.termsAcceptedAt },
+      data: { passwordHash, passwordChangedAt: registration.registeredAt },
     });
     return true;
   }
@@ -167,8 +194,8 @@ export class PrismaUserRepository extends UserRepository {
     limit: number,
   ): Promise<string[]> {
     const rows = await db.user.findMany({
-      where: { status: 'PENDING_VERIFICATION', termsAcceptedAt: { lt: registeredBefore } },
-      orderBy: { termsAcceptedAt: 'asc' },
+      where: { status: 'PENDING_VERIFICATION', registeredAt: { lt: registeredBefore } },
+      orderBy: { registeredAt: 'asc' },
       take: limit,
       select: { id: true },
     });
@@ -187,7 +214,7 @@ export class PrismaUserRepository extends UserRepository {
       FROM users
       WHERE id = ${userId}::uuid
         AND status = 'PENDING_VERIFICATION'
-        AND terms_accepted_at < ${registeredBefore}
+        AND registered_at < ${registeredBefore}
       FOR UPDATE
     `);
     if (locked.length === 0) {
@@ -195,6 +222,7 @@ export class PrismaUserRepository extends UserRepository {
     }
     await tx.verificationChallenge.deleteMany({ where: { userId } });
     await tx.userCredential.deleteMany({ where: { userId } });
+    await tx.termsAcceptance.deleteMany({ where: { userId } });
     await tx.user.delete({ where: { id: userId } });
     return true;
   }

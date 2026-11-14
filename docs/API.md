@@ -6,18 +6,19 @@ En développement, il est consultable de façon interactive sur `/api/docs`.
 
 ## Conventions
 
-| Sujet            | Règle                                                                                        |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| Base             | `/api/v{n}/…` — la version figure dans le chemin ; chaque contrôleur déclare la sienne       |
-| Format           | JSON uniquement (`Content-Type: application/json`) ; les formulaires ne sont pas interprétés |
-| Fichiers         | une seule route en reçoit — l'envoi d'une pièce de vérification : le fichier est le corps    |
-| Montants         | chaînes décimales canoniques (`"12.34"`), **jamais** des nombres JSON                        |
-| Horodatages      | ISO 8601 en UTC (`2026-01-31T12:00:00.000Z`)                                                 |
-| Identifiants     | UUID                                                                                         |
-| Authentification | `Authorization: Bearer <jeton d'accès>` sur **toute** route, sauf celles dites publiques     |
-| Entrées          | validées par schéma ; les propriétés inconnues sont refusées                                 |
-| Cache            | `Cache-Control: no-store` sur toutes les réponses                                            |
-| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`) ; 5 Mio pour une pièce de vérification           |
+| Sujet            | Règle                                                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base             | `/api/v{n}/…` — la version figure dans le chemin ; chaque contrôleur déclare la sienne                                                       |
+| Format           | JSON uniquement (`Content-Type: application/json`) ; les formulaires ne sont pas interprétés                                                 |
+| Fichiers         | une seule route en reçoit — l'envoi d'une pièce de vérification : le fichier est le corps                                                    |
+| Montants         | chaînes décimales canoniques (`"12.34"`), **jamais** des nombres JSON                                                                        |
+| Idempotence      | toute route qui déplace des fonds exige l'en-tête `Idempotency-Key` : la même requête, renvoyée sous la même clé, n'est exécutée qu'une fois |
+| Horodatages      | ISO 8601 en UTC (`2026-01-31T12:00:00.000Z`)                                                                                                 |
+| Identifiants     | UUID                                                                                                                                         |
+| Authentification | `Authorization: Bearer <jeton d'accès>` sur **toute** route, sauf celles dites publiques                                                     |
+| Entrées          | validées par schéma ; les propriétés inconnues sont refusées                                                                                 |
+| Cache            | `Cache-Control: no-store` sur toutes les réponses                                                                                            |
+| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`) ; 5 Mio pour une pièce de vérification ; 1 Mio pour la publication des conditions d'utilisation  |
 
 ### Identifiant de requête
 
@@ -31,7 +32,9 @@ par Nginx (celui de l'appelant est alors ignoré) et se retrouve dans les journa
 
 Limite globale par adresse IP (120 requêtes par minute par défaut). En-têtes de réponse :
 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (secondes). Au-delà :
-`429` avec l'en-tête `Retry-After`. Les routes sensibles appliqueront des limites dédiées.
+`429` avec l'en-tête `Retry-After`. Certaines routes appliquent leur propre limite, décrite
+avec chacune : inscription, connexion et codes, vérification du téléphone, lecture et
+publication des conditions d'utilisation, demandes de transfert.
 
 ## Erreurs
 
@@ -56,44 +59,57 @@ Les clients se fondent sur **`code`** — stable, jamais renommé — et non sur
 décider du comportement et de la traduction affichée. `errors` n'est présent que pour les
 erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 
-| Code                      | Statut | Signification                                             |
-| ------------------------- | ------ | --------------------------------------------------------- |
-| `VALIDATION_FAILED`       | 400    | entrée invalide (détail dans `errors`)                    |
-| `MALFORMED_REQUEST`       | 400    | requête illisible (JSON mal formé…)                       |
-| `INVALID_OR_EXPIRED_CODE` | 400    | code à usage unique refusé, quelle qu'en soit la cause    |
-| `UNAUTHENTICATED`         | 401    | jeton d'accès absent, invalide ou expiré                  |
-| `INVALID_CREDENTIALS`     | 401    | identifiant ou mot de passe erroné (sans préciser lequel) |
-| `FORBIDDEN`               | 403    | action non autorisée                                      |
-| `FEATURE_DISABLED`        | 403    | fonctionnalité non ouverte                                |
-| `EMAIL_NOT_VERIFIED`      | 403    | mot de passe correct, adresse e-mail non vérifiée         |
-| `ACCOUNT_DISABLED`        | 403    | mot de passe correct, compte suspendu                     |
-| `NOT_FOUND`               | 404    | ressource ou route inexistante                            |
-| `METHOD_NOT_ALLOWED`      | 405    |                                                           |
-| `NOT_ACCEPTABLE`          | 406    |                                                           |
-| `REQUEST_TIMEOUT`         | 408    | le corps de la requête a mis trop de temps à arriver      |
-| `CONFLICT`                | 409    | conflit avec l'état actuel                                |
-| `PAYLOAD_TOO_LARGE`       | 413    | corps trop volumineux                                     |
-| `UNSUPPORTED_MEDIA_TYPE`  | 415    | type de contenu non accepté (envoi d'une pièce)           |
-| `UNPROCESSABLE_ENTITY`    | 422    | requête comprise mais refusée par une règle métier        |
-| `COUNTRY_NOT_SUPPORTED`   | 422    | pays de résidence non desservi                            |
-| `RATE_LIMITED`            | 429    | trop de requêtes (voir `Retry-After`)                     |
-| `INTERNAL_ERROR`          | 500    | erreur inattendue                                         |
-| `MAINTENANCE`             | 503    | plateforme en maintenance                                 |
-| `SERVICE_UNAVAILABLE`     | 503    | service momentanément indisponible                        |
+| Code                        | Statut | Signification                                                                      |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `VALIDATION_FAILED`         | 400    | entrée invalide (détail dans `errors`)                                             |
+| `MALFORMED_REQUEST`         | 400    | requête illisible (JSON mal formé…)                                                |
+| `INVALID_OR_EXPIRED_CODE`   | 400    | code à usage unique refusé, quelle qu'en soit la cause                             |
+| `UNAUTHENTICATED`           | 401    | jeton d'accès absent, invalide ou expiré                                           |
+| `INVALID_CREDENTIALS`       | 401    | identifiant ou mot de passe erroné (sans préciser lequel)                          |
+| `FORBIDDEN`                 | 403    | action non autorisée                                                               |
+| `FEATURE_DISABLED`          | 403    | fonctionnalité non ouverte                                                         |
+| `EMAIL_NOT_VERIFIED`        | 403    | mot de passe correct, adresse e-mail non vérifiée                                  |
+| `ACCOUNT_DISABLED`          | 403    | mot de passe correct, compte suspendu                                              |
+| `MFA_ENROLLMENT_REQUIRED`   | 403    | back-office : la validation en deux étapes doit d'abord être activée               |
+| `TERMS_ACCEPTANCE_REQUIRED` | 403    | la version en vigueur des conditions d'utilisation doit d'abord être acceptée      |
+| `TRANSFER_NOT_PERMITTED`    | 403    | le niveau de vérification du compte n'est pas ouvert aux transferts dans cet actif |
+| `NOT_FOUND`                 | 404    | ressource ou route inexistante                                                     |
+| `METHOD_NOT_ALLOWED`        | 405    |                                                                                    |
+| `NOT_ACCEPTABLE`            | 406    |                                                                                    |
+| `REQUEST_TIMEOUT`           | 408    | le corps de la requête a mis trop de temps à arriver                               |
+| `CONFLICT`                  | 409    | conflit avec l'état actuel                                                         |
+| `TERMS_VERSION_NOT_CURRENT` | 409    | la version des conditions désignée n'est pas — ou plus — celle en vigueur          |
+| `PAYLOAD_TOO_LARGE`         | 413    | corps trop volumineux                                                              |
+| `UNSUPPORTED_MEDIA_TYPE`    | 415    | type de contenu non accepté (envoi d'une pièce, publication des conditions)        |
+| `UNPROCESSABLE_ENTITY`      | 422    | requête comprise mais refusée par une règle métier                                 |
+| `COUNTRY_NOT_SUPPORTED`     | 422    | pays de résidence non desservi                                                     |
+| `IDEMPOTENCY_KEY_REUSED`    | 422    | la clé d'idempotence a déjà servi à une requête différente                         |
+| `INSUFFICIENT_FUNDS`        | 422    | le portefeuille ne détient pas le montant demandé                                  |
+| `TRANSFER_LIMIT_EXCEEDED`   | 422    | le montant dépasse un plafond du niveau de vérification (`detail` dit lequel)      |
+| `RECIPIENT_UNAVAILABLE`     | 422    | le destinataire ne peut pas recevoir ce transfert — sans préciser pourquoi         |
+| `RATE_LIMITED`              | 429    | trop de requêtes (voir `Retry-After`)                                              |
+| `INTERNAL_ERROR`            | 500    | erreur inattendue                                                                  |
+| `MAINTENANCE`               | 503    | plateforme en maintenance                                                          |
+| `SERVICE_UNAVAILABLE`       | 503    | service momentanément indisponible                                                 |
 
 Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
+
+**Requêtes qui se croisent.** Lorsque PostgreSQL doit annuler une transaction parce qu'elle
+en croisait une autre — interblocage, conflit de sérialisation —, la requête répond
+`409 CONFLICT` (« The request conflicted with another one. Please try again. ») : **rien n'a
+été écrit en base**, elle est à refaire. Le cas est journalisé côté serveur.
 
 ### Erreurs produites par le reverse proxy
 
 Nginx répond lui-même dans cinq cas, **au même format** que l'API :
 
-| Cas                                                           | Réponse                                     |
-| ------------------------------------------------------------- | ------------------------------------------- |
-| route non relayée vers l'API                                  | `404 NOT_FOUND`                             |
-| corps de plus de 128 Ko (6 Mio pour l'envoi d'une pièce)      | `413 PAYLOAD_TOO_LARGE`                     |
-| limitation de débit amont dépassée                            | `429 RATE_LIMITED`, `Retry-After: 1`        |
-| plus de quatre envois de pièces simultanés depuis une adresse | `429 RATE_LIMITED`, `Retry-After: 1`        |
-| API injoignable, arrêtée ou trop lente                        | `503 SERVICE_UNAVAILABLE`, `Retry-After: 5` |
+| Cas                                                                                                                 | Réponse                                     |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| route non relayée vers l'API                                                                                        | `404 NOT_FOUND`                             |
+| corps de plus de 128 Ko (6 Mio pour l'envoi d'une pièce, 1 100 Ko pour la publication des conditions d'utilisation) | `413 PAYLOAD_TOO_LARGE`                     |
+| limitation de débit amont dépassée                                                                                  | `429 RATE_LIMITED`, `Retry-After: 1`        |
+| plus de quatre envois de pièces simultanés depuis une adresse                                                       | `429 RATE_LIMITED`, `Retry-After: 1`        |
+| API injoignable, arrêtée ou trop lente                                                                              | `503 SERVICE_UNAVAILABLE`, `Retry-After: 5` |
 
 Un test (`nginx-problem-details.spec.ts`) vérifie que la configuration du proxy respecte le
 contrat. Seules les erreurs de protocole détectées avant tout traitement (requête HTTP mal
@@ -141,17 +157,18 @@ Erreurs : `429`, `500`.
 En mode maintenance, toute route répond `503 MAINTENANCE` (le message saisi par
 l'administration figure dans `detail`), sauf : l'état de la plateforme, les sondes, la
 connexion (seconde étape comprise), le renouvellement et la fermeture de session,
-`GET /api/v1/me`, la gestion de la validation en deux étapes (`/api/v1/me/mfa/…`) et tout le
-back-office (`/api/v1/admin/…`) — c'est par lui qu'on sort de la maintenance, et un compte
-compromis doit pouvoir être suspendu à tout moment.
+`GET /api/v1/me`, la gestion de la validation en deux étapes (`/api/v1/me/mfa/…`), la lecture
+des conditions d'utilisation (`/api/v1/terms/…`) et tout le back-office (`/api/v1/admin/…`) —
+c'est par lui qu'on sort de la maintenance, et un compte compromis doit pouvoir être suspendu
+à tout moment.
 Une route rattachée à une fonctionnalité fermée répond `403 FEATURE_DISABLED`.
 
 ## Authentification et sessions
 
 **Refus par défaut.** Toute route exige un jeton d'accès, sauf celles explicitement
-publiques : état de la plateforme, sondes, inscription, vérification de l'adresse,
-connexion et sa seconde étape, renouvellement, mot de passe oublié. Sans jeton valide :
-`401 UNAUTHENTICATED`.
+publiques : état de la plateforme, sondes, lecture des conditions d'utilisation, inscription,
+vérification de l'adresse, connexion et sa seconde étape, renouvellement, mot de passe oublié.
+Sans jeton valide : `401 UNAUTHENTICATED`.
 
 **Jetons.** Une connexion ouvre une session et renvoie deux jetons opaques :
 
@@ -171,22 +188,29 @@ un stockage accessible au JavaScript ; un client mobile utilise le stockage séc
 
 ### Inscription
 
-Fermée tant que la fonctionnalité `registration` n'est pas ouverte (`403 FEATURE_DISABLED`).
+Fermée tant que la fonctionnalité `registration` n'est pas ouverte (`403 FEATURE_DISABLED`),
+et tant qu'aucune version des conditions d'utilisation n'est publiée
+(`503 SERVICE_UNAVAILABLE`) : on n'ouvre pas de compte sans texte à accepter.
 
-| Route                            | Corps                                                                        | Réponse                                              |
-| -------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------- |
-| `POST /api/v1/auth/register`     | `email`, `password`, `countryCode`, `acceptTerms: true`, `phone?`, `locale?` | `202` `{ nextStep: "VERIFY_EMAIL", codeTtlSeconds }` |
-| `POST /api/v1/auth/email/verify` | `email`, `code` (6 chiffres), `password`                                     | `204`                                                |
-| `POST /api/v1/auth/email/resend` | `email`                                                                      | `202`, même corps que l'inscription                  |
+| Route                            | Corps                                                                           | Réponse                                              |
+| -------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `POST /api/v1/auth/register`     | `email`, `password`, `countryCode`, `acceptedTermsVersion`, `phone?`, `locale?` | `202` `{ nextStep: "VERIFY_EMAIL", codeTtlSeconds }` |
+| `POST /api/v1/auth/email/verify` | `email`, `code` (6 chiffres), `password`                                        | `204`                                                |
+| `POST /api/v1/auth/email/resend` | `email`                                                                         | `202`, même corps que l'inscription                  |
 
+- **S'inscrire, c'est accepter les conditions d'utilisation en vigueur.**
+  `acceptedTermsVersion` est le numéro (`number`) de la version que la personne a eue sous
+  les yeux — celle rendue par `GET /api/v1/terms/current`. Si ce n'est pas, ou plus, la
+  version en vigueur : `409 TERMS_VERSION_NOT_CURRENT` — relire la version en vigueur,
+  l'afficher, recommencer. L'acceptation est enregistrée avec le compte, et datée par la base.
 - Le compte ne peut pas se connecter avant la vérification de l'adresse.
 - **La vérification exige le code _et_ le mot de passe choisi à l'inscription**
   (`401 INVALID_CREDENTIALS` s'il est erroné) : celui qui a rempli le formulaire et celui qui
   lit la boîte aux lettres doivent être la même personne. Sans cela, n'importe qui pourrait
   préparer un compte à l'adresse d'autrui et attendre que son titulaire l'active.
 - **S'inscrire à nouveau avec une adresse non encore vérifiée remplace l'inscription
-  précédente** — mot de passe, pays, langue, acceptation des conditions : seul le dernier mot
-  de passe saisi permettra la vérification.
+  précédente** — mot de passe, pays, langue, acceptation des conditions (celle du précédent
+  demandeur est effacée) : seul le dernier mot de passe saisi permettra la vérification.
 - Une inscription dont l'adresse n'est pas vérifiée dans les **7 jours** est supprimée.
 - Mot de passe : 10 à 128 caractères, aucune règle de composition ; sont refusés les mots de
   passe trop courants, trop répétitifs ou dérivés de l'adresse ou du téléphone.
@@ -200,16 +224,16 @@ identique dans tous les cas. Le titulaire d'un compte existant est, lui, préven
 
 ### Connexion et session
 
-| Route                                    | Auth. | Corps                                           | Réponse                                           |
-| ---------------------------------------- | ----- | ----------------------------------------------- | ------------------------------------------------- |
-| `POST /api/v1/auth/login`                | non   | `email`, `password`, `deviceName?`, `deviceId?` | `200` — voir `status` ci-dessous                  |
-| `POST /api/v1/auth/mfa/verify`           | non   | `mfaToken`, et `code` **ou** `recoveryCode`     | `200` `{ status, tokens, sessionId, user }`       |
-| `POST /api/v1/auth/refresh`              | non   | `refreshToken`                                  | `200` `{ tokens }`                                |
-| `POST /api/v1/auth/logout`               | oui   | —                                               | `204`                                             |
-| `GET /api/v1/me`                         | oui   | —                                               | compte, rôles, permissions, `secondFactorEnabled` |
-| `GET /api/v1/me/sessions`                | oui   | —                                               | sessions ouvertes (« mes appareils »)             |
-| `DELETE /api/v1/me/sessions/{sessionId}` | oui   | —                                               | `204`                                             |
-| `POST /api/v1/me/sessions/revoke-others` | oui   | —                                               | `200` `{ revoked }`                               |
+| Route                                    | Auth. | Corps                                           | Réponse                                                                      |
+| ---------------------------------------- | ----- | ----------------------------------------------- | ---------------------------------------------------------------------------- |
+| `POST /api/v1/auth/login`                | non   | `email`, `password`, `deviceName?`, `deviceId?` | `200` — voir `status` ci-dessous                                             |
+| `POST /api/v1/auth/mfa/verify`           | non   | `mfaToken`, et `code` **ou** `recoveryCode`     | `200` `{ status, tokens, sessionId, user }`                                  |
+| `POST /api/v1/auth/refresh`              | non   | `refreshToken`                                  | `200` `{ tokens }`                                                           |
+| `POST /api/v1/auth/logout`               | oui   | —                                               | `204`                                                                        |
+| `GET /api/v1/me`                         | oui   | —                                               | compte, rôles, permissions, `secondFactorEnabled`, `termsAcceptanceRequired` |
+| `GET /api/v1/me/sessions`                | oui   | —                                               | sessions ouvertes (« mes appareils »)                                        |
+| `DELETE /api/v1/me/sessions/{sessionId}` | oui   | —                                               | `204`                                                                        |
+| `POST /api/v1/me/sessions/revoke-others` | oui   | —                                               | `200` `{ revoked }`                                                          |
 
 La réponse de `POST /auth/login` se lit par son champ **`status`** (d'autres valeurs pourront
 s'ajouter sans changement de version) :
@@ -234,6 +258,10 @@ Un code refusé répond `400 INVALID_OR_EXPIRED_CODE` ; un jeton expiré, épuis
   15 minutes ; 20 échecs en une heure bloquent le compte une heure pour tous. Réponse :
   `429 RATE_LIMITED` avec `Retry-After`. Pendant le blocage, même le bon mot de passe est refusé.
 - `EMAIL_NOT_VERIFIED` et `ACCOUNT_DISABLED` ne sont renvoyés qu'à qui présente le bon mot de passe.
+- `user.termsAcceptanceRequired` (réponse de connexion, `GET /me`) vaut `true` si le compte
+  doit accepter la version en vigueur des conditions d'utilisation avant de continuer : la
+  connexion aboutit, mais la plupart des routes du compte lui sont fermées jusque-là — voir
+  « Conditions d'utilisation ».
 - Un compte **clôturé** n'existe plus pour la connexion : son ancienne adresse reçoit
   `401 INVALID_CREDENTIALS`, comme une adresse inconnue — jusqu'à ce qu'un nouveau compte
   l'utilise.
@@ -313,8 +341,10 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   `409 CONFLICT` s'il l'est déjà ailleurs — ce que seul le détenteur du numéro peut apprendre.
 - **Historique.** Événements de sécurité du compte, du plus récent au plus ancien : connexions
   (y compris échouées), mot de passe, second facteur, profil, téléphone, vérification
-  d'identité (dépôt, acceptation, refus, retrait), interventions du support. La liste des
-  types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
+  d'identité (dépôt, acceptation, refus, retrait), acceptation des conditions d'utilisation
+  (`TERMS_ACCEPTED`), transferts — envoyé (`TRANSFER_SENT`), demandé sans la preuve du
+  titulaire (`TRANSFER_FAILED`), refusé (`TRANSFER_REFUSED`) —, interventions du support. La
+  liste des types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
   l'appareil d'origine — sauf pour une intervention du personnel. Ce qu'un membre du
   personnel fait au compte d'un client figure dans l'historique de ce client, pas dans le sien.
   Pagination par curseur : `before` = `nextCursor` de la page précédente ; `limit` ≤ 100.
@@ -335,10 +365,18 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   erronés sont comptés comme ailleurs (`429 RATE_LIMITED` avec `Retry-After`) et inscrits à
   l'historique du compte.
 - **Copie des données.** Un document JSON (`Content-Disposition: attachment`,
-  `mg-exchange-data.json`) : `formatVersion` (`1`), `generatedAt`, `account`, `profile`,
+  `mg-exchange-data.json`) : `formatVersion` (`4`), `generatedAt`, `account`, `profile`,
   `security`, `sessions`, `activity` (les 2 000 événements les plus récents ; `truncated`
-  indique s'il en existe de plus anciens) et `verification` (niveau et dossiers). Elle ne
-  contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
+  indique s'il en existe de plus anciens), `verification` (niveau et dossiers), `terms`
+  (`acceptances` : chaque version des conditions d'utilisation acceptée et sa date, de la
+  plus récente à la plus ancienne), `wallets` (chaque portefeuille sur lequel au moins un
+  mouvement a été passé : son actif, son solde, et ses mouvements du plus récent au plus
+  ancien — les 2 000 plus récents ; `truncated` indique s'il en existe de plus anciens) et
+  `transfers` (`items` : les transferts envoyés et reçus, du plus récent au plus ancien, tels
+  que les rend `GET /api/v1/me/transfers` — les 2 000 plus récents ; `truncated` indique s'il
+  en existe de plus anciens). Le format `2` a ajouté `terms` et retiré
+  `account.termsAcceptedAt` ; le format `3` a ajouté `wallets` ; le format `4`, `transfers`.
+  Elle ne contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
   joints aux dossiers y sont **décrits, pas inclus**. Au plus **3 copies par 24 heures**
   (`429` ensuite). Chaque copie figure dans l'historique et est signalée au titulaire par
   e-mail, avec l'adresse IP d'origine. `503 SERVICE_UNAVAILABLE` si le compte a déclaré une
@@ -351,16 +389,101 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   - un dossier de vérification jamais examiné (en préparation ou déposé) est effacé avec ses
     pièces ; ceux sur lesquels une décision a été prise sont conservés jusqu'à
     `legalRetentionUntil` (dix ans après la clôture ; `null` s'il n'y en a pas) ;
+  - **les écritures du grand livre ne s'effacent jamais.** Dès qu'un mouvement a été passé
+    sur un portefeuille du compte, `legalRetentionUntil` vaut dix ans après la clôture, et
+    l'ancienne adresse et l'ancien numéro sont gardés jusque-là : c'est ce qui permet,
+    pendant ce temps, de rattacher une opération à une personne ;
   - ce qui reste — l'ancienne adresse, l'ancien numéro, les dossiers conservés — est effacé à
     partir de `erasureDueAt` (le terme légal, et jamais moins de 30 jours après la clôture) ;
   - le titulaire reçoit un e-mail de confirmation à son ancienne adresse.
 
   `409 CONFLICT` si le compte détient un rôle du back-office : il lui est d'abord retiré.
+  `409 CONFLICT` si l'un de ses portefeuilles **détient encore des fonds** : ils doivent
+  d'abord être retirés ou transférés (« it still holds funds, which must be withdrawn or
+  transferred first »).
   `409 CONFLICT` aussi, plus rarement, si une autre requête modifie le compte au même instant
   et tarde à s'achever : rien n'a changé, la demande est à refaire.
 
 - Ces deux routes suivent le mode maintenance (`503 MAINTENANCE`) ; le back-office, lui, peut
   toujours clore un compte.
+- Elles restent ouvertes à un compte qui n'a pas accepté la version en vigueur des conditions
+  d'utilisation : qui refuse un nouveau texte doit pouvoir emporter ses données et partir.
+
+## Conditions d'utilisation
+
+Les conditions d'utilisation sont **versionnées** : chaque version porte un numéro (1, 2, 3…,
+sans trou), un texte en français — qui fait foi — et, s'il a été fourni, sa traduction
+anglaise, un résumé de ce qui change, et une **règle** fixée à sa publication :
+
+- `requiresAcceptance: true` — chaque compte doit accepter cette version avant de continuer ;
+- `requiresAcceptance: false` — elle est seulement signalée comme la version en vigueur : un
+  compte qui a accepté une version antérieure n'est pas interrompu.
+
+La version en vigueur est la plus récente. Une version publiée ne change plus jamais et ne se
+retire pas : corriger un texte, c'est publier la version suivante. La première version exige
+toujours d'être acceptée, et une inscription accepte toujours la version en vigueur, quelle
+que soit sa règle.
+
+### Lire les conditions (sans compte)
+
+| Route                                 | Réponse                                                                          |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| `GET /api/v1/terms/current`           | la version en vigueur et son texte ; `404` tant qu'aucune n'est publiée          |
+| `GET /api/v1/terms/versions`          | `{ versions }` — les 100 plus récentes, sans leur texte, la plus récente d'abord |
+| `GET /api/v1/terms/versions/{number}` | une version, en vigueur ou passée, et son texte ; `404` si elle n'existe pas     |
+
+- Paramètre `?locale=fr|en` (défaut `fr`). Une version sans traduction dans la langue demandée
+  est servie **en français** ; le champ `locale` de la réponse dit quelle langue a été servie,
+  `locales` celles qui existent.
+- Une version : `number`, `publishedAt`, `requiresAcceptance`, `current`, `locales`, `locale`,
+  `summary`, et — hors liste — `body` et `sha256`. Le texte est rendu **tel qu'il a été
+  publié, à l'octet près** (texte brut ou Markdown : l'API ne l'interprète pas) ; `sha256` est
+  l'empreinte SHA-256 de `body` encodé en UTF-8.
+- Ces routes restent ouvertes pendant la maintenance. Au plus 60 lectures par minute et par
+  client (`429` ensuite).
+
+### Mon compte et les conditions
+
+| Route                              | Corps     | Réponse                                     |
+| ---------------------------------- | --------- | ------------------------------------------- |
+| `GET /api/v1/me/terms`             | —         | `{ current, accepted, acceptanceRequired }` |
+| `POST /api/v1/me/terms/acceptance` | `version` | `200`, même corps                           |
+
+- `current` : la version en vigueur (`number`, `publishedAt`, `requiresAcceptance`), `null`
+  tant qu'aucune n'est publiée. `accepted` : la dernière version acceptée par le compte
+  (`number`, `acceptedAt`), ou `null`. `acceptanceRequired` : le compte doit accepter la
+  version en vigueur avant de continuer.
+- **Quand faut-il accepter ?** Dès qu'une version publiée exige d'être acceptée et que le
+  compte n'a accepté ni elle, ni une version publiée depuis. Accepter une version, c'est
+  accepter le texte en vigueur ce jour-là : il tient lieu de ceux qui l'ont précédé.
+- **Accepter.** `version` est le numéro du texte que le titulaire a eu sous les yeux. Ce doit
+  être la version en vigueur : sinon `409 TERMS_VERSION_NOT_CURRENT` — relire
+  `GET /terms/current`, afficher ce texte, recommencer. On n'accepte pas un texte qu'on n'a
+  pas pu lire. Accepter deux fois la même version ne change rien : la première acceptation et
+  sa date font foi. Une version « pour information » peut être acceptée, sans obligation.
+- L'acceptation est datée par la base, inscrite à l'historique du compte (`TERMS_ACCEPTED`)
+  et au journal d'audit avec l'empreinte du texte accepté.
+- **Tant que le compte doit accepter**, ses routes répondent
+  `403 TERMS_ACCEPTANCE_REQUIRED` — avant même la validation de la requête. Ne lui restent
+  ouvertes que :
+
+  | Reste ouvert                            | Routes                                                                            |
+  | --------------------------------------- | --------------------------------------------------------------------------------- |
+  | voir où il en est, accepter             | `GET /me`, `GET /me/terms`, `POST /me/terms/acceptance`                           |
+  | se déconnecter, changer de mot de passe | `POST /auth/logout`, `POST /auth/password/change`                                 |
+  | ses sessions                            | `GET /me/sessions`, `DELETE /me/sessions/{id}`, `POST /me/sessions/revoke-others` |
+  | la validation en deux étapes            | `/me/mfa/…`                                                                       |
+  | son historique                          | `GET /me/activity`                                                                |
+  | emporter ses données, partir            | `POST /me/data-export`, `POST /me/close`                                          |
+
+  Lui sont fermés : le profil, le numéro de téléphone, la vérification d'identité, les
+  portefeuilles — et, par défaut, **toute route ajoutée par la suite** (elle doit déclarer explicitement qu'elle reste
+  ouverte). Les routes publiques ne sont pas concernées, ni le back-office : le personnel y
+  agit pour la plateforme, non comme client.
+
+- Ces deux routes suivent le mode maintenance (`503 MAINTENANCE`).
+- Un compte clôturé n'a plus rien à accepter ; la clôture efface ses acceptations, dont la
+  trace reste au journal d'audit.
 
 ## Vérification d'identité (KYC)
 
@@ -446,6 +569,156 @@ y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
 - Le dossier d'un autre compte « n'existe pas » (`404`). Sans stockage chiffré configuré
   côté serveur, tout sauf la situation répond `503 SERVICE_UNAVAILABLE`.
 
+## Portefeuilles
+
+**Lecture seule.** Les soldes sont ceux du grand livre de la plateforme. **Aucune route ne
+dépose ni ne retire de fonds** : la seule opération qui modifie un solde à ce jour est le
+transfert entre titulaires (section suivante), qui ne fait que déplacer ce qui s'y trouve
+déjà.
+
+| Route                                          | Réponse                             |
+| ---------------------------------------------- | ----------------------------------- |
+| `GET /api/v1/me/wallets`                       | `{ wallets }`                       |
+| `GET /api/v1/me/wallets/{assetCode}/movements` | `{ wallet, movements, nextCursor }` |
+
+- **Un portefeuille par actif** dans lequel la plateforme tient des comptes, dans l'ordre des
+  codes : `asset` (`code`, `name`, `kind` — `FIAT` ou `CRYPTO` —, `scale`) et `available`, ce
+  dont le titulaire dispose. Un portefeuille vaut zéro tant qu'aucun mouvement n'y a été
+  passé ; la liste est vide tant qu'aucun actif n'est enregistré.
+- **Montants** : des chaînes décimales à exactement `asset.scale` décimales — `"0.00"` pour
+  un actif à deux décimales, `"0.00000000"` pour un actif à huit —, jamais des nombres JSON.
+- **Mouvements**, du plus récent au plus ancien : `id`, `entryId`, `kind`, `side`, `amount`,
+  `balanceAfter`, `postedAt`. `side` se lit comme sur un relevé de compte : `CREDIT`, des
+  fonds entrent ; `DEBIT`, des fonds sortent. `amount` est toujours positif ; `balanceAfter`
+  est le solde du portefeuille juste après le mouvement — le premier mouvement de la première
+  page porte donc le solde actuel (`wallet.available`). `kind` nomme l'opération qui a
+  produit le mouvement — `transfer.internal` pour un transfert, dont `entryId` est aussi
+  celui que porte le transfert ; des mouvements de même `entryId` appartiennent à la même
+  opération.
+- **Pagination** : `limit` (1 à 100, 20 par défaut) et `after`, le `nextCursor` de la page
+  précédente — `null` à la dernière page. Tout autre paramètre, et un curseur qui ne vient
+  pas d'une page précédente, sont refusés (`400 VALIDATION_FAILED`).
+- `404 NOT_FOUND` pour un actif que la plateforme ne tient pas ; `400 VALIDATION_FAILED`
+  pour un code d'actif mal formé (2 à 12 caractères : une lettre majuscule, puis des lettres
+  majuscules ou des chiffres).
+- Ces routes suivent le mode maintenance (`503 MAINTENANCE`) et sont fermées au compte qui
+  doit encore accepter les conditions d'utilisation (`403 TERMS_ACCEPTANCE_REQUIRED`). Elles
+  ne dépendent d'aucune fonctionnalité à ouvrir : elles ne font que lire.
+
+## Transferts
+
+Un titulaire envoie des fonds à un autre titulaire, **à l'intérieur de la plateforme**. Un
+transfert est **immédiat, définitif et sans frais** : il ne s'annule pas.
+
+Pour qu'un transfert aboutisse, trois choses doivent avoir été décidées par l'administration :
+l'actif est enregistré ; des plafonds sont fixés, dans cet actif, pour le niveau de
+vérification de l'émetteur **et** pour celui du destinataire ; la fonctionnalité
+`internalTransfers` est ouverte. **Aucune ne l'est par défaut**, et aucun plafond n'est livré
+avec le code.
+
+| Route                                   | Corps                                                                                | Réponse                          |
+| --------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------- |
+| `POST /api/v1/me/transfers`             | `recipientEmail`, `assetCode`, `amount`, `currentPassword`, `code` \| `recoveryCode` | `201` le transfert               |
+| `GET /api/v1/me/transfers`              | `?limit=&after=`                                                                     | `{ transfers, nextCursor }`      |
+| `GET /api/v1/me/transfers/{transferId}` | —                                                                                    | le transfert                     |
+| `GET /api/v1/me/transfer-limits`        | —                                                                                    | `{ enabled, level, allowances }` |
+
+```http
+POST /api/v1/me/transfers
+Idempotency-Key: 0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d
+
+{
+  "recipientEmail": "destinataire@example.cd",
+  "assetCode": "USD",
+  "amount": "25.50",
+  "currentPassword": "…"
+}
+```
+
+```json
+{
+  "id": "0195f3a2-8d2f-7e4b-8c2d-3a5f7b9c1d2e",
+  "direction": "SENT",
+  "asset": { "code": "USD", "name": "US dollar", "kind": "FIAT", "scale": 2 },
+  "amount": "25.50",
+  "counterparty": { "email": "destinataire@example.cd" },
+  "entryId": "0195f3a2-8d30-7f5c-9d3e-4b6a8c0d2e3f",
+  "createdAt": "2026-01-31T12:00:00.000Z"
+}
+```
+
+- **Clé d'idempotence — obligatoire.** L'en-tête `Idempotency-Key` porte une valeur choisie
+  par le client, **nouvelle pour chaque transfert voulu** : 16 à 128 caractères — lettres,
+  chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un chiffre ; un UUID convient.
+  - **Renvoyer la même requête sous la même clé ne transfère rien de plus** : la réponse est
+    celle d'origine — `201`, le même transfert — avec l'en-tête `Idempotent-Replayed: true`.
+    C'est ce qu'un client fait lorsqu'il n'a pas reçu de réponse : il renvoie, sous la même
+    clé.
+  - « La même requête » : le même destinataire, le même actif, le même montant (`"25.5"` et
+    `"25.50"` sont le même montant). Une **autre** requête sous une clé déjà employée répond
+    `422 IDEMPOTENCY_KEY_REUSED`.
+  - Une clé vaut pour le compte qui la présente, et **n'expire pas**. Une requête **refusée**
+    ne retient pas sa clé : corrigée, elle peut être renvoyée sous la même.
+  - En-tête absent, répété ou mal formé : `400 VALIDATION_FAILED`, `errors[0].path` valant
+    `Idempotency-Key`.
+- **Preuve du titulaire.** Comme pour la copie des données et la clôture : `currentPassword`
+  et — si la validation en deux étapes est activée — `code` **ou** `recoveryCode`, à chaque
+  transfert, rejoué ou non. Elle est vérifiée **avant tout le reste**. Mêmes réponses :
+  `401 INVALID_CREDENTIALS`, `422 UNPROCESSABLE_ENTITY` (second facteur attendu mais absent),
+  `400 INVALID_OR_EXPIRED_CODE`, `429 RATE_LIMITED`.
+- **Montant.** Une chaîne décimale strictement positive, d'au plus `asset.scale` décimales :
+  rien n'est arrondi. `"25.001"` est refusé pour un actif à deux décimales
+  (`400 VALIDATION_FAILED` sur `amount`) ; des zéros en trop (`"25.500"`) sont admis. Un actif
+  que la plateforme ne tient pas : `400 VALIDATION_FAILED` sur `assetCode`.
+- **Plafonds.** Ceux du niveau de vérification de l'émetteur, dans l'actif : par transfert,
+  sur 24 heures glissantes, sur 31 jours glissants — chacun inclus. Seuls comptent les
+  envois. Niveau sans plafond, ou refermé : `403 TRANSFER_NOT_PERMITTED`. Plafond dépassé :
+  `422 TRANSFER_LIMIT_EXCEEDED`, dont `detail` dit lequel.
+- **Fonds.** `422 INSUFFICIENT_FUNDS` si le portefeuille ne détient pas le montant. Il n'y a
+  pas de découvert.
+- **Destinataire.** Désigné par son adresse e-mail. Qu'elle soit inconnue, que le compte soit
+  suspendu, clôturé ou pas encore vérifié, ou que son niveau de vérification ne soit pas
+  ouvert dans l'actif, la réponse est **la même** : `422 RECIPIENT_UNAVAILABLE` (« This
+  recipient cannot receive transfers. »). Elle vient **en dernier**, après les plafonds et les
+  fonds. Le **dixième** refus de ce type en 24 heures suspend tous les transferts du compte
+  pendant 24 heures (`429`). Se désigner soi-même : `422 UNPROCESSABLE_ENTITY`.
+- **Ordre des refus** : session (`401`), conditions d'utilisation à accepter (`403`),
+  fonctionnalité fermée (`403 FEATURE_DISABLED`) — avant tout examen de la requête ; forme
+  de l'en-tête et du corps ; preuve du titulaire ; actif, précision du montant, transfert à
+  soi-même ; clé déjà employée ; bornes du compte ; puis niveau, plafonds, fonds,
+  destinataire.
+- **Bornes** : 60 demandes par minute et par adresse IP ; 30 transferts tentés par heure et
+  par compte, aboutis ou refusés — une requête rejouée ne compte pas. Au-delà : `429` avec
+  `Retry-After`.
+- **`409 CONFLICT`** : le compte a été clôturé pendant la requête (« This account is
+  closed. ») ; ou son état a changé entre l'examen et l'écriture — niveau retiré, plafond
+  abaissé — (« …the account changed meanwhile. Please try again. »). Dans les deux cas **rien
+  n'a été transféré** ; dans le second, la requête se renvoie telle quelle. Un compte
+  suspendu pendant la requête reçoit `403 ACCOUNT_DISABLED`.
+- **Le transfert** : `id` ; `direction` — `SENT` ou `RECEIVED`, selon qui le lit ; `asset` ;
+  `amount`, à exactement `asset.scale` décimales ; `counterparty.email`, l'adresse que porte
+  **aujourd'hui** le compte de l'autre partie — `null` s'il a été clôturé depuis ; `entryId`,
+  l'écriture du grand livre, que portent aussi les mouvements des deux portefeuilles ;
+  `createdAt`. Aucun nom, aucun libellé : un transfert n'a pas de message.
+- **Mes transferts** : envoyés et reçus, du plus récent au plus ancien ; `limit` (1 à 100,
+  20 par défaut) et `after`, le `nextCursor` de la page précédente. Un transfert dont on
+  n'est ni l'émetteur ni le destinataire n'existe pas : `404 NOT_FOUND`.
+- **Ce que je peux envoyer** (`GET /api/v1/me/transfer-limits`) : `enabled` — la
+  fonctionnalité est ouverte ; `level` — le niveau de vérification du compte, de 0 à 3 ;
+  `allowances`, un élément par actif tenu, dans l'ordre des codes : `asset`, `limit`
+  (`perTransfer`, `daily`, `monthly` — ou `null` si ce niveau n'a pas de plafonds dans
+  l'actif : il n'y envoie ni n'y reçoit rien), `used` (`last24Hours`, `last31Days`) et
+  `remaining`, le plus grand montant que les plafonds admettent à cet instant — sans égard au
+  solde du portefeuille.
+- **Les deux parties sont prévenues par e-mail**, chacune dans sa langue ; le message de
+  l'émetteur dit quoi faire s'il n'est pas l'auteur du transfert. Un transfert envoyé, une
+  preuve refusée et un transfert refusé figurent dans l'historique du compte.
+- **Navigateurs.** `Idempotency-Key` fait partie des en-têtes qu'une page peut envoyer, et
+  `Idempotent-Replayed` de ceux qu'elle peut lire (CORS).
+- Ces routes suivent le mode maintenance (`503 MAINTENANCE`) et sont fermées au compte qui
+  doit encore accepter les conditions d'utilisation (`403 TERMS_ACCEPTANCE_REQUIRED`). Seul
+  l'envoi dépend de la fonctionnalité : fermée, les trois lectures restent ouvertes.
+
 ## Administration
 
 Routes réservées aux comptes détenant la permission indiquée (`403 FORBIDDEN` sinon ; le
@@ -454,36 +727,49 @@ refus est inscrit au journal d'audit). Les utilisateurs finaux n'ont aucune perm
 **Le back-office exige la validation en deux étapes** : sans elle, toute route
 d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les permissions.
 
-| Route                                                 | Permission              | Rôle                                             |
-| ----------------------------------------------------- | ----------------------- | ------------------------------------------------ |
-| `GET /api/v1/admin/system-settings`                   | `system_settings.read`  | paramètres et valeurs en vigueur                 |
-| `PUT /api/v1/admin/system-settings/{key}`             | `system_settings.write` | mode maintenance, ouverture d'une fonctionnalité |
-| `GET /api/v1/admin/users`                             | `users.read`            | parcourir la liste des comptes                   |
-| `POST /api/v1/admin/users/search`                     | `users.read`            | retrouver un compte par un identifiant complet   |
-| `GET /api/v1/admin/users/{userId}`                    | `users.read`            | fiche d'un compte                                |
-| `POST /api/v1/admin/users/{userId}/suspend`           | `users.suspend`         | suspendre (`reason`, `notifyUser?`)              |
-| `POST /api/v1/admin/users/{userId}/reactivate`        | `users.suspend`         | lever une suspension (`reason`)                  |
-| `POST /api/v1/admin/users/{userId}/sessions/revoke`   | `users.revoke_sessions` | déconnecter le compte partout (`reason`)         |
-| `POST /api/v1/admin/users/{userId}/mfa/reset`         | `users.reset_mfa`       | retirer le second facteur (`reason`)             |
-| `POST /api/v1/admin/users/{userId}/close`             | `users.close`           | clore le compte (`ground`, `reason`, `confirm`)  |
-| `GET /api/v1/admin/roles`                             | `roles.read`            | rôles, permissions, nombre de détenteurs         |
-| `GET /api/v1/admin/role-changes`                      | `roles.read`            | demandes de changement de rôle                   |
-| `POST /api/v1/admin/role-changes`                     | `roles.manage`          | demander l'attribution ou le retrait d'un rôle   |
-| `GET /api/v1/admin/role-changes/{requestId}`          | `roles.read`            | une demande                                      |
-| `POST /api/v1/admin/role-changes/{requestId}/approve` | `roles.manage`          | approuver — **par un second administrateur**     |
-| `POST /api/v1/admin/role-changes/{requestId}/reject`  | `roles.manage`          | refuser (`note`) — par un second administrateur  |
-| `POST /api/v1/admin/role-changes/{requestId}/cancel`  | `roles.manage`          | retirer sa propre demande                        |
-| `GET /api/v1/admin/kyc/cases`                         | `kyc.read`              | file des dossiers de vérification                |
-| `GET /api/v1/admin/kyc/cases/{caseId}`                | `kyc.read`              | fiche d'un dossier                               |
-| `GET /api/v1/admin/kyc/cases/{caseId}/documents/{id}` | `kyc.read`              | télécharger une pièce                            |
-| `POST /api/v1/admin/kyc/cases/{caseId}/approve`       | `kyc.review`            | accepter (`note?`)                               |
-| `POST /api/v1/admin/kyc/cases/{caseId}/reject`        | `kyc.review`            | refuser (`reasons`, `note`)                      |
-| `POST /api/v1/admin/kyc/cases/{caseId}/revoke`        | `kyc.revoke`            | retirer une vérification acceptée (`reason`)     |
+| Route                                                    | Permission              | Rôle                                                         |
+| -------------------------------------------------------- | ----------------------- | ------------------------------------------------------------ |
+| `GET /api/v1/admin/system-settings`                      | `system_settings.read`  | paramètres et valeurs en vigueur                             |
+| `PUT /api/v1/admin/system-settings/{key}`                | `system_settings.write` | mode maintenance, ouverture d'une fonctionnalité             |
+| `GET /api/v1/admin/users`                                | `users.read`            | parcourir la liste des comptes                               |
+| `POST /api/v1/admin/users/search`                        | `users.read`            | retrouver un compte par un identifiant complet               |
+| `GET /api/v1/admin/users/{userId}`                       | `users.read`            | fiche d'un compte                                            |
+| `POST /api/v1/admin/users/{userId}/suspend`              | `users.suspend`         | suspendre (`reason`, `notifyUser?`)                          |
+| `POST /api/v1/admin/users/{userId}/reactivate`           | `users.suspend`         | lever une suspension (`reason`)                              |
+| `POST /api/v1/admin/users/{userId}/sessions/revoke`      | `users.revoke_sessions` | déconnecter le compte partout (`reason`)                     |
+| `POST /api/v1/admin/users/{userId}/mfa/reset`            | `users.reset_mfa`       | retirer le second facteur (`reason`)                         |
+| `POST /api/v1/admin/users/{userId}/close`                | `users.close`           | clore le compte (`ground`, `reason`, `confirm`)              |
+| `GET /api/v1/admin/roles`                                | `roles.read`            | rôles, permissions, nombre de détenteurs                     |
+| `GET /api/v1/admin/role-changes`                         | `roles.read`            | demandes de changement de rôle                               |
+| `POST /api/v1/admin/role-changes`                        | `roles.manage`          | demander l'attribution ou le retrait d'un rôle               |
+| `GET /api/v1/admin/role-changes/{requestId}`             | `roles.read`            | une demande                                                  |
+| `POST /api/v1/admin/role-changes/{requestId}/approve`    | `roles.manage`          | approuver — **par un second administrateur**                 |
+| `POST /api/v1/admin/role-changes/{requestId}/reject`     | `roles.manage`          | refuser (`note`) — par un second administrateur              |
+| `POST /api/v1/admin/role-changes/{requestId}/cancel`     | `roles.manage`          | retirer sa propre demande                                    |
+| `GET /api/v1/admin/kyc/cases`                            | `kyc.read`              | file des dossiers de vérification                            |
+| `GET /api/v1/admin/kyc/cases/{caseId}`                   | `kyc.read`              | fiche d'un dossier                                           |
+| `GET /api/v1/admin/kyc/cases/{caseId}/documents/{id}`    | `kyc.read`              | télécharger une pièce                                        |
+| `POST /api/v1/admin/kyc/cases/{caseId}/approve`          | `kyc.review`            | accepter (`note?`)                                           |
+| `POST /api/v1/admin/kyc/cases/{caseId}/reject`           | `kyc.review`            | refuser (`reasons`, `note`)                                  |
+| `POST /api/v1/admin/kyc/cases/{caseId}/revoke`           | `kyc.revoke`            | retirer une vérification acceptée (`reason`)                 |
+| `GET /api/v1/admin/terms/versions`                       | `terms.publish`         | versions des conditions d'utilisation, et leurs acceptations |
+| `POST /api/v1/admin/terms/versions`                      | `terms.publish`         | publier une version — **définitif**                          |
+| `GET /api/v1/admin/ledger/assets`                        | `ledger.read`           | actifs dans lesquels la plateforme tient des comptes         |
+| `POST /api/v1/admin/ledger/assets`                       | `ledger.manage_assets`  | enregistrer un actif — **définitif**                         |
+| `GET /api/v1/admin/ledger/accounts`                      | `ledger.read`           | comptes du grand livre                                       |
+| `GET /api/v1/admin/ledger/accounts/{accountId}/postings` | `ledger.read`           | un compte et ses lignes                                      |
+| `GET /api/v1/admin/ledger/entries/{entryId}`             | `ledger.read`           | une écriture complète                                        |
+| `GET /api/v1/admin/ledger/trial-balance`                 | `ledger.read`           | balance du grand livre                                       |
+| `GET /api/v1/admin/transfer-limits`                      | `transfer_limits.read`  | plafonds de transfert fixés                                  |
+| `PUT /api/v1/admin/transfer-limits/{assetCode}/{level}`  | `transfer_limits.write` | fixer les plafonds d'un niveau dans un actif                 |
 
 Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
 `users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `users.close`,
 `kyc.read`, `kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité et ne
-clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt.
+clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt. Seul
+`super_admin` publie les conditions d'utilisation (`terms.publish`), consulte le grand livre
+(`ledger.read`), y enregistre un actif (`ledger.manage_assets`), et lit ou fixe les plafonds
+de transfert (`transfer_limits.read`, `transfer_limits.write`).
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -508,8 +794,10 @@ et sa justification sont écrits au journal d'audit dans la même transaction.
   l'identifiant saisi, seulement une empreinte), chaque page de la liste et chaque
   consultation de fiche.
 - La fiche montre le compte, son profil — vérifié ou seulement **déclaré**, ce que précise
-  `verification` (`level`, `identityVerified`, `addressVerified`) —, l'état du second facteur
-  et le nombre de sessions ouvertes. Aucun secret d'authentification n'est jamais renvoyé.
+  `verification` (`level`, `identityVerified`, `addressVerified`) —, l'état du second facteur,
+  le nombre de sessions ouvertes et où il en est des conditions d'utilisation (`terms` :
+  `accepted` — dernière version acceptée et sa date — et `acceptanceRequired`). Aucun secret
+  d'authentification n'est jamais renvoyé.
 - **Toute action est justifiée** (`reason`, 10 à 500 caractères), et la justification est
   écrite au journal d'audit dans la transaction qui applique l'action.
 - **Suspendre** n'est possible que pour un compte actif : ses sessions sont fermées, il ne peut
@@ -536,6 +824,56 @@ et sa justification sont écrits au journal d'audit dans la même transaction.
 - **Nul n'agit sur son propre compte** par le back-office (`403`), et agir sur le compte d'un
   membre du personnel exige en plus `roles.manage` : le support ne peut ni suspendre ni
   déconnecter un administrateur.
+
+### Conditions d'utilisation : publication
+
+```json
+POST /api/v1/admin/terms/versions
+{
+  "number": 2,
+  "requiresAcceptance": true,
+  "reason": "Texte validé par le conseil le 12/03",
+  "fr": { "summary": "Ce qui change : …", "body": "# Conditions d'utilisation\n\n…" },
+  "en": { "summary": "What changes: …", "body": "# Terms of use\n\n…" }
+}
+```
+
+- **Publier est définitif** : la version est en vigueur aussitôt, ne se modifie pas et ne se
+  retire pas. Corriger un texte, c'est publier la version suivante.
+- **`number`** doit être le numéro de la version en vigueur plus un (`1` pour la première).
+  Une requête envoyée deux fois, ou préparée sur la foi d'un état dépassé, est refusée
+  (`409 CONFLICT`, le numéro attendu figure dans `detail`) au lieu de créer une version de trop.
+- **`requiresAcceptance`** est la règle de la version (voir « Conditions d'utilisation »). La
+  version 1 l'exige toujours (`400 VALIDATION_FAILED` sinon).
+- **Textes.** `fr` est obligatoire et fait foi ; `en` est une traduction facultative, entière
+  ou absente. `body` : 200 000 caractères au plus ; `summary` : 1 000 au plus. Texte brut ou
+  Markdown, **conservé tel quel, à l'octet près** : ni espaces retirés, ni fins de ligne
+  converties. Sont refusés un texte blanc, un caractère de contrôle autre que le saut de
+  ligne, le retour chariot et la tabulation, et une marque d'ordre des octets en tête.
+- **Corps de la requête** : JSON en UTF-8 **valide**, d'un mébioctet au plus (`413` au-delà ;
+  `415` si ce n'est pas du JSON ; `400 MALFORMED_REQUEST` si le JSON ou son encodage est
+  invalide — un fichier enregistré dans un autre encodage est refusé, non « réparé »). C'est
+  la seule route JSON qui dépasse la limite commune ; son corps n'est lu qu'**après**
+  l'authentification et le contrôle des droits. Les deux limites s'appliquent, en
+  caractères et en octets : deux textes de la longueur maximale tiennent dans un mébioctet
+  en français ou en anglais (un à deux octets par caractère).
+- **Réponse** `201` : la version sans ses textes — `number`, `publishedAt`, `publishedBy`,
+  `requiresAcceptance`, `current`, `acceptances`, et pour chaque langue `summary`, `length`
+  (caractères) et `sha256`. **Comparer `sha256` à l'empreinte du fichier qu'on voulait
+  publier** (`sha256sum`) : c'est la preuve que le texte conservé est le bon.
+- `reason` (10 à 500 caractères) est écrite au journal d'audit avec les empreintes. Au plus 20
+  publications par heure et par client. **Aucun e-mail n'est envoyé aux titulaires** : ils
+  apprennent qu'ils doivent accepter en se connectant ou sur `GET /me`.
+- **Suivi.** `GET /admin/terms/versions` rend les 100 versions les plus récentes : pour
+  chacune, son auteur (`publishedBy` ; `null` si elle a été publiée depuis la ligne de commande
+  du serveur), sa règle, la longueur et l'empreinte de chaque texte, et `acceptances` — le
+  nombre de comptes qui l'ont acceptée (un compte clôturé n'est plus compté ; une inscription
+  dont l'adresse n'est pas encore vérifiée l'est).
+- Ces deux routes restent ouvertes pendant la maintenance : on doit pouvoir publier un texte
+  avant de rouvrir la plateforme. Le personnel n'a pas à avoir accepté lui-même la version en
+  vigueur pour utiliser le back-office.
+- **Sans back-office** — première version avant l'ouverture, par exemple —, l'opérateur du
+  serveur publie avec `pnpm terms:publish` (voir `DEPLOYMENT.md`) : mêmes règles, mêmes bornes.
 
 ### Rôles : double validation
 
@@ -583,6 +921,107 @@ De deux décisions simultanées sur une même demande, une seule s'applique ; l'
 - Ces routes restent accessibles pendant la maintenance et lorsque la fonctionnalité `kyc`
   est fermée aux titulaires.
 
+### Grand livre
+
+**Aucune route du back-office ne passe d'écriture** : il consulte le grand livre et
+enregistre les actifs dans lesquels il tient des comptes. Les seules écritures viennent des
+transferts que font les titulaires.
+
+```json
+POST /api/v1/admin/ledger/assets
+{
+  "code": "USD",
+  "name": "US dollar",
+  "kind": "FIAT",
+  "scale": 2,
+  "reason": "Comptes en dollars : décision du 12/03"
+}
+```
+
+- **Enregistrer un actif est définitif.** Ni son code, ni son nombre de décimales (`scale`),
+  ni sa nature (`kind` : `FIAT` ou `CRYPTO`), ni son libellé ne se modifient ensuite, et un
+  actif ne se retire pas : chaque montant du grand livre est un nombre entier de sa plus
+  petite unité. `scale` vaut 2 pour le dollar et le franc congolais, 8 pour le bitcoin, 18 au
+  plus. **À vérifier deux fois.** Réponse `201` avec l'actif ; `409 CONFLICT` si le code est
+  déjà enregistré.
+- Enregistrer un actif **ne déplace aucun fonds et n'ouvre aucune opération** : chaque
+  titulaire voit seulement apparaître un portefeuille à zéro dans cet actif.
+- `code` : 2 à 12 caractères, une lettre majuscule puis des lettres majuscules ou des
+  chiffres ; `name` : 64 caractères au plus, sur une ligne. La justification (`reason`) est
+  inscrite au journal d'audit avec l'actif.
+- **La base vérifie elle-même le droit d'enregistrer** : un auteur qui perd son rôle entre le
+  contrôle de ses droits et l'écriture reçoit `403 FORBIDDEN`.
+- **Liste des actifs** : dans l'ordre des codes, avec `registeredAt` et `registeredBy` —
+  `null` pour un actif enregistré hors de l'API.
+- **Comptes** : ceux des titulaires et ceux de la plateforme elle-même, du plus anciennement
+  ouvert au plus récent. Filtres : `userId`, `assetCode`, `type` (`user_available`,
+  `platform_custody`, `platform_fees`). Un compte est ouvert par la première écriture qui le
+  touche : un titulaire sans compte dans un actif n'y détient rien. `balance` est exprimé
+  dans le sens normal du compte (`normalSide`) et n'est jamais négatif ; `postingCount` est
+  le nombre de lignes passées sur le compte.
+- **Un compte et ses lignes** : de la plus récente à la plus ancienne. `accountSequence`
+  numérote les lignes du compte 1, 2, 3… sans trou ; `balanceAfter` est le solde juste après
+  chacune. `404 NOT_FOUND` si le compte n'existe pas.
+- **Une écriture** : qui l'a passée (`actor`), pour quelle opération (`kind`, `metadata`),
+  sous quelle clé d'idempotence, et toutes ses lignes dans l'ordre. Pour chaque actif, les
+  débits d'une écriture égalent ses crédits. Une écriture ne se modifie ni ne s'efface : une
+  erreur se corrige par une écriture inverse. `404 NOT_FOUND` si elle n'existe pas.
+- **Balance** : pour chaque actif, le total des soldes par type de compte. `debitBalance`
+  additionne les comptes dont le solde augmente au débit — ce que la plateforme conserve pour
+  ses titulaires ; `creditBalance`, ceux dont il augmente au crédit — ce qu'elle leur doit,
+  et ce qu'elle a gagné. Les deux sont égaux (`balanced`) tant que le grand livre est sain :
+  un écart signale une altération faite hors de l'application. La même vérification, et
+  d'autres plus profondes, s'exécutent aussi toutes les heures.
+- **Pagination** des comptes et des lignes : `limit` (1 à 100, 20 par défaut), `after` = le
+  `nextCursor` de la page précédente. Les montants sont des chaînes décimales à exactement
+  `asset.scale` décimales.
+- **Toute consultation est inscrite au journal d'audit** : liste des actifs, page de
+  comptes, compte, écriture, balance.
+- Ces routes restent accessibles pendant la maintenance : c'est le moment où l'on vérifie
+  les comptes.
+
+### Plafonds de transfert
+
+Ce que chaque niveau de vérification peut envoyer dans chaque actif. **Aucune valeur n'est
+livrée avec le code** : tant qu'un niveau n'a pas de plafonds dans un actif, il n'y envoie ni
+n'y reçoit rien.
+
+```json
+PUT /api/v1/admin/transfer-limits/USD/1
+{
+  "perTransfer": "100.00",
+  "daily": "250.00",
+  "monthly": "1000.00",
+  "reason": "Plafonds du niveau 1 en dollars : décision du 12/03"
+}
+```
+
+Les montants ci-dessus illustrent la forme de la requête : **ce ne sont pas des valeurs
+recommandées**.
+
+- **Un couple actif-niveau à la fois.** `level` vaut 0 (adresse vérifiée, aucun dossier
+  accepté), 1, 2 ou 3. La requête fixe les plafonds, ou remplace ceux qui existaient ;
+  réponse `200` : `asset`, `level`, `perTransfer`, `daily`, `monthly`, `setBy`, `setAt`.
+- **Trois montants** — par transfert, sur 24 heures glissantes, sur 31 jours glissants : des
+  chaînes décimales positives ou nulles, d'au plus `asset.scale` décimales, **croissantes** :
+  `perTransfer` ≤ `daily` ≤ `monthly` (`400 VALIDATION_FAILED` sur le champ en cause sinon).
+- **L'effet est immédiat**, en envoi comme en réception, y compris pour ce qui a déjà été
+  envoyé : un compte dont les envois dépassent déjà un plafond abaissé ne peut plus rien
+  envoyer tant qu'ils ne sont pas sortis de la fenêtre.
+- **Refermer un niveau** : ramener les trois montants à `"0"`. Des plafonds ne se suppriment
+  pas — la ligne reste, et dit qui a décidé.
+- La justification (`reason`, 10 à 500 caractères) est inscrite au journal d'audit avec les
+  plafonds remplacés et les nouveaux (`transfer_limit.set`).
+- `404 NOT_FOUND` pour un actif que la plateforme ne tient pas ; `400 VALIDATION_FAILED` pour
+  un niveau ou un code d'actif mal formé.
+- **La base vérifie elle-même le droit de fixer des plafonds** : un auteur qui perd son rôle
+  entre le contrôle de ses droits et l'écriture reçoit `403 FORBIDDEN`.
+- **Liste** : tous les plafonds fixés, par actif puis par niveau ; `setBy` vaut `null` pour
+  des plafonds fixés hors de l'API. Chaque consultation est inscrite au journal d'audit.
+- Fixer des plafonds **n'ouvre pas** les transferts : la fonctionnalité `internalTransfers`
+  s'ouvre à part (`PUT /api/v1/admin/system-settings/features.internal_transfers`).
+- Ces routes restent accessibles pendant la maintenance.
+
 **Premier administrateur.** Aucune route ne permet d'obtenir un rôle sans l'accord de deux
 administrateurs : les premiers comptes d'administration se créent en ligne de commande, avec
 le rôle propriétaire de la base (voir `DEPLOYMENT.md`). Il en faut **au moins deux** pour que
@@ -607,10 +1046,9 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Acceptation versionnée des conditions d'utilisation, vérification des entreprises (KYB) et
-plafonds par niveau de vérification (fin de la phase 2 et phase 3) ;
-en-tête `Idempotency-Key` obligatoire sur toute opération financière (phase 3) ; webhooks
-entrants signés et protégés contre le rejeu (phase 4).
+Vérification des entreprises (KYB, fin de la phase 2) ; fonds réservés, crédit et débit
+manuels sous double validation, gel d'un portefeuille (suite de la phase 3) ; dépôts,
+retraits et webhooks entrants signés et protégés contre le rejeu (phase 4).
 
 ## Règles d'exposition de la documentation
 

@@ -16,6 +16,11 @@ export const ERROR_CODES = {
   INVALID_CREDENTIALS: { status: 401, title: 'Unauthorized' },
   FORBIDDEN: { status: 403, title: 'Forbidden' },
   FEATURE_DISABLED: { status: 403, title: 'Forbidden' },
+  /**
+   * Le niveau de vérification du compte n'a pas de plafond dans cet actif : il ne peut pas y
+   * envoyer de fonds. Vérifier son identité, ou attendre que la plateforme ouvre ce niveau.
+   */
+  TRANSFER_NOT_PERMITTED: { status: 403, title: 'Forbidden' },
   /** Mot de passe correct, mais l'adresse e-mail du compte n'a pas encore été vérifiée. */
   EMAIL_NOT_VERIFIED: { status: 403, title: 'Forbidden' },
   /**
@@ -25,16 +30,43 @@ export const ERROR_CODES = {
   ACCOUNT_DISABLED: { status: 403, title: 'Forbidden' },
   /** Le back-office exige la validation en deux étapes : l'activer, puis réessayer. */
   MFA_ENROLLMENT_REQUIRED: { status: 403, title: 'Forbidden' },
+  /**
+   * Le compte doit accepter la version en vigueur des conditions d'utilisation avant de
+   * continuer : la lire (`GET /terms/current`), puis l'accepter (`POST /me/terms/acceptance`).
+   */
+  TERMS_ACCEPTANCE_REQUIRED: { status: 403, title: 'Forbidden' },
   NOT_FOUND: { status: 404, title: 'Not Found' },
   METHOD_NOT_ALLOWED: { status: 405, title: 'Method Not Allowed' },
   NOT_ACCEPTABLE: { status: 406, title: 'Not Acceptable' },
   REQUEST_TIMEOUT: { status: 408, title: 'Request Timeout' },
   CONFLICT: { status: 409, title: 'Conflict' },
+  /**
+   * La version des conditions d'utilisation désignée n'est pas — ou n'est plus — celle en
+   * vigueur : relire `GET /terms/current`, présenter ce texte, puis recommencer.
+   */
+  TERMS_VERSION_NOT_CURRENT: { status: 409, title: 'Conflict' },
   PAYLOAD_TOO_LARGE: { status: 413, title: 'Content Too Large' },
   UNSUPPORTED_MEDIA_TYPE: { status: 415, title: 'Unsupported Media Type' },
   UNPROCESSABLE_ENTITY: { status: 422, title: 'Unprocessable Content' },
   /** Le pays de résidence déclaré n'est pas (encore) desservi. */
   COUNTRY_NOT_SUPPORTED: { status: 422, title: 'Unprocessable Content' },
+  /**
+   * La clé d'idempotence a déjà servi à une requête **différente** : en choisir une nouvelle.
+   * Renvoyer la même requête sous la même clé, elle, rend la réponse d'origine.
+   */
+  IDEMPOTENCY_KEY_REUSED: { status: 422, title: 'Unprocessable Content' },
+  /** Le portefeuille ne détient pas le montant demandé. */
+  INSUFFICIENT_FUNDS: { status: 422, title: 'Unprocessable Content' },
+  /**
+   * Le montant dépasse un plafond du niveau de vérification du compte — par transfert, sur 24
+   * heures ou sur 31 jours : `detail` dit lequel, `GET /me/transfer-limits` ce qu'il reste.
+   */
+  TRANSFER_LIMIT_EXCEEDED: { status: 422, title: 'Unprocessable Content' },
+  /**
+   * Le destinataire ne peut pas recevoir ce transfert — sans préciser pourquoi : adresse
+   * inconnue, compte fermé ou suspendu, ou niveau de vérification auquel l'actif n'est pas ouvert.
+   */
+  RECIPIENT_UNAVAILABLE: { status: 422, title: 'Unprocessable Content' },
   RATE_LIMITED: { status: 429, title: 'Too Many Requests' },
   INTERNAL_ERROR: { status: 500, title: 'Internal Server Error' },
   MAINTENANCE: { status: 503, title: 'Service Unavailable' },

@@ -3,18 +3,30 @@
 #
 #   1. l'administrateur se connecte ; le back-office lui est fermé tant qu'il n'a pas activé la
 #      validation en deux étapes ; il l'active (secret TOTP, premier code, codes de secours) ;
-#   2. il ouvre l'inscription ;
-#   3. un utilisateur s'inscrit, reçoit son code dans la boîte de développement, vérifie son
-#      adresse avec son mot de passe, se connecte, consulte son compte, n'a aucun droit
-#      d'administration, renouvelle sa session, complète son profil ;
-#   4. l'administrateur se reconnecte en deux étapes (code de secours) ;
+#   2. il ouvre l'inscription, puis publie les conditions d'utilisation — un texte de plusieurs
+#      centaines de kilo-octets, à travers le proxy — : avant cela nul ne peut s'inscrire ;
+#      le texte se relit sans compte, à l'octet près ;
+#   3. un utilisateur s'inscrit en acceptant la version en vigueur, reçoit son code dans la boîte
+#      de développement, vérifie son adresse avec son mot de passe, se connecte, consulte son
+#      compte, n'a aucun droit d'administration, renouvelle sa session, complète son profil ;
+#   4. l'administrateur se reconnecte en deux étapes (code de secours), puis publie une nouvelle
+#      version, à accepter : le compte de l'utilisateur lui est fermé jusqu'à ce qu'il l'accepte ;
 #   5. vérification d'identité : l'administrateur ouvre la fonctionnalité ; l'utilisateur déclare
 #      son identité, envoie ses pièces — des fichiers de plusieurs centaines de kilo-octets, puis
 #      de la taille maximale, à travers le proxy —, dépose son dossier ; l'administrateur le
 #      trouve dans la file, relit une pièce à l'identique et accepte le dossier ; le compte est
 #      vérifié et son profil reprend l'identité de la pièce ;
-#   6. l'administrateur retrouve le compte par son adresse et ferme ses sessions ;
-#   7. l'utilisateur se reconnecte, obtient la copie de ses données, puis clôt son compte : il
+#   6. grand livre : l'administrateur enregistre un actif ; l'utilisateur y dispose aussitôt
+#      d'un portefeuille à zéro, sans mouvement ; aucun compte n'est ouvert, et la balance du
+#      grand livre est équilibrée ;
+#   7. transferts entre titulaires : l'administrateur ouvre la fonctionnalité ; tant qu'aucun
+#      plafond n'est fixé pour son niveau de vérification, l'utilisateur ne peut rien envoyer ;
+#      l'administrateur fixe les plafonds, l'utilisateur les lit ; une demande sans clé
+#      d'idempotence, sans le bon mot de passe, au-delà du plafond ou au-delà du solde est
+#      refusée, chacune pour sa raison — aucune route ne crédite encore un portefeuille : le
+#      parcours ne mène donc aucun transfert à son terme, et vérifie que rien n'a bougé ;
+#   8. l'administrateur retrouve le compte par son adresse et ferme ses sessions ;
+#   9. l'utilisateur se reconnecte, obtient la copie de ses données, puis clôt son compte : il
 #      ne peut plus se connecter, il est prévenu à son ancienne adresse, son dossier de
 #      vérification est conservé, et le back-office retrouve le compte clôturé.
 #
@@ -24,7 +36,17 @@
 #     être rejoué avec le même compte ;
 #   - la remise des notifications en mémoire (environnement local) ;
 #   - le stockage chiffré des pièces configuré (KYC_ENCRYPTION_KEY) ;
-#   - curl, jq, openssl et python3 (calcul du code TOTP, dates).
+#   - curl, jq, openssl, sha256sum et python3 (calcul du code TOTP, dates, textes).
+#
+# Le script publie deux versions des conditions d'utilisation et enregistre un actif — l'un
+# et l'autre définitifs — ; il ouvre l'inscription, la vérification d'identité et les
+# transferts entre titulaires, et les laisse ouverts : il est fait pour une pile de test, pas
+# pour une plateforme en service.
+#
+# Toutes ses requêtes partent d'une même adresse, en quelques secondes : hors connexion,
+# inscription, lecture des conditions et demandes de transfert, elles sont comptées ensemble
+# par la limitation de débit de l'API (120 par minute par défaut). Le parcours doit rester en
+# deçà.
 #
 #   BASE_URL=http://127.0.0.1:8080 ADMIN_EMAIL=… MGX_ADMIN_PASSWORD=… ./smoke-identity.sh
 set -euo pipefail
@@ -35,12 +57,14 @@ BODY="$(mktemp)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$BODY" "$WORK"' EXIT
 
-# request <statut attendu> <méthode> <chemin> [corps JSON] [jeton] — le corps de la réponse est dans $BODY.
+# request <statut attendu> <méthode> <chemin> [corps JSON] [jeton] [en-tête] — le corps de la
+# réponse est dans $BODY.
 request() {
-  local expected="$1" method="$2" path="$3" data="${4:-}" token="${5:-}" status
+  local expected="$1" method="$2" path="$3" data="${4:-}" token="${5:-}" header="${6:-}" status
   local -a args=(--silent --show-error --output "$BODY" --write-out '%{http_code}' --request "$method")
   [ -n "$data" ] && args+=(--header 'Content-Type: application/json' --data "$data")
   [ -n "$token" ] && args+=(--header "Authorization: Bearer $token")
+  [ -n "$header" ] && args+=(--header "$header")
   # Un échec de curl ne doit pas interrompre le script sans explication : le statut reçu
   # (000 s'il n'y en a pas eu) est comparé à celui qui est attendu.
   status="$(curl "${args[@]}" "$API$path")" || true
@@ -131,20 +155,109 @@ recovery_code="$(jq -r '.recoveryCodes[0]' "$BODY")"
 request 200 PUT /admin/system-settings/features.registration \
   '{"value": true, "reason": "Smoke test of the containerised stack"}' "$admin_token"
 
-# --- 3. Utilisateur ----------------------------------------------------------------------------
 email="smoke-$(date +%s)-$RANDOM@example.cd"
 password="smoke-test-$(openssl rand -hex 8)"
 credentials="$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p}')"
+
+# --- 2 bis. Conditions d'utilisation -----------------------------------------------------------
+# Sur une pile neuve, aucune version n'est publiée ; sur une pile déjà utilisée, le script
+# publie la suivante.
+status="$(curl --silent --output "$BODY" --write-out '%{http_code}' "$API/terms/current")"
+case "$status" in
+  404)
+    terms_version=1
+    # Tant qu'aucune version n'est publiée, nul ne s'inscrit — dès que l'inscription est
+    # ouverte (visible en quelques secondes au plus sur chaque instance).
+    for _ in $(seq 1 20); do
+      status="$(curl --silent --output "$BODY" --write-out '%{http_code}' --header 'Content-Type: application/json' \
+        --data "$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: 1}')" \
+        "$API/auth/register")"
+      [ "$status" = "503" ] && break
+      sleep 0.5
+    done
+    [ "$status" = "503" ] || { echo "FAIL  POST /auth/register before any terms -> $status (expected 503)" >&2; cat "$BODY" >&2; exit 1; }
+    echo "ok    POST /auth/register -> 503 (no terms of use published yet)"
+    ;;
+  200)
+    terms_version="$(($(jq -r .number "$BODY") + 1))"
+    ;;
+  *)
+    echo "FAIL  GET /terms/current -> $status (expected 200 or 404)" >&2; cat "$BODY" >&2; exit 1
+    ;;
+esac
+
+# Un texte de 180 000 caractères environ (la limite est de 200 000) — fins de ligne mêlées,
+# tabulation, accents, guillemets —, soit plus de 180 kilo-octets : au-delà de la limite commune
+# des corps de requête (128 Ko au proxy, 100 Ko à l'API). Seule la route de publication l'admet.
+python3 - "$WORK/terms-fr.md" <<'PYTHON'
+import sys
+
+text = (
+    "# Conditions d’utilisation\r\n\r\nArticle 1 — Objet.  \n\t« Œuvre » de test.\n\n"
+    + "Clause de remplissage, sans portée. " * 5000
+    + "\nFin.\n"
+)
+with open(sys.argv[1], "w", encoding="utf-8", newline="") as file:
+    file.write(text)
+PYTHON
+terms_digest="$(sha256sum "$WORK/terms-fr.md" | cut -d ' ' -f 1)"
+# publication <fichier JSON> <numéro> <true|false : version à accepter> <fichier du texte>
+publication() {
+  jq -n --argjson n "$2" --argjson r "$3" --rawfile body "$4" '{
+    number: $n, requiresAcceptance: $r, reason: "Smoke test of the containerised stack",
+    fr: {summary: "Version de test.", body: $body}}' > "$1"
+}
+publication "$WORK/terms.json" "$terms_version" true "$WORK/terms-fr.md"
+
+# Sans jeton, la publication est refusée — avant que son contenu ne soit lu.
+upload 401 /admin/terms/versions application/json "$WORK/terms.json"
+# Au-delà d'un mébioctet, l'API refuse ; au-delà de la limite du proxy pour cette route, le
+# proxy refuse sans rien transmettre.
+head -c 1060000 /dev/zero | tr '\0' 'x' > "$WORK/filler.txt"
+publication "$WORK/terms-too-large.json" "$terms_version" true "$WORK/filler.txt"
+upload 413 /admin/terms/versions application/json "$WORK/terms-too-large.json" "$admin_token"
+check 'beyond one mebibyte the API refuses the publication' \
+  '.code == "PAYLOAD_TOO_LARGE" and (.detail | contains("1048576"))'
+head -c 1300000 /dev/zero | tr '\0' 'x' > "$WORK/filler.txt"
+publication "$WORK/terms-too-large.json" "$terms_version" true "$WORK/filler.txt"
+upload 413 /admin/terms/versions application/json "$WORK/terms-too-large.json" "$admin_token"
+check 'beyond the limit of this route the request is refused' '.code == "PAYLOAD_TOO_LARGE"'
+
+upload 201 /admin/terms/versions application/json "$WORK/terms.json" "$admin_token"
+check 'the version is published and its digest is that of the file' \
+  ".number == $terms_version and .current == true and .requiresAcceptance == true and .fr.sha256 == \"$terms_digest\" and .acceptances == 0"
+# Une publication ne se rejoue pas.
+upload 409 /admin/terms/versions application/json "$WORK/terms.json" "$admin_token"
+
+# Le texte se lit sans compte, tel qu'il a été publié : à l'octet près, à travers le proxy.
+request 200 GET /terms/current
+check 'the version in force is the one just published' \
+  ".number == $terms_version and .locale == \"fr\" and .sha256 == \"$terms_digest\""
+jq -j .body "$BODY" > "$WORK/terms-read.md"
+if ! cmp -s "$WORK/terms-read.md" "$WORK/terms-fr.md"; then
+  echo "FAIL  the text read back differs from the published file" >&2
+  exit 1
+fi
+echo "ok    the text read back is the published file, byte for byte ($(wc -c < "$WORK/terms-fr.md") bytes)"
+request 200 GET "/terms/versions/$terms_version?locale=en"
+check 'without a translation the French text is served' '.locale == "fr" and .locales == ["fr"]'
+
+# --- 3. Utilisateur ----------------------------------------------------------------------------
 # L'ouverture d'une fonctionnalité est visible en quelques secondes au plus sur chaque instance.
 for _ in $(seq 1 20); do
   status="$(curl --silent --output "$BODY" --write-out '%{http_code}' --header 'Content-Type: application/json' \
-    --data "$(jq -n --arg e "$email" --arg p "$password" '{email: $e, password: $p, countryCode: "CD", acceptTerms: true}')" \
+    --data "$(jq -n --arg e "$email" --arg p "$password" --argjson v "$terms_version" '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: $v}')" \
     "$API/auth/register")"
   [ "$status" = "202" ] && break
   sleep 0.5
 done
 [ "$status" = "202" ] || { echo "FAIL  POST /auth/register -> $status" >&2; cat "$BODY" >&2; exit 1; }
 echo "ok    POST /auth/register -> 202"
+# S'inscrire, c'est accepter la version en vigueur : une autre est refusée, quelle que soit
+# l'adresse.
+request 409 POST /auth/register "$(jq -n --arg e "autre-$email" --arg p "$password" --argjson v "$((terms_version + 1))" \
+  '{email: $e, password: $p, countryCode: "CD", acceptedTermsVersion: $v}')"
+check 'registration names the version in force' '.code == "TERMS_VERSION_NOT_CURRENT"'
 
 # Le code est émis par un traitement asynchrone (boîte d'envoi, puis file de traitement).
 code=""
@@ -170,6 +283,11 @@ user_id="$(jq -r .user.id "$BODY")"
 request 200 GET /me '' "$user_token"
 check 'the account is active and has no permission' \
   ".email == \"$email\" and .status == \"ACTIVE\" and .permissions == [] and .secondFactorEnabled == false"
+check 'having accepted the terms in force when signing up, the account has nothing to accept' \
+  '.termsAcceptanceRequired == false'
+request 200 GET /me/terms '' "$user_token"
+check 'the acceptance was recorded with the account' \
+  ".accepted.number == $terms_version and .current.number == $terms_version and .acceptanceRequired == false"
 request 403 GET /admin/system-settings '' "$user_token"
 request 403 GET /admin/users '' "$user_token"
 request 200 POST /auth/refresh "$(jq -n --arg t "$refresh_token" '{refreshToken: $t}')"
@@ -188,6 +306,30 @@ request 200 POST /auth/mfa/verify "$(jq -n --arg t "$mfa_token" --arg c "$recove
 admin_token="$(jq -r .tokens.accessToken "$BODY")"
 # Le jeton de la connexion en cours ne sert qu'une fois.
 request 401 POST /auth/mfa/verify "$(jq -n --arg t "$mfa_token" --arg c "$recovery_code" '{mfaToken: $t, recoveryCode: $c}')"
+
+# --- 4 bis. Une nouvelle version des conditions, à accepter -------------------------------------
+printf 'Conditions d’utilisation — version suivante.\n' > "$WORK/terms-next.md"
+publication "$WORK/terms-next.json" "$((terms_version + 1))" true "$WORK/terms-next.md"
+upload 201 /admin/terms/versions application/json "$WORK/terms-next.json" "$admin_token"
+request 200 GET /admin/terms/versions '' "$admin_token"
+check 'the back office follows the versions and their acceptances' \
+  ".versions[0].number == $((terms_version + 1)) and .versions[0].current == true and .versions[1].number == $terms_version and .versions[1].acceptances >= 1"
+
+# Le compte de l'utilisateur lui est fermé — sauf l'essentiel — jusqu'à ce qu'il accepte.
+request 403 GET /me/profile '' "$user_token"
+check 'the account must accept the new version before continuing' '.code == "TERMS_ACCEPTANCE_REQUIRED"'
+request 200 GET /me '' "$user_token"
+check 'the account is told so' '.termsAcceptanceRequired == true'
+request 200 GET /me/sessions '' "$user_token"
+# On n'accepte que la version en vigueur : celle qu'on a pu lire.
+request 409 POST /me/terms/acceptance "$(jq -n --argjson v "$terms_version" '{version: $v}')" "$user_token"
+check 'a superseded version cannot be accepted' '.code == "TERMS_VERSION_NOT_CURRENT"'
+request 200 POST /me/terms/acceptance "$(jq -n --argjson v "$((terms_version + 1))" '{version: $v}')" "$user_token"
+check 'the acceptance is recorded' \
+  ".accepted.number == $((terms_version + 1)) and .acceptanceRequired == false"
+request 200 GET /me/profile '' "$user_token"
+request 200 GET /me/activity '' "$user_token"
+check 'the activity shows both acceptances' '[.entries[] | select(.type == "TERMS_ACCEPTED")] | length == 2'
 
 # --- 5. Vérification d'identité, pièces comprises, à travers le proxy ---------------------------
 request 200 PUT /admin/system-settings/features.kyc \
@@ -298,7 +440,132 @@ request 200 GET /me/activity '' "$user_token"
 check 'the activity shows the submission and the approval' \
   '[.entries[].type] | (index("IDENTITY_VERIFICATION_SUBMITTED") != null and index("IDENTITY_VERIFICATION_APPROVED") != null)'
 
-# --- 6. Back-office des comptes ------------------------------------------------------------------
+# --- 6. Grand livre : un actif, un portefeuille à zéro, la balance -----------------------------
+# Le parcours enregistre un actif, puis lit le portefeuille de l'utilisateur et la balance du
+# grand livre. Un actif enregistré est définitif : son code est propre à cette exécution, pour
+# que le script passe aussi sur une pile déjà utilisée.
+asset_code="T$(date +%s)"
+asset="$(jq -n --arg c "$asset_code" \
+  '{code: $c, name: "Smoke test asset", kind: "FIAT", scale: 2, reason: "Smoke test of the containerised stack"}')"
+
+request 200 GET /me/wallets '' "$user_token"
+check 'an asset that is not registered is no wallet of the account' \
+  "[.wallets[].asset.code] | index(\"$asset_code\") == null"
+request 403 POST /admin/ledger/assets "$asset" "$user_token"
+check 'an account holder cannot register an asset' '.code == "FORBIDDEN"'
+request 201 POST /admin/ledger/assets "$asset" "$admin_token"
+check 'the asset is registered with its two decimals, and names who registered it' \
+  ".code == \"$asset_code\" and .kind == \"FIAT\" and .scale == 2 and .registeredBy != null and .registeredAt != null"
+# Un actif ne s'enregistre qu'une fois.
+request 409 POST /admin/ledger/assets "$asset" "$admin_token"
+
+# Le titulaire dispose aussitôt d'un portefeuille dans cet actif : à zéro, sans mouvement.
+request 200 GET /me/wallets '' "$user_token"
+check 'the account now has an empty wallet in the asset, written with its two decimals' \
+  "[.wallets[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].available == \"0.00\" and .[0].asset.scale == 2"
+request 200 GET "/me/wallets/$asset_code/movements" '' "$user_token"
+check 'the wallet has no movement' \
+  '.wallet.available == "0.00" and .movements == [] and .nextCursor == null'
+request 404 GET /me/wallets/NOSUCHASSET/movements '' "$user_token"
+
+# Vu du back-office : lire un portefeuille n'a ouvert aucun compte, et le grand livre est équilibré.
+request 200 GET "/admin/ledger/accounts?assetCode=$asset_code" '' "$admin_token"
+check 'no ledger account was opened' '.accounts == [] and .nextCursor == null'
+request 200 GET /admin/ledger/trial-balance '' "$admin_token"
+check 'the ledger is balanced, and holds nothing in the new asset' \
+  ".balanced == true and ([.assets[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].balanced == true and .[0].debitBalance == \"0.00\" and .[0].creditBalance == \"0.00\" and ([.[0].accountTypes[].accounts] | add) == 0)"
+
+# --- 7. Transferts entre titulaires : fermés tant que rien n'est fixé, puis plafonnés ----------
+# Aucune route ne crédite encore un portefeuille : le parcours ne peut mener aucun transfert à
+# son terme. Il vérifie ce qui le précède — la fonctionnalité s'ouvre, les plafonds se fixent au
+# back-office, niveau par niveau — et que chaque refus est le bon, sans qu'aucun fonds ne bouge.
+limits_path="/admin/transfer-limits/$asset_code/1"
+# limits <par transfert> <sur 24 heures> <sur 31 jours> — corps d'un réglage des plafonds.
+limits() {
+  jq -n --arg t "$1" --arg d "$2" --arg m "$3" \
+    '{perTransfer: $t, daily: $d, monthly: $m, reason: "Smoke test of the containerised stack"}'
+}
+# transfer <montant> [mot de passe] — corps d'une demande de transfert, vers une adresse que nul
+# ne porte : le destinataire n'est examiné qu'en dernier, aucune de ces demandes n'ira jusque-là.
+transfer() {
+  jq -n --arg r "nobody-$email" --arg a "$asset_code" --arg m "$1" --arg p "${2:-$password}" \
+    '{recipientEmail: $r, assetCode: $a, amount: $m, currentPassword: $p}'
+}
+# Une clé d'idempotence neuve : une demande refusée ne garde pas la sienne, mais chaque demande
+# est ici une demande différente.
+idempotency_key() {
+  echo "Idempotency-Key: smoke-$(openssl rand -hex 12)"
+}
+
+request 200 PUT /admin/system-settings/features.internal_transfers \
+  '{"value": true, "reason": "Smoke test of the containerised stack"}' "$admin_token"
+# L'ouverture d'une fonctionnalité est visible en quelques secondes au plus sur chaque instance.
+enabled=""
+for _ in $(seq 1 20); do
+  status="$(curl --silent --output "$BODY" --write-out '%{http_code}' --header "Authorization: Bearer $user_token" "$API/me/transfer-limits")"
+  enabled="$(jq -r '.enabled // false' "$BODY" 2>/dev/null || true)"
+  [ "$status" = "200" ] && [ "$enabled" = "true" ] && break
+  sleep 0.5
+done
+[ "$status" = "200" ] && [ "$enabled" = "true" ] || { echo "FAIL  GET /me/transfer-limits -> $status, enabled: $enabled" >&2; cat "$BODY" >&2; exit 1; }
+echo "ok    GET /me/transfer-limits -> 200 (transfers between holders are open)"
+check 'no limit is set in the new asset: the account, verified at level 1, can send nothing in it' \
+  ".level == 1 and ([.allowances[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].limit == null and .[0].remaining == \"0.00\")"
+request 200 GET /admin/transfer-limits '' "$admin_token"
+check 'the back office lists no limit for the new asset' \
+  "[.limits[] | select(.asset.code == \"$asset_code\")] == []"
+
+# Sans clé d'idempotence, aucune demande n'est examinée.
+request 400 POST /me/transfers "$(transfer 25.00)" "$user_token"
+check 'a transfer request must carry an idempotency key' \
+  '.code == "VALIDATION_FAILED" and .errors[0].path == "Idempotency-Key"'
+# Une session ouverte ne suffit pas : le mot de passe est redemandé.
+request 401 POST /me/transfers "$(transfer 25.00 not-the-password-1)" "$user_token" "$(idempotency_key)"
+# Fermé tant que rien n'est fixé : sans plafond pour son niveau, le compte n'envoie rien.
+request 403 POST /me/transfers "$(transfer 25.00)" "$user_token" "$(idempotency_key)"
+check 'without a limit for its level, the account cannot send the asset' '.code == "TRANSFER_NOT_PERMITTED"'
+
+# Les plafonds se fixent au back-office — pas par un titulaire, et dans l'ordre.
+request 403 PUT "$limits_path" "$(limits 100.00 250.00 1000.00)" "$user_token"
+check 'an account holder cannot set the limits' '.code == "FORBIDDEN"'
+request 400 PUT "$limits_path" "$(limits 100.00 50.00 1000.00)" "$admin_token"
+check 'the limit over 24 hours cannot be lower than the limit per transfer' \
+  '.code == "VALIDATION_FAILED" and .errors[0].path == "daily"'
+request 400 PUT "$limits_path" "$(limits 100.00 250.00 1000.001)" "$admin_token"
+check 'a limit has at most the decimals of the asset' \
+  '.code == "VALIDATION_FAILED" and .errors[0].path == "monthly"'
+request 200 PUT "$limits_path" "$(limits 100.00 250.00 1000.00)" "$admin_token"
+check 'the limits of level 1 are set in the asset, and name who set them' \
+  ".asset.code == \"$asset_code\" and .level == 1 and .perTransfer == \"100.00\" and .daily == \"250.00\" and .monthly == \"1000.00\" and .setBy != null and .setAt != null"
+request 200 GET /admin/transfer-limits '' "$admin_token"
+check 'the back office lists them: one level of the asset is open, the others are not' \
+  "[.limits[] | select(.asset.code == \"$asset_code\") | .level] == [1]"
+
+# L'effet est immédiat. Chaque refus pour sa raison : le plafond d'abord, puis le solde — le
+# portefeuille est vide.
+request 422 POST /me/transfers "$(transfer 100.01)" "$user_token" "$(idempotency_key)"
+check 'an amount above the limit per transfer is refused' '.code == "TRANSFER_LIMIT_EXCEEDED"'
+request 422 POST /me/transfers "$(transfer 100.00)" "$user_token" "$(idempotency_key)"
+check 'an amount within the limits is refused for lack of funds' '.code == "INSUFFICIENT_FUNDS"'
+request 400 POST /me/transfers "$(transfer 25.001)" "$user_token" "$(idempotency_key)"
+check 'an amount has at most the decimals of the asset' \
+  '.code == "VALIDATION_FAILED" and .errors[0].path == "amount"'
+
+# Rien n'a bougé : aucun transfert, aucun compte ouvert dans le grand livre — le portefeuille est
+# donc toujours vide —, et le titulaire lit ses plafonds, dont un transfert refusé n'entame rien.
+# Il retrouve les refus dans son activité.
+request 200 GET /me/transfers '' "$user_token"
+check 'no transfer was made' '.transfers == [] and .nextCursor == null'
+request 200 GET "/admin/ledger/accounts?assetCode=$asset_code" '' "$admin_token"
+check 'the refusals opened no ledger account' '.accounts == []'
+request 200 GET /me/transfer-limits '' "$user_token"
+check 'the account reads its limits, and a refused transfer used nothing of them' \
+  "[.allowances[] | select(.asset.code == \"$asset_code\")] | length == 1 and .[0].limit == {perTransfer: \"100.00\", daily: \"250.00\", monthly: \"1000.00\"} and .[0].used == {last24Hours: \"0.00\", last31Days: \"0.00\"} and .[0].remaining == \"100.00\""
+request 200 GET /me/activity '' "$user_token"
+check 'the activity shows the refused transfers and the failed proof' \
+  '[.entries[].type] | (([.[] | select(. == "TRANSFER_REFUSED")] | length) == 3 and index("TRANSFER_FAILED") != null)'
+
+# --- 8. Back-office des comptes ------------------------------------------------------------------
 request 200 POST /admin/users/search "$(jq -n --arg e "$email" '{email: $e}')" "$admin_token"
 check 'the back office finds the account by its address' ".users | length == 1 and .[0].id == \"$user_id\""
 request 200 GET '/admin/users?limit=5' '' "$admin_token"
@@ -308,7 +575,7 @@ request 200 POST "/admin/users/$user_id/sessions/revoke" \
 check 'the sessions of the account are closed' '.revokedSessions >= 1'
 request 401 GET /me '' "$user_token"
 
-# --- 7. Copie des données, puis clôture du compte ----------------------------------------------
+# --- 9. Copie des données, puis clôture du compte ----------------------------------------------
 request 200 POST /auth/login "$credentials"
 user_token="$(jq -r .tokens.accessToken "$BODY")"
 holder_proof="$(jq -n --arg p "$password" '{currentPassword: $p}')"
@@ -316,8 +583,8 @@ holder_proof="$(jq -n --arg p "$password" '{currentPassword: $p}')"
 request 400 POST /me/data-export '{}' "$user_token"
 request 401 POST /me/data-export '{"currentPassword": "not-the-password-1"}' "$user_token"
 request 200 POST /me/data-export "$holder_proof" "$user_token"
-check 'the copy holds the account, its verified identity and its history' \
-  ".formatVersion == 1 and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0"
+check 'the copy holds the account, its verified identity, its history — and no wallet nor transfer, none having been made' \
+  ".formatVersion == 4 and .wallets == [] and .transfers == {items: [], truncated: false} and .account.email == \"$email\" and .verification.level == 1 and (.verification.cases | length) == 1 and (.activity.entries | length) > 0 and ([.terms.acceptances[].version] == [$((terms_version + 1)), $terms_version])"
 check 'the copy never holds the full number of the identity document' \
   "tostring | contains(\"$document_number\") | not"
 
