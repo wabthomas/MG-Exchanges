@@ -947,7 +947,9 @@
                                   "kyc.revoke",
                                   "terms.publish",
                                   "ledger.read",
-                                  "ledger.manage_assets"
+                                  "ledger.manage_assets",
+                                  "transfer_limits.read",
+                                  "transfer_limits.write"
                                 ]
                               }
                             },
@@ -1260,7 +1262,9 @@
                               "kyc.revoke",
                               "terms.publish",
                               "ledger.read",
-                              "ledger.manage_assets"
+                              "ledger.manage_assets",
+                              "transfer_limits.read",
+                              "transfer_limits.write"
                             ]
                           }
                         },
@@ -1838,7 +1842,9 @@
                           "kyc.revoke",
                           "terms.publish",
                           "ledger.read",
-                          "ledger.manage_assets"
+                          "ledger.manage_assets",
+                          "transfer_limits.read",
+                          "transfer_limits.write"
                         ]
                       }
                     },
@@ -3368,7 +3374,10 @@
                               "DATA_EXPORTED",
                               "DATA_EXPORT_FAILED",
                               "ACCOUNT_CLOSURE_FAILED",
-                              "TERMS_ACCEPTED"
+                              "TERMS_ACCEPTED",
+                              "TRANSFER_SENT",
+                              "TRANSFER_FAILED",
+                              "TRANSFER_REFUSED"
                             ]
                           },
                           "occurredAt": {
@@ -3507,7 +3516,7 @@
                     "formatVersion": {
                       "type": "number",
                       "enum": [
-                        3
+                        4
                       ]
                     },
                     "generatedAt": {
@@ -3792,7 +3801,10 @@
                                   "DATA_EXPORTED",
                                   "DATA_EXPORT_FAILED",
                                   "ACCOUNT_CLOSURE_FAILED",
-                                  "TERMS_ACCEPTED"
+                                  "TERMS_ACCEPTED",
+                                  "TRANSFER_SENT",
+                                  "TRANSFER_FAILED",
+                                  "TRANSFER_REFUSED"
                                 ]
                               },
                               "occurredAt": {
@@ -4363,6 +4375,105 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "transfers": {
+                      "type": "object",
+                      "properties": {
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "direction": {
+                                "type": "string",
+                                "enum": [
+                                  "SENT",
+                                  "RECEIVED"
+                                ]
+                              },
+                              "asset": {
+                                "type": "object",
+                                "properties": {
+                                  "code": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "FIAT",
+                                      "CRYPTO"
+                                    ]
+                                  },
+                                  "scale": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 18
+                                  }
+                                },
+                                "required": [
+                                  "code",
+                                  "name",
+                                  "kind",
+                                  "scale"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "amount": {
+                                "type": "string"
+                              },
+                              "counterparty": {
+                                "type": "object",
+                                "properties": {
+                                  "email": {
+                                    "nullable": true,
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "email"
+                                ],
+                                "additionalProperties": false
+                              },
+                              "entryId": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "createdAt": {
+                                "type": "string",
+                                "format": "date-time",
+                                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "direction",
+                              "asset",
+                              "amount",
+                              "counterparty",
+                              "entryId",
+                              "createdAt"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "truncated": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "items",
+                        "truncated"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -4375,7 +4486,8 @@
                     "activity",
                     "verification",
                     "terms",
-                    "wallets"
+                    "wallets",
+                    "transfers"
                   ],
                   "additionalProperties": false
                 }
@@ -6836,7 +6948,9 @@
                                 "kyc.revoke",
                                 "terms.publish",
                                 "ledger.read",
-                                "ledger.manage_assets"
+                                "ledger.manage_assets",
+                                "transfer_limits.read",
+                                "transfer_limits.write"
                               ]
                             }
                           },
@@ -15910,7 +16024,7 @@
     },
     "/api/v1/me/wallets": {
       "get": {
-        "description": "One wallet per asset in which the platform keeps accounts, in the order of asset codes — at zero until funds are posted to it. The list is empty while no asset is registered. `available` is a **decimal string** with exactly `asset.scale` decimals, never a JSON number. Read-only: no route moves funds yet.",
+        "description": "One wallet per asset in which the platform keeps accounts, in the order of asset codes — at zero until funds are posted to it. The list is empty while no asset is registered. `available` is a **decimal string** with exactly `asset.scale` decimals, never a JSON number. Read-only: funds move through operations, such as `POST /me/transfers`.",
         "operationId": "WalletController_list_v1",
         "parameters": [],
         "responses": {
@@ -17462,6 +17576,1190 @@
         ]
       }
     },
+    "/api/v1/me/transfers": {
+      "post": {
+        "description": "**Immediate and permanent.** Moves `amount` of `assetCode` from my wallet to the wallet of the holder whose e-mail address is `recipientEmail`. `amount` is a **decimal string** with at most `asset.scale` decimals, never a JSON number.\n\n**Proof.** Requires the current password and — if two-step verification is enabled on the account (`422` otherwise) — `code` or `recoveryCode`: an open session is not enough.\n\n**Idempotency.** The `Idempotency-Key` header is mandatory: a value the client chooses — a UUID is fine — and sends again, unchanged, when it retries the same request. The transfer is then made once: the retry answers with the original transfer and the header `Idempotent-Replayed: true`. The same key with a different recipient, asset or amount answers `IDEMPOTENCY_KEY_REUSED`. A request that was refused does not keep its key.\n\n**Limits.** Those of my verification level in this asset, per transfer, over 24 hours and over 31 days (`GET /me/transfer-limits`): `TRANSFER_NOT_PERMITTED` if none is set for my level, `TRANSFER_LIMIT_EXCEEDED` if the amount exceeds one of them.\n\n**Refusals** — nothing is moved: `INSUFFICIENT_FUNDS`; `RECIPIENT_UNAVAILABLE`, the same answer whether the address is unknown, the account closed or suspended, or its verification level not open in this asset — after too many of these, `429`; `422` when the recipient is my own account; `409` when the account changed during the request — send it again. At most 30 attempts per hour. Both parties are told by e-mail, and each sees the e-mail address of the other.",
+        "operationId": "TransferController_create_v1",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "16 to 128 characters: letters, digits, \".\", \"_\", \":\" or \"-\".",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "recipientEmail": {
+                    "type": "string"
+                  },
+                  "assetCode": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "string"
+                  },
+                  "currentPassword": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "code": {
+                    "type": "string",
+                    "pattern": "^\\d{6}$"
+                  },
+                  "recoveryCode": {
+                    "type": "string",
+                    "maxLength": 32
+                  }
+                },
+                "required": [
+                  "recipientEmail",
+                  "assetCode",
+                  "amount",
+                  "currentPassword"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "headers": {
+              "Idempotent-Replayed": {
+                "description": "Present, with the value `true`, when the transfer had already been made under this idempotency key: nothing was moved again.",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "true"
+                  ]
+                }
+              }
+            },
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "SENT",
+                        "RECEIVED"
+                      ]
+                    },
+                    "asset": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FIAT",
+                            "CRYPTO"
+                          ]
+                        },
+                        "scale": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 18
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "name",
+                        "kind",
+                        "scale"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "email": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "entryId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "asset",
+                    "amount",
+                    "counterparty",
+                    "entryId",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the resource (`CONFLICT`, `TERMS_VERSION_NOT_CURRENT`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Understood but refused by a business rule (`UNPROCESSABLE_ENTITY`, `COUNTRY_NOT_SUPPORTED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Transfer funds to another account holder",
+        "tags": [
+          "Transfers"
+        ]
+      },
+      "get": {
+        "description": "Transfers I sent and received, **most recent first**. `direction` tells which; `counterparty.email` is the address the other account carries today — `null` once that account is closed. `entryId` is the ledger entry of the transfer: the wallet movement that carries the same `entryId` is this transfer. Page with `after` = the `nextCursor` of the previous page. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers.",
+        "operationId": "TransferController_list_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "transfers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "direction": {
+                            "type": "string",
+                            "enum": [
+                              "SENT",
+                              "RECEIVED"
+                            ]
+                          },
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "amount": {
+                            "type": "string"
+                          },
+                          "counterparty": {
+                            "type": "object",
+                            "properties": {
+                              "email": {
+                                "nullable": true,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "email"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "entryId": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "direction",
+                          "asset",
+                          "amount",
+                          "counterparty",
+                          "entryId",
+                          "createdAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "nextCursor": {
+                      "nullable": true,
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "transfers",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "My transfers",
+        "tags": [
+          "Transfers"
+        ]
+      }
+    },
+    "/api/v1/me/transfers/{transferId}": {
+      "get": {
+        "description": "Answers `NOT_FOUND` for a transfer I am neither the sender nor the recipient of. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers.",
+        "operationId": "TransferController_find_v1",
+        "parameters": [
+          {
+            "name": "transferId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "direction": {
+                      "type": "string",
+                      "enum": [
+                        "SENT",
+                        "RECEIVED"
+                      ]
+                    },
+                    "asset": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FIAT",
+                            "CRYPTO"
+                          ]
+                        },
+                        "scale": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 18
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "name",
+                        "kind",
+                        "scale"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "amount": {
+                      "type": "string"
+                    },
+                    "counterparty": {
+                      "type": "object",
+                      "properties": {
+                        "email": {
+                          "nullable": true,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "entryId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "direction",
+                    "asset",
+                    "amount",
+                    "counterparty",
+                    "entryId",
+                    "createdAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "One of my transfers",
+        "tags": [
+          "Transfers"
+        ]
+      }
+    },
+    "/api/v1/me/transfer-limits": {
+      "get": {
+        "description": "For each asset the platform keeps, in the order of asset codes: the limits of my verification level (`level`) — per transfer, over the last 24 hours, over the last 31 days —, what I already sent in these two periods, and `remaining`, the largest amount the limits still allow right now, whatever my wallet holds. `limit` is `null` while no limit is set for my level in that asset: I can neither send nor receive it — nor can I when the limit per transfer is zero. `enabled` tells whether transfers between holders are open at all. Amounts are **decimal strings** with exactly `asset.scale` decimals, never JSON numbers.",
+        "operationId": "TransferController_allowances_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "level": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            2
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            3
+                          ]
+                        }
+                      ]
+                    },
+                    "allowances": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "limit": {
+                            "nullable": true,
+                            "type": "object",
+                            "properties": {
+                              "perTransfer": {
+                                "type": "string"
+                              },
+                              "daily": {
+                                "type": "string"
+                              },
+                              "monthly": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "perTransfer",
+                              "daily",
+                              "monthly"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "used": {
+                            "type": "object",
+                            "properties": {
+                              "last24Hours": {
+                                "type": "string"
+                              },
+                              "last31Days": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "last24Hours",
+                              "last31Days"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "remaining": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "asset",
+                          "limit",
+                          "used",
+                          "remaining"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "level",
+                    "allowances"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "What I may transfer",
+        "tags": [
+          "Transfers"
+        ]
+      }
+    },
+    "/api/v1/admin/transfer-limits": {
+      "get": {
+        "description": "Every limit that was set, in the order of asset codes then of verification levels (`0`: no level verified). **An asset and level that are not listed have no limit: accounts of that level can neither send nor receive that asset** — nor can they when the limit per transfer is zero. Amounts are **decimal strings** with exactly `asset.scale` decimals. The consultation is recorded in the audit log. Requires `transfer_limits.read`.",
+        "operationId": "AdminTransferLimitsController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "limits": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "perTransfer": {
+                            "type": "string"
+                          },
+                          "daily": {
+                            "type": "string"
+                          },
+                          "monthly": {
+                            "type": "string"
+                          },
+                          "asset": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "FIAT",
+                                  "CRYPTO"
+                                ]
+                              },
+                              "scale": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 18
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "name",
+                              "kind",
+                              "scale"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "level": {
+                            "anyOf": [
+                              {
+                                "type": "number",
+                                "enum": [
+                                  0
+                                ]
+                              },
+                              {
+                                "type": "number",
+                                "enum": [
+                                  1
+                                ]
+                              },
+                              {
+                                "type": "number",
+                                "enum": [
+                                  2
+                                ]
+                              },
+                              {
+                                "type": "number",
+                                "enum": [
+                                  3
+                                ]
+                              }
+                            ]
+                          },
+                          "setBy": {
+                            "nullable": true,
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                          },
+                          "setAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "perTransfer",
+                          "daily",
+                          "monthly",
+                          "asset",
+                          "level",
+                          "setBy",
+                          "setAt"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "limits"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List the transfer limits",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
+    "/api/v1/admin/transfer-limits/{assetCode}/{level}": {
+      "put": {
+        "description": "Sets — or replaces — what accounts of verification level `level` (`0` to `3`) may send in `assetCode`: `perTransfer`, per transfer; `daily`, over any 24 hours; `monthly`, over any 31 days. **Effective at once**: the next transfer is examined with them. The three amounts are **decimal strings** with at most `asset.scale` decimals, and must be in order: `perTransfer` ≤ `daily` ≤ `monthly`.\n\nSetting limits for a level **opens** the asset to it, for sending and for receiving. Limits are never removed: set the three amounts to `0` to close the asset to that level again. Transfers also require the `internalTransfers` feature to be open. Answers `NOT_FOUND` for an asset the platform does not keep.\n\nThe mandatory `reason` is written to the audit log with the limits before and after. Requires `transfer_limits.write`.",
+        "operationId": "AdminTransferLimitsController_set_v1",
+        "parameters": [
+          {
+            "name": "assetCode",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "level",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-3]$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "perTransfer": {
+                    "type": "string"
+                  },
+                  "daily": {
+                    "type": "string"
+                  },
+                  "monthly": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 10,
+                    "maxLength": 500
+                  }
+                },
+                "required": [
+                  "perTransfer",
+                  "daily",
+                  "monthly",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "perTransfer": {
+                      "type": "string"
+                    },
+                    "daily": {
+                      "type": "string"
+                    },
+                    "monthly": {
+                      "type": "string"
+                    },
+                    "asset": {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "FIAT",
+                            "CRYPTO"
+                          ]
+                        },
+                        "scale": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 18
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "name",
+                        "kind",
+                        "scale"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "level": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "enum": [
+                            0
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            1
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            2
+                          ]
+                        },
+                        {
+                          "type": "number",
+                          "enum": [
+                            3
+                          ]
+                        }
+                      ]
+                    },
+                    "setBy": {
+                      "nullable": true,
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "setAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "perTransfer",
+                    "daily",
+                    "monthly",
+                    "asset",
+                    "level",
+                    "setBy",
+                    "setAt"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (`VALIDATION_FAILED`, `MALFORMED_REQUEST`, `INVALID_OR_EXPIRED_CODE`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid credentials (`UNAUTHENTICATED`, `INVALID_CREDENTIALS`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not allowed (`FORBIDDEN`, `FEATURE_DISABLED`, `EMAIL_NOT_VERIFIED`, `ACCOUNT_DISABLED`, `MFA_ENROLLMENT_REQUIRED`, `TERMS_ACCEPTANCE_REQUIRED`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found (`NOT_FOUND`).",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests or attempts (`RATE_LIMITED`); see the `Retry-After` header.",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the transfer limits of a verification level in an asset",
+        "tags": [
+          "Administration"
+        ]
+      }
+    },
     "/health/live": {
       "get": {
         "operationId": "HealthController_live",
@@ -17730,7 +19028,7 @@
   },
   "info": {
     "title": "MG-Exchange API",
-    "description": "MG-Exchange platform API.\n\n**Conventions**\n- Versioned routes: `/api/v1/...`.\n- Monetary amounts are decimal **strings** (`\"12.34\"`), never JSON numbers.\n- Timestamps are ISO 8601 in UTC.\n- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.\n- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.\n- Every response carries an `X-Request-Id` header for support and log correlation.",
+    "description": "MG-Exchange platform API.\n\n**Conventions**\n- Versioned routes: `/api/v1/...`.\n- Monetary amounts are decimal **strings** (`\"12.34\"`), never JSON numbers.\n- Timestamps are ISO 8601 in UTC.\n- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.\n- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.\n- Every response carries an `X-Request-Id` header for support and log correlation.\n- Every route that moves funds requires an `Idempotency-Key` header: send the same value when retrying the same request, and the operation is carried out once.",
     "version": "0.1.0",
     "contact": {}
   },
@@ -17750,6 +19048,10 @@
     {
       "name": "Wallets",
       "description": "Balances and movements of the signed-in account (read-only)"
+    },
+    {
+      "name": "Transfers",
+      "description": "Transfers of funds between account holders, and their limits"
     },
     {
       "name": "Administration",
@@ -17795,6 +19097,7 @@
               "INVALID_CREDENTIALS",
               "FORBIDDEN",
               "FEATURE_DISABLED",
+              "TRANSFER_NOT_PERMITTED",
               "EMAIL_NOT_VERIFIED",
               "ACCOUNT_DISABLED",
               "MFA_ENROLLMENT_REQUIRED",
@@ -17809,6 +19112,10 @@
               "UNSUPPORTED_MEDIA_TYPE",
               "UNPROCESSABLE_ENTITY",
               "COUNTRY_NOT_SUPPORTED",
+              "IDEMPOTENCY_KEY_REUSED",
+              "INSUFFICIENT_FUNDS",
+              "TRANSFER_LIMIT_EXCEEDED",
+              "RECIPIENT_UNAVAILABLE",
               "RATE_LIMITED",
               "INTERNAL_ERROR",
               "MAINTENANCE",

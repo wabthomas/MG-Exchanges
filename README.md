@@ -8,11 +8,13 @@ République démocratique du Congo ; l'architecture est prévue pour s'étendre 
 > vérification du téléphone, routes d'administration des comptes, vérification d'identité des
 > particuliers (KYC, examen manuel), clôture de compte, copie et effacement des données,
 > conditions d'utilisation versionnées (publication, acceptation) sont livrés ; la
-> vérification des entreprises reste à faire. Phase 3 commencée : le grand livre en partie
-> double est en place (lot 1), sans aucune opération.**
-> **Aucune opération financière n'existe : ni dépôt, ni paiement, ni transfert, ni retrait.**
-> Le grand livre tient des comptes, mais aucune route n'y passe d'écriture : tous les soldes
-> valent zéro.
+> vérification des entreprises reste à faire. Phase 3 en cours : le grand livre en partie
+> double (lot 1) et une première opération, le transfert entre deux titulaires (lot 2), sont
+> en place.**
+> **Aucune route ne dépose ni ne retire de fonds : ni dépôt, ni paiement, ni retrait.** Le
+> transfert ne déplace que des fonds déjà présents dans un portefeuille — et aucune route
+> n'en apporte : tous les soldes valent zéro. Les transferts sont **fermés par défaut**, et
+> **aucun plafond n'est livré avec le code** : leurs valeurs restent à décider.
 > L'inscription et la vérification d'identité sont fermées par défaut, et personne ne
 > s'inscrit tant qu'aucune version des conditions d'utilisation n'est publiée — **leur texte
 > n'est pas fourni par ce dépôt**. Les e-mails partent par
@@ -31,7 +33,7 @@ packages/
   shared/              primitives métier : montants exacts (bigint), sans virgule flottante
   validation/          schémas de validation primitifs (Zod), partagés avec les futurs clients
   contracts/           contrats de l'API : erreurs, identité, vérification d'identité,
-                       back-office, grand livre, catalogue des permissions
+                       back-office, grand livre, transferts, catalogue des permissions
   config/              préréglages d'outillage : TypeScript, ESLint, Jest
 infrastructure/
   docker/              image de l'API, initialisation de PostgreSQL (rôles et privilèges)
@@ -94,18 +96,19 @@ application d'authentification) : sans elle, les routes `/api/v1/admin/…` rép
 
 L'API écoute sur `http://localhost:3000` :
 
-| URL                         | Rôle                                                                                                                              |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `/api/docs`                 | documentation interactive (Swagger UI) — développement seul                                                                       |
-| `/api/v1/system/status`     | état de la plateforme et fonctionnalités ouvertes                                                                                 |
-| `/api/v1/auth/…`            | inscription, connexion en une ou deux étapes, mot de passe                                                                        |
-| `/api/v1/me/…`              | compte, sessions, second facteur, profil, téléphone, historique                                                                   |
-| `/api/v1/me/verification/…` | vérification d'identité : dossiers par niveau, envoi des pièces                                                                   |
-| `/api/v1/me/wallets/…`      | portefeuilles : soldes et mouvements, **en lecture seule**                                                                        |
-| `/api/v1/admin/…`           | back-office : paramètres, comptes, rôles, examen des dossiers de vérification, grand livre (permissions et second facteur requis) |
-| `/api/v1/dev/mailbox`       | e-mails et SMS « envoyés » — développement seul                                                                                   |
-| `/health/live`              | sonde de vivacité                                                                                                                 |
-| `/health/ready`             | sonde de disponibilité (PostgreSQL, Redis)                                                                                        |
+| URL                         | Rôle                                                                                                                                                     |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/api/docs`                 | documentation interactive (Swagger UI) — développement seul                                                                                              |
+| `/api/v1/system/status`     | état de la plateforme et fonctionnalités ouvertes                                                                                                        |
+| `/api/v1/auth/…`            | inscription, connexion en une ou deux étapes, mot de passe                                                                                               |
+| `/api/v1/me/…`              | compte, sessions, second facteur, profil, téléphone, historique                                                                                          |
+| `/api/v1/me/verification/…` | vérification d'identité : dossiers par niveau, envoi des pièces                                                                                          |
+| `/api/v1/me/wallets/…`      | portefeuilles : soldes et mouvements, **en lecture seule**                                                                                               |
+| `/api/v1/me/transfers`      | transferts entre titulaires : envoyer (clé d'idempotence, mot de passe), consulter ; `/api/v1/me/transfer-limits` : ses plafonds                         |
+| `/api/v1/admin/…`           | back-office : paramètres, comptes, rôles, examen des dossiers de vérification, grand livre, plafonds de transfert (permissions et second facteur requis) |
+| `/api/v1/dev/mailbox`       | e-mails et SMS « envoyés » — développement seul                                                                                                          |
+| `/health/live`              | sonde de vivacité                                                                                                                                        |
+| `/health/ready`             | sonde de disponibilité (PostgreSQL, Redis)                                                                                                               |
 
 Toute route exige une authentification, sauf celles explicitement publiques. L'inscription
 est fermée par défaut : un administrateur l'ouvre avec
@@ -116,6 +119,13 @@ lisent sur `/api/v1/dev/mailbox?recipient=<adresse ou numéro>`.
 Les portefeuilles sont vides tant qu'aucun actif n'est enregistré : un administrateur le fait
 avec `POST /api/v1/admin/ledger/assets` — **définitif**, un actif ne se modifie ni ne se
 retire (voir [docs/API.md](docs/API.md)). Enregistrer un actif ne déplace aucun fonds.
+
+Les transferts entre titulaires demandent trois décisions d'un administrateur : l'actif est
+enregistré ; des plafonds sont fixés, dans cet actif, pour chaque niveau de vérification
+concerné (`PUT /api/v1/admin/transfer-limits/{actif}/{niveau}`) ; la fonctionnalité est
+ouverte (`…/features.internal_transfers`). Chaque transfert exige l'en-tête
+`Idempotency-Key` et le mot de passe du titulaire. **Aucune route ne crédite encore un
+portefeuille** : il n'y a rien à transférer tant que les dépôts n'existent pas.
 
 Pile entièrement conteneurisée (migrations, API, Nginx sur le port 8080) :
 

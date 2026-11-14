@@ -72,13 +72,18 @@ apps/api/src/
                           examen par la conformité
     ledger/               grand livre en partie double : actifs, comptes, écritures ;
                           portefeuilles en lecture ; vérification périodique
+    transfers/            transferts entre titulaires : clé d'idempotence, preuve du
+                          titulaire, plafonds par niveau de vérification ; administration
+                          des plafonds
   cli/                    outil d'exploitation (création des premiers administrateurs,
                           publication des conditions d'utilisation)
 ```
 
-**Sens des dépendances entre modules métier.** `kyc` et `ledger` dépendent d'`identity`
-(comptes, gardes, permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien de ces
-modules.
+**Sens des dépendances entre modules métier.** `kyc`, `ledger` et `transfers` dépendent
+d'`identity` (comptes, gardes, permissions, preuve du titulaire) ; l'inverse n'est pas vrai :
+l'identité n'importe rien de ces modules. `transfers` dépend en outre de `ledger` — il y
+passe ses écritures (`LedgerService.postWithin`) et y lit les actifs et les soldes
+(`LedgerReader`) — ; le grand livre, lui, ignore tout des opérations qui s'en servent.
 
 - Pour connaître le niveau d'un compte et son profil vérifié, elle **lit** les dossiers
   acceptés à travers son propre port, `VerificationStatusReader` — en lecture seule : seul le
@@ -93,9 +98,11 @@ modules.
   conserver, ce qui s'efface à la clôture puis à l'échéance, ce qui figure dans la copie
   remise au titulaire. Le grand livre s'y inscrit : des fonds s'opposent à la clôture, une
   écriture passée impose dix ans de conservation, rien ne s'efface, les portefeuilles
-  figurent dans la copie. **Tout module à venir qui rattache des données à un compte — les
-  ordres, par exemple — doit s'y inscrire** : sans cela, la clôture ignorerait ce qu'il
-  détient.
+  figurent dans la copie. Les transferts s'y inscrivent aussi, pour la seule copie des
+  données : ils ne retiennent pas la clôture — ce sont les fonds restants qui la retiennent,
+  et le grand livre le dit — et ne s'effacent pas. **Tout module à venir qui rattache des
+  données à un compte — les ordres, par exemple — doit s'y inscrire** : sans cela, la clôture
+  ignorerait ce qu'il détient.
   La base, elle, refuse de toute façon une ligne ajoutée à un compte clôturé, pour les tables
   qui portent le déclencheur `<table>_account_open` (voir [`DATABASE.md`](DATABASE.md)).
 
@@ -121,6 +128,13 @@ routes et échoue tant qu'une route ajoutée n'est pas classée.
 
 Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
 
+**En-tête `Idempotency-Key`.** Une route qui déplace des fonds le reçoit par le décorateur
+de paramètre `@IdempotencyKey()` (`modules/transfers/presentation/idempotency-key.ts`), qui
+refuse un en-tête absent, répété ou mal formé (`400`) avant que le service ne soit appelé.
+Le format est celui du contrat (`@mgx/contracts`), que la base vérifie aussi. Une opération
+à venir réutilise ce décorateur ; ce que la clé protège — la table où elle est unique,
+l'empreinte de la requête — reste propre à chaque opération.
+
 **Corps des requêtes.** Seul le JSON est analysé — par l'analyseur commun, **avant** les
 gardes, d'où sa limite basse. Deux routes reçoivent davantage et lisent elles-mêmes leur
 corps brut (`common/http/raw-body.ts`), **après** les gardes, borné en taille et en durée :
@@ -137,16 +151,16 @@ Un envoi irrecevable est donc refusé sans avoir été lu.
 
 ### Tâches de fond
 
-| Tâche                        | Cadence        | Rôle                                                              |
-| ---------------------------- | -------------- | ----------------------------------------------------------------- |
-| relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
-| traitement des événements    | à la demande   | envoi des codes et des messages de sécurité                       |
-| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
-|                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés |
-|                              |                | à l'échéance d'effacement, événements publiés depuis trente jours |
-| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie |
-|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est       |
-|                              |                | corrigé automatiquement                                           |
+| Tâche                        | Cadence        | Rôle                                                               |
+| ---------------------------- | -------------- | ------------------------------------------------------------------ |
+| relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction     |
+| traitement des événements    | à la demande   | envoi des codes, des messages de sécurité et des avis de transfert |
+| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés,  |
+|                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés  |
+|                              |                | à l'échéance d'effacement, événements publiés depuis trente jours  |
+| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie  |
+|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est        |
+|                              |                | corrigé automatiquement                                            |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
@@ -168,11 +182,14 @@ De même, la date de publication d'une version des conditions d'utilisation et c
 acceptation sont **fixées par PostgreSQL** (`clock_timestamp()`), quelle que soit la valeur
 que l'application lui présente : ce sont des preuves, et l'ordre des versions en dépend. Il
 en va de même de la date d'une écriture du grand livre, de l'enregistrement d'un actif et de
-l'ouverture d'un compte.
+l'ouverture d'un compte ; de celle d'un transfert — **c'est elle que comptent les plafonds
+sur 24 heures et sur 31 jours**, recalculés par la base à sa propre horloge — et de celle
+d'une modification de plafonds.
 
 ### Couches d'un module métier
 
-`system-settings`, `identity`, `kyc` et `ledger` servent de modèles aux modules métier à venir :
+`system-settings`, `identity`, `kyc`, `ledger` et `transfers` servent de modèles aux modules
+métier à venir — `transfers` étant celui d'une **opération qui déplace des fonds** :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
@@ -192,7 +209,8 @@ code applicatif — précisément celles qui doivent tenir même si ce code est 
 d'audit en ajout seul, double validation des changements de rôle, parcours d'un dossier de
 vérification d'identité, clôture d'un compte, publication et acceptation des conditions
 d'utilisation, grand livre (écritures entières et équilibrées, soldes jamais négatifs, rien
-qui se modifie ni ne s'efface). Elles sont alors
+qui se modifie ni ne s'efface), transferts (plafonds du niveau de vérification, un transfert
+pour chaque écriture de transfert). Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
@@ -218,6 +236,18 @@ d'origine sans rien écrire. **Ordre des verrous : les titulaires, puis les comp
 ses comptes, dans l'ordre des leurs ; deux écritures qui se croisent s'attendent sans
 s'interbloquer. Une opération peut donc verrouiller un titulaire _avant_ de passer une
 écriture — pour vérifier un plafond, par exemple —, jamais après (ADR 0025).
+
+**Une opération, une transaction.** Le transfert en est le modèle (`TransferService`, ADR
+0026). Hors transaction d'abord : la preuve du titulaire, ce que la requête demande, la clé
+d'idempotence — le transfert existe-t-il déjà ? —, puis les bornes du compte. Dans la
+transaction ensuite, et dans cet ordre : **verrouiller le compte de l'émetteur** (`FOR NO KEY
+UPDATE` — ses opérations passent une à une, sa suspension et sa clôture attendent, mais pas
+les écritures qui le créditent) ; relire la clé, qu'une requête jumelle a pu employer pendant
+l'attente ; les plafonds, les fonds, le destinataire ; puis l'écriture
+(`LedgerService.postWithin`), la ligne de l'opération, le journal d'audit et les événements.
+Un refus annule tout : il est inscrit au journal **après** l'annulation, hors transaction, et
+ne retient pas la clé. Ce que le client a demandé d'identique rend le résultat d'origine ; ce
+qu'il a demandé d'autre sous la même clé est refusé.
 
 **Rien d'important sans trace.** `AuditService.record(tx, …)` écrit dans la transaction de
 l'opération auditée : une action sensible ne peut pas aboutir sans son entrée d'audit.
@@ -264,7 +294,10 @@ partie du code ne lit `process.env` en dehors de `config/` et des deux points d'
 3. Définir les contrats (schémas Zod) dans `@mgx/contracts`.
 4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi. Un mouvement de
    fonds passe par `LedgerService.postWithin(tx, …)`, avec une clé d'idempotence propre à
-   l'opération — jamais par une écriture directe dans les tables du grand livre.
+   l'opération — jamais par une écriture directe dans les tables du grand livre. Une route
+   qui déplace des fonds exige en plus la clé du client (`@IdempotencyKey()`) et la preuve du
+   titulaire (`HolderProofService`), et suit l'ordre décrit sous « Une opération, une
+   transaction ».
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.

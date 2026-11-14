@@ -85,6 +85,15 @@ export abstract class UserRepository {
    */
   abstract findByEmail(db: DbClient, email: string): Promise<UserRecord | null>;
 
+  /**
+   * Adresse que porte aujourd'hui chacun des comptes désignés, par identifiant. Un compte
+   * clôturé n'en porte plus : `null`. Un compte inconnu n'est pas rendu.
+   */
+  abstract findEmails(
+    db: DbClient,
+    userIds: readonly string[],
+  ): Promise<Map<string, string | null>>;
+
   abstract findByEmailWithPasswordHash(
     db: DbClient,
     email: string,

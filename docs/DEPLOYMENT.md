@@ -98,6 +98,12 @@ appliquée pendant que la version précédente tournait, celle-ci a ensuite pass
 complet — inscription, vérification d'identité, back-office, copie des données, clôture —
 sans une erreur.
 
+La migration `internal_transfers` (transferts entre titulaires) fait de même : deux tables,
+leurs règles, deux permissions. Elle ne fixe aucun plafond et n'ouvre aucune fonctionnalité.
+Constaté de la même façon, sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet sans une erreur ; puis la nouvelle version a passé le sien, transferts compris.
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -206,8 +212,9 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
 
 ## Grand livre
 
-Décisions : ADR 0025. **Aucune route ne déplace de fonds à ce jour** ; ce que l'exploitation
-doit déjà savoir :
+Décisions : ADR 0025. Une seule opération passe des écritures à ce jour — le transfert
+entre titulaires, décrit à la section suivante — et **aucune route ne crédite un
+portefeuille**. Ce que l'exploitation doit savoir :
 
 - **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
   aucun ne l'est par les migrations. Un administrateur (`super_admin`, validation en deux
@@ -253,12 +260,81 @@ doit déjà savoir :
   relèverait. Après une restauration, laisser passer la vérification horaire avant de
   rouvrir le service.
 - **Clôture d'un compte.** Un compte dont un portefeuille détient des fonds ne se clôt pas,
-  pas même par le personnel (`409`). Sans effet tant qu'aucune opération n'existe ; la
+  pas même par le personnel (`409`). Le titulaire peut les transférer à un autre compte, si
+  les transferts lui sont ouverts ; le personnel, lui, n'a aucun moyen de les sortir : la
   procédure de sortie des fonds d'un compte à fermer devra exister avant l'ouverture des
   dépôts.
 - **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
   bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
   puis à borner, avant que le grand livre ne compte des millions de lignes.
+
+## Transferts entre titulaires
+
+Décisions : ADR 0026. Ce que l'exploitation doit savoir :
+
+- **La mise à jour n'ouvre rien.** Après la migration, aucun plafond n'existe et la
+  fonctionnalité est fermée : `POST /api/v1/me/transfers` répond `403 FEATURE_DISABLED`.
+- **Ouvrir les transferts : trois décisions, dans cet ordre**, chacune par un administrateur
+  (`super_admin`, validation en deux étapes) et chacune justifiée :
+  1. **l'actif est enregistré** (voir « Grand livre ») ;
+  2. **des plafonds sont fixés**, dans cet actif, pour chaque niveau de vérification qui doit
+     y prendre part — un appel par niveau :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/transfer-limits/USD/1 \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"perTransfer":"<montant>","daily":"<montant>","monthly":"<montant>","reason":"Plafonds du niveau 1 : décision du 12/03"}'
+     ```
+
+     Les montants sont des chaînes décimales dans l'unité de l'actif (`"100.00"`), par
+     transfert, sur 24 heures glissantes et sur 31 jours glissants, et croissants.
+     **Aucune valeur n'est proposée ici : elles sont à arrêter par le propriétaire, avec la
+     conformité.** `GET /api/v1/admin/transfer-limits` relit ce qui est fixé ;
+
+  3. **la fonctionnalité est ouverte** :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/system-settings/features.internal_transfers \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"value":true,"reason":"Ouverture des transferts : décision du 12/03"}'
+     ```
+
+- **Un niveau sans plafonds n'envoie ni ne reçoit.** Niveau 0 : adresse e-mail vérifiée,
+  aucun dossier accepté ; niveaux 1 à 3 : ceux de la vérification d'identité. Pour qu'un
+  compte **reçoive**, son niveau doit avoir des plafonds non nuls dans l'actif — ce qui lui
+  permet aussi d'envoyer, dans cette limite : il n'existe pas de réglage « réception seule ».
+- **Un changement de plafonds prend effet aussitôt**, y compris pour ce qui a déjà été
+  envoyé : un compte dont les envois dépassent déjà un plafond abaissé n'envoie plus rien
+  tant qu'ils ne sont pas sortis de la fenêtre. Une valeur erronée prend effet aussitôt elle
+  aussi : relire la réponse, qui rend les plafonds tels qu'ils sont enregistrés.
+- **Refermer.** Toute la fonctionnalité : le même appel avec `"value":false` — effectif en
+  moins de cinq secondes sur chaque instance. Un niveau dans un actif : ses trois montants à
+  `"0"` — effectif aussitôt. Des plafonds ne se suppriment pas.
+- **À ne pas ouvrir en production en l'état.** Aucune route ne crédite un portefeuille : il
+  n'y a rien à transférer tant que les dépôts n'existent pas. Les valeurs des plafonds ne
+  sont pas arrêtées, et l'autorisation d'opérer reste à établir pays par pays (voir
+  `SECURITY.md`).
+- **E-mail.** Chaque transfert prévient ses deux parties. Sans serveur d'envoi configuré
+  (voir « Notifications »), ces messages ne partent pas — et le transfert a lieu quand même.
+- **Horloge de la base.** Les fenêtres de 24 heures et de 31 jours sont comptées à l'horloge
+  de PostgreSQL : elle doit être synchronisée (NTP), y compris sur un serveur de secours.
+- **Journal d'audit.** `transfer.created` (un transfert), `transfer.refused` (un refus, avec
+  son motif), `transfer.proof_failed` (mot de passe ou second facteur erroné),
+  `transfer_limit.set` (plafonds remplacés et nouveaux, justification),
+  `transfer_limit.listed_by_admin` (consultation).
+- **Journaux.** Avertissement
+  `Transfer refused by the database after the application admitted it` : l'état d'un compte a
+  changé pendant la requête — vérification retirée, plafonds abaissés, destinataire
+  suspendu ; la requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans
+  gravité ; **répété, il signale que l'application et la base ne s'accordent plus sur une
+  règle** — un défaut, à signaler.
+- **Sauvegarde et restauration.** Les transferts se restaurent avec le grand livre, **en
+  entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La
+  vérification horaire du grand livre ne relit pas cette correspondance ; la base, elle, la
+  vérifie à chaque écriture.
+- **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre désormais les
+  transferts, fixe des plafonds sur son actif de test, et **les laisse ouverts** : il est
+  fait pour une pile de test, jamais pour une plateforme en service.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -514,6 +590,9 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
    **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
    maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
    acceptation, **grand livre** : enregistrement d'un actif, portefeuille à zéro, balance,
+   **transferts** : ouverture, rien ne part sans plafonds, plafonds fixés puis lus par le
+   titulaire, demandes refusées — sans clé d'idempotence, sans le bon mot de passe, au-delà
+   du plafond, au-delà du solde — sans que rien ne bouge,
    puis copie des données et clôture du compte), contrôle que le volume
    ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
    sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle

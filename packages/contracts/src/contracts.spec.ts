@@ -99,6 +99,29 @@ import {
   walletMovementListQuerySchema,
   walletMovementSchema,
   walletSchema,
+  adminTransferLimitListSchema,
+  adminTransferLimitSchema,
+  CLIENT_IDEMPOTENCY_KEY_PATTERN,
+  clientIdempotencyKeySchema,
+  createTransferRequestSchema,
+  DATA_EXPORT_TRANSFERS_MAX_ENTRIES,
+  dataExportSchema,
+  exportedTransfersSchema,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
+  INTERNAL_TRANSFER_ENTRY_KIND,
+  nonNegativeAmountSchema,
+  positiveAmountSchema,
+  setTransferLimitRequestSchema,
+  TRANSFER_DIRECTIONS,
+  TRANSFER_LIMIT_DAILY_WINDOW_HOURS,
+  TRANSFER_LIMIT_MONTHLY_WINDOW_DAYS,
+  TRANSFER_LIMITS_PERMISSION,
+  transferAllowanceListSchema,
+  transferLimitLevelParamSchema,
+  transferListQuerySchema,
+  transferListSchema,
+  transferSchema,
 } from './index.js';
 
 describe('catalogue des codes d’erreur', () => {
@@ -1242,11 +1265,349 @@ describe('contrats du grand livre', () => {
       'FUNDS_REMAINING',
     ]);
     expect(FINANCIAL_RECORDS_RETENTION_YEARS).toBe(10);
-    // Le format de la copie change de version avec les portefeuilles.
-    expect(DATA_EXPORT_FORMAT_VERSION).toBe(3);
+    // Le format de la copie a changé de version avec les portefeuilles (3), puis avec les
+    // transferts (4).
+    expect(DATA_EXPORT_FORMAT_VERSION).toBe(4);
     expect(DATA_EXPORT_MOVEMENTS_MAX_ENTRIES).toBe(2000);
     const wallet = { asset: usd, available: '2.34', movements: [], truncated: false };
     expect(exportedWalletSchema.parse(wallet)).toEqual(wallet);
     expect(exportedWalletSchema.safeParse({ asset: usd, available: '2.34' }).success).toBe(false);
+  });
+});
+
+describe('contrats des transferts', () => {
+  const UUID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
+  const REASON = 'Ouverture des transferts en dollars';
+  const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
+  const transfer = {
+    id: UUID,
+    direction: 'SENT',
+    asset: usd,
+    amount: '25.50',
+    counterparty: { email: 'bob@example.cd' },
+    entryId: UUID,
+    createdAt: '2026-11-14T09:30:00.000Z',
+  };
+
+  it('la clé d’idempotence : 16 à 128 caractères sûrs, dont le premier est une lettre ou un chiffre', () => {
+    expect(IDEMPOTENCY_KEY_HEADER).toBe('Idempotency-Key');
+    expect(IDEMPOTENT_REPLAYED_HEADER).toBe('Idempotent-Replayed');
+    for (const key of [
+      UUID,
+      'a'.repeat(16),
+      'Z'.repeat(128),
+      '0000000000000000',
+      'order_42:retry.3-final',
+    ]) {
+      expect({ key, valid: clientIdempotencyKeySchema.safeParse(key).success }).toEqual({
+        key,
+        valid: true,
+      });
+      expect(key).toMatch(CLIENT_IDEMPOTENCY_KEY_PATTERN);
+    }
+    for (const key of [
+      undefined,
+      null,
+      42,
+      '',
+      'a'.repeat(15),
+      'a'.repeat(129),
+      `-${'a'.repeat(20)}`,
+      `.${'a'.repeat(20)}`,
+      'retry number one 0001',
+      'orders/42/retries/0001',
+      'clé-de-la-requête-0001',
+      `${'a'.repeat(20)}\n`,
+      `${UUID}, ${UUID}`,
+    ]) {
+      expect({ key, valid: clientIdempotencyKeySchema.safeParse(key).success }).toEqual({
+        key,
+        valid: false,
+      });
+    }
+  });
+
+  it('un montant est une chaîne décimale : strictement positive pour un transfert, positive ou nulle pour un plafond', () => {
+    for (const amount of ['0.01', '1', '25.50', '0.00000001', '1000000']) {
+      expect(positiveAmountSchema.safeParse(amount).success).toBe(true);
+      expect(nonNegativeAmountSchema.safeParse(amount).success).toBe(true);
+    }
+    for (const amount of ['0', '0.0', '0.00000000']) {
+      expect({ amount, positive: positiveAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        positive: false,
+      });
+      expect(nonNegativeAmountSchema.safeParse(amount).success).toBe(true);
+    }
+    for (const amount of [
+      '-1',
+      '-0.01',
+      '-0',
+      25.5,
+      1,
+      '1e3',
+      '1,5',
+      '.5',
+      '01',
+      ' 1',
+      '+1',
+      '',
+      null,
+    ]) {
+      expect({ amount, positive: positiveAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        positive: false,
+      });
+      expect({ amount, allowed: nonNegativeAmountSchema.safeParse(amount).success }).toEqual({
+        amount,
+        allowed: false,
+      });
+    }
+  });
+
+  it('demander un transfert : un destinataire, un actif, un montant et la preuve du titulaire', () => {
+    const request = {
+      recipientEmail: 'bob@example.cd',
+      assetCode: 'USD',
+      amount: '25.50',
+      currentPassword: 'old-password-1',
+    };
+    expect(createTransferRequestSchema.parse(request)).toEqual(request);
+    // L'adresse est normalisée : c'est sous cette forme qu'elle désigne un compte.
+    expect(
+      createTransferRequestSchema.parse({ ...request, recipientEmail: '  Bob@Example.CD ' })
+        .recipientEmail,
+    ).toBe('bob@example.cd');
+    expect(createTransferRequestSchema.parse({ ...request, code: '123456' }).code).toBe('123456');
+    expect(
+      createTransferRequestSchema.safeParse({ ...request, recoveryCode: 'ABCDE-FGHIJ' }).success,
+    ).toBe(true);
+
+    for (const body of [
+      {},
+      { ...request, recipientEmail: undefined },
+      { ...request, recipientEmail: 'bob' },
+      { ...request, assetCode: 'usd' },
+      { ...request, assetCode: undefined },
+      { ...request, amount: 25.5 },
+      { ...request, amount: '0' },
+      { ...request, amount: '-25.50' },
+      { ...request, amount: undefined },
+      { ...request, currentPassword: undefined },
+      { ...request, currentPassword: '' },
+      { ...request, code: '12345' },
+      // Un second facteur au plus.
+      { ...request, code: '123456', recoveryCode: 'ABCDE-FGHIJ' },
+      // Ni identifiant de compte, ni libellé, ni clé dans le corps : la clé est un en-tête.
+      { ...request, recipientId: UUID },
+      { ...request, memo: 'loyer' },
+      { ...request, idempotencyKey: UUID },
+    ]) {
+      expect({ body, valid: createTransferRequestSchema.safeParse(body).success }).toEqual({
+        body,
+        valid: false,
+      });
+    }
+    const both = createTransferRequestSchema.safeParse({
+      ...request,
+      code: '123456',
+      recoveryCode: 'ABCDE-FGHIJ',
+    });
+    expect(both.error?.issues.map(({ path }) => path.join('.'))).toEqual(['code']);
+  });
+
+  it('un transfert, vu d’une de ses parties : son sens, et l’adresse de l’autre — ou rien si son compte est clôturé', () => {
+    expect(TRANSFER_DIRECTIONS).toEqual(['SENT', 'RECEIVED']);
+    expect(INTERNAL_TRANSFER_ENTRY_KIND).toBe('transfer.internal');
+    expect(transferSchema.parse(transfer)).toEqual(transfer);
+    expect(
+      transferSchema.safeParse({
+        ...transfer,
+        direction: 'RECEIVED',
+        counterparty: { email: null },
+      }).success,
+    ).toBe(true);
+    for (const invalid of [
+      { ...transfer, direction: 'INTERNAL' },
+      { ...transfer, amount: 25.5 },
+      { ...transfer, counterparty: {} },
+      { ...transfer, counterparty: undefined },
+      { ...transfer, entryId: 'entry-1' },
+      { ...transfer, createdAt: '14/11/2026' },
+    ]) {
+      expect(transferSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    const page = { transfers: [transfer], nextCursor: null };
+    expect(transferListSchema.parse(page)).toEqual(page);
+    expect(transferListSchema.safeParse({ transfers: [transfer] }).success).toBe(false);
+    expect(transferListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(transferListQuerySchema.parse({ limit: '100', after: 'MDE5NWYzYTI' })).toEqual({
+      limit: 100,
+      after: 'MDE5NWYzYTI',
+    });
+    for (const query of [
+      { limit: '0' },
+      { limit: '101' },
+      { limit: '2.5' },
+      { direction: 'SENT' },
+    ]) {
+      expect(transferListQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+
+  it('les plafonds : par transfert, sur 24 heures glissantes, sur 31 jours glissants', () => {
+    expect(TRANSFER_LIMIT_DAILY_WINDOW_HOURS).toBe(24);
+    expect(TRANSFER_LIMIT_MONTHLY_WINDOW_DAYS).toBe(31);
+
+    const allowances = {
+      enabled: true,
+      level: 1,
+      allowances: [
+        {
+          asset: usd,
+          limit: { perTransfer: '100.00', daily: '250.00', monthly: '1000.00' },
+          used: { last24Hours: '190.00', last31Days: '190.00' },
+          remaining: '60.00',
+        },
+        // Aucun plafond fixé pour ce niveau dans cet actif : rien ne part, rien n'arrive.
+        {
+          asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
+          limit: null,
+          used: { last24Hours: '0.00000000', last31Days: '0.00000000' },
+          remaining: '0.00000000',
+        },
+      ],
+    };
+    expect(transferAllowanceListSchema.parse(allowances)).toEqual(allowances);
+    for (const invalid of [
+      { ...allowances, level: 4 },
+      { ...allowances, level: -1 },
+      { ...allowances, enabled: 'yes' },
+      { ...allowances, allowances: [{ ...allowances.allowances[0], limit: undefined }] },
+      { ...allowances, allowances: [{ ...allowances.allowances[0], remaining: 60 }] },
+    ]) {
+      expect(transferAllowanceListSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('fixer des plafonds : trois montants positifs ou nuls, un niveau de 0 à 3, une justification', () => {
+    const request = { perTransfer: '100', daily: '250.5', monthly: '1000.00', reason: REASON };
+    expect(setTransferLimitRequestSchema.parse(request)).toEqual(request);
+    // Zéro referme le niveau : c'est une valeur admise.
+    expect(
+      setTransferLimitRequestSchema.safeParse({
+        ...request,
+        perTransfer: '0',
+        daily: '0',
+        monthly: '0',
+      }).success,
+    ).toBe(true);
+    expect(
+      setTransferLimitRequestSchema.parse({ ...request, reason: `  ${REASON}  ` }).reason,
+    ).toBe(REASON);
+    for (const body of [
+      {},
+      { ...request, perTransfer: undefined },
+      { ...request, daily: undefined },
+      { ...request, monthly: undefined },
+      { ...request, perTransfer: 100 },
+      { ...request, daily: '-1' },
+      { ...request, monthly: '1e6' },
+      { ...request, reason: undefined },
+      { ...request, reason: 'ok' },
+      { ...request, reason: 'r'.repeat(501) },
+      { ...request, weekly: '500' },
+      { ...request, level: 1 },
+      { ...request, assetCode: 'USD' },
+    ]) {
+      expect({ body, valid: setTransferLimitRequestSchema.safeParse(body).success }).toEqual({
+        body,
+        valid: false,
+      });
+    }
+
+    // Le niveau vient du chemin de l'URL : un texte, rendu en nombre.
+    for (const [text, level] of [
+      ['0', 0],
+      ['1', 1],
+      ['2', 2],
+      ['3', 3],
+    ] as const) {
+      expect(transferLimitLevelParamSchema.parse(text)).toBe(level);
+    }
+    for (const text of ['4', '-1', '1.5', '01', ' 1', '1 ', 'one', '', 1, null, undefined]) {
+      expect({ text, valid: transferLimitLevelParamSchema.safeParse(text).success }).toEqual({
+        text,
+        valid: false,
+      });
+    }
+
+    const limit = {
+      asset: usd,
+      level: 1,
+      perTransfer: '100.00',
+      daily: '250.00',
+      monthly: '1000.00',
+      setBy: UUID,
+      setAt: '2026-11-14T09:30:00.000Z',
+    };
+    expect(adminTransferLimitSchema.parse(limit)).toEqual(limit);
+    // Fixés hors de l'API, avec le rôle propriétaire de la base : sans auteur.
+    expect(adminTransferLimitSchema.safeParse({ ...limit, setBy: null }).success).toBe(true);
+    expect(adminTransferLimitSchema.safeParse({ ...limit, setBy: undefined }).success).toBe(false);
+    expect(adminTransferLimitSchema.safeParse({ ...limit, level: 4 }).success).toBe(false);
+    expect(adminTransferLimitListSchema.parse({ limits: [limit] })).toEqual({ limits: [limit] });
+    expect(adminTransferLimitListSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('deux permissions : consulter les plafonds, les fixer — à super_admin seulement', () => {
+    expect(PERMISSION_KEYS.filter((key) => key.startsWith('transfer_limits.'))).toEqual([
+      'transfer_limits.read',
+      'transfer_limits.write',
+    ]);
+    expect(PERMISSION_KEYS).toHaveLength(17);
+    // Celle que la base de données vérifie elle-même à chaque modification d'un plafond.
+    expect(TRANSFER_LIMITS_PERMISSION).toBe('transfer_limits.write');
+    // Les plafonds engagent la plateforme : ni le support, ni la conformité ne les consultent
+    // ni ne les fixent.
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      expect(permissions.some((permission) => permission.startsWith('transfer_limits.'))).toBe(
+        key === 'super_admin',
+      );
+    }
+  });
+
+  it('cinq codes d’erreur : ce qui fait refuser un transfert', () => {
+    expect({
+      TRANSFER_NOT_PERMITTED: ERROR_CODES.TRANSFER_NOT_PERMITTED.status,
+      IDEMPOTENCY_KEY_REUSED: ERROR_CODES.IDEMPOTENCY_KEY_REUSED.status,
+      INSUFFICIENT_FUNDS: ERROR_CODES.INSUFFICIENT_FUNDS.status,
+      TRANSFER_LIMIT_EXCEEDED: ERROR_CODES.TRANSFER_LIMIT_EXCEEDED.status,
+      RECIPIENT_UNAVAILABLE: ERROR_CODES.RECIPIENT_UNAVAILABLE.status,
+    }).toEqual({
+      TRANSFER_NOT_PERMITTED: 403,
+      IDEMPOTENCY_KEY_REUSED: 422,
+      INSUFFICIENT_FUNDS: 422,
+      TRANSFER_LIMIT_EXCEEDED: 422,
+      RECIPIENT_UNAVAILABLE: 422,
+    });
+  });
+
+  it('l’historique de sécurité du compte mentionne ses transferts : envoyés, sans preuve, refusés', () => {
+    expect(ACTIVITY_TYPES).toEqual(
+      expect.arrayContaining(['TRANSFER_SENT', 'TRANSFER_FAILED', 'TRANSFER_REFUSED']),
+    );
+  });
+
+  it('la copie des données : les 2 000 transferts les plus récents, envoyés et reçus', () => {
+    expect(DATA_EXPORT_TRANSFERS_MAX_ENTRIES).toBe(2000);
+    const exported = { items: [transfer], truncated: false };
+    expect(exportedTransfersSchema.parse(exported)).toEqual(exported);
+    expect(exportedTransfersSchema.safeParse({ items: [transfer] }).success).toBe(false);
+    expect(exportedTransfersSchema.safeParse({ truncated: false }).success).toBe(false);
+    // La section fait partie de la copie : un document sans elle n'en est pas une.
+    expect(Object.keys(dataExportSchema.shape)).toContain('transfers');
   });
 });

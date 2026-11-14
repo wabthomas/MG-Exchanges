@@ -199,6 +199,10 @@ model User {
   ledgerAccounts   LedgerAccount[]
   registeredAssets Asset[]
 
+  sentTransfers     Transfer[]      @relation("TransferSender")
+  receivedTransfers Transfer[]      @relation("TransferRecipient")
+  setTransferLimits TransferLimit[]
+
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
   @@map("users")
@@ -847,9 +851,11 @@ model Asset {
   /// Heure de l'enregistrement, lue à l'horloge de la base.
   registeredAt DateTime  @default(now()) @map("registered_at") @db.Timestamptz(6)
 
-  registrar User?           @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
-  accounts  LedgerAccount[]
-  postings  LedgerPosting[]
+  registrar      User?           @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
+  accounts       LedgerAccount[]
+  postings       LedgerPosting[]
+  transfers      Transfer[]
+  transferLimits TransferLimit[]
 
   @@map("assets")
 }
@@ -921,6 +927,7 @@ model LedgerEntry {
   postedAt       DateTime       @default(now()) @map("posted_at") @db.Timestamptz(6)
 
   postings LedgerPosting[]
+  transfer Transfer?
 
   @@map("ledger_entries")
 }
@@ -949,4 +956,76 @@ model LedgerPosting {
   @@unique([entryId, lineNumber])
   @@unique([accountId, accountSequence])
   @@map("ledger_postings")
+}
+
+// ---------------------------------------------------------------------------------------
+// Transferts entre titulaires
+// ---------------------------------------------------------------------------------------
+
+/// Plafonds d'envoi d'un niveau de vérification d'identité dans un actif : par transfert, sur
+/// 24 heures glissantes, sur 31 jours glissants — en unités minimales de l'actif.
+///
+/// Tant qu'un niveau n'a pas de ligne dans un actif, ou que son plafond par transfert y est nul,
+/// ses comptes n'y envoient ni n'y reçoivent rien. Une ligne se modifie mais ne se supprime
+/// pas : refermer, c'est ramener les plafonds à zéro. La base impose elle-même l'ordre des
+/// trois montants, le droit de les fixer et l'heure de la modification — voir la migration
+/// « internal_transfers » et docs/DATABASE.md.
+model TransferLimit {
+  assetCode      String   @map("asset_code") @db.VarChar(12)
+  /// Niveau de vérification : de 0 (aucun niveau vérifié) à 3.
+  kycLevel       Int      @map("kyc_level") @db.SmallInt
+  perTransferMax Decimal  @map("per_transfer_max") @db.Decimal(38, 0)
+  dailyMax       Decimal  @map("daily_max") @db.Decimal(38, 0)
+  monthlyMax     Decimal  @map("monthly_max") @db.Decimal(38, 0)
+  /// Membre du personnel qui a fixé ces plafonds ; NULL s'ils l'ont été avec le rôle
+  /// propriétaire de la base (outil d'exploitation).
+  setBy          String?  @map("set_by") @db.Uuid
+  /// Heure de la dernière modification, lue à l'horloge de la base.
+  setAt          DateTime @default(now()) @map("set_at") @db.Timestamptz(6)
+
+  asset  Asset @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  setter User? @relation(fields: [setBy], references: [id], onDelete: Restrict)
+
+  @@id([assetCode, kycLevel])
+  @@map("transfer_limits")
+}
+
+/// Transfert de fonds entre deux titulaires : l'opération, et l'écriture du grand livre qui la
+/// réalise. **Immuable** : un transfert ne se modifie ni ne s'efface.
+///
+/// La base impose elle-même, à l'ajout : les plafonds du niveau de vérification de l'émetteur,
+/// que les deux comptes soient actifs, que le niveau du destinataire soit ouvert dans l'actif ;
+/// et, à la validation de la transaction, que l'écriture désignée soit bien celle de ce
+/// transfert — voir la migration « internal_transfers » et docs/DATABASE.md.
+model Transfer {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  senderId       String   @map("sender_id") @db.Uuid
+  recipientId    String   @map("recipient_id") @db.Uuid
+  assetCode      String   @map("asset_code") @db.VarChar(12)
+  /// Montant, en unités minimales de l'actif : strictement positif.
+  amount         Decimal  @db.Decimal(38, 0)
+  /// Écriture du grand livre qui réalise le transfert.
+  entryId        String   @unique @map("entry_id") @db.Uuid
+  /// Clé d'idempotence fournie par le client : unique pour un émetteur.
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(128)
+  /// Empreinte SHA-256 de la requête : la même clé ne vaut que pour la même requête.
+  requestDigest  Bytes    @map("request_digest")
+  /// Niveau de vérification de l'émetteur au moment du transfert : celui dont les plafonds
+  /// ont été appliqués.
+  senderLevel    Int      @map("sender_level") @db.SmallInt
+  /// Heure du transfert, lue à l'horloge de la base.
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  sender    User        @relation("TransferSender", fields: [senderId], references: [id], onDelete: Restrict)
+  recipient User        @relation("TransferRecipient", fields: [recipientId], references: [id], onDelete: Restrict)
+  asset     Asset       @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  entry     LedgerEntry @relation(fields: [entryId], references: [id], onDelete: Restrict)
+
+  @@unique([senderId, idempotencyKey])
+  // Cumul des envois d'un émetteur dans un actif, sur une fenêtre glissante (plafonds).
+  @@index([senderId, assetCode, createdAt])
+  // Transferts d'un compte, du plus récent au plus ancien (l'identifiant croît avec le temps).
+  @@index([senderId, id])
+  @@index([recipientId, id])
+  @@map("transfers")
 }

@@ -3,6 +3,90 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 2 : transferts entre titulaires
+
+**Première opération qui déplace des fonds** — entre deux titulaires, à l'intérieur de la
+plateforme (ADR 0026). **Fermée par défaut**, et **aucun plafond n'est livré avec le code** :
+leurs valeurs restent à décider. **Aucune route ne crédite un portefeuille** : tant que les
+dépôts n'existent pas, il n'y a rien à transférer. Les **fonds réservés**, annoncés pour ce
+lot, n'y sont pas : un transfert immédiat n'en a pas l'usage, ils viendront avec la première
+opération en plusieurs temps.
+
+### Ajouté
+
+- **Transfert entre deux titulaires** : `POST /me/transfers` (`recipientEmail`, `assetCode`,
+  `amount`, `currentPassword`, `code` ou `recoveryCode`). Immédiat, définitif, sans frais :
+  une écriture du grand livre débite le portefeuille de l'émetteur et crédite celui du
+  destinataire, dans la même transaction que le transfert, son inscription au journal
+  d'audit et les messages aux deux parties.
+- **Clé d'idempotence fournie par le client** : en-tête `Idempotency-Key`, obligatoire (16 à
+  128 caractères). La même requête renvoyée sous la même clé ne transfère rien de plus : la
+  réponse est celle d'origine, avec l'en-tête `Idempotent-Replayed: true`. Une autre requête
+  sous la même clé répond `422 IDEMPOTENCY_KEY_REUSED`. Une requête refusée ne retient pas sa
+  clé.
+- **Preuve du titulaire à chaque transfert** : le mot de passe et, si la validation en deux
+  étapes est activée, un code — vérifiés avant tout examen de la requête.
+- **Plafonds par actif et par niveau de vérification** (0 à 3) : par transfert, sur 24 heures
+  glissantes, sur 31 jours glissants ; seuls comptent les envois. Un niveau sans plafonds
+  dans un actif n'y envoie ni n'y reçoit rien. **Ce sont des données du back-office** :
+  `GET /admin/transfer-limits`, `PUT /admin/transfer-limits/{assetCode}/{level}` (trois
+  montants, une justification ; effet immédiat ; des plafonds se remplacent, ils ne se
+  suppriment pas).
+- **Ce que je peux envoyer** : `GET /me/transfer-limits` — niveau du compte, plafonds, envois
+  des 24 dernières heures et des 31 derniers jours, montant encore admis, actif par actif.
+- **Mes transferts** : `GET /me/transfers` (envoyés et reçus, paginés) et
+  `GET /me/transfers/{transferId}`. Chaque partie voit l'adresse e-mail que porte aujourd'hui
+  le compte de l'autre — `null` s'il a été clôturé —, rien d'autre.
+- **Destinataire désigné par son adresse e-mail ; un seul refus**, quelle qu'en soit la
+  cause — adresse inconnue, compte suspendu, clôturé, pas encore vérifié, niveau fermé :
+  `422 RECIPIENT_UNAVAILABLE`, prononcé en dernier. Le dixième en 24 heures suspend les
+  transferts du compte pendant 24 heures.
+- Codes d'erreur nouveaux : `TRANSFER_NOT_PERMITTED` (403), `IDEMPOTENCY_KEY_REUSED`,
+  `INSUFFICIENT_FUNDS`, `TRANSFER_LIMIT_EXCEEDED`, `RECIPIENT_UNAVAILABLE` (422).
+- **Messages** : l'émetteur et le destinataire sont prévenus par e-mail, chacun dans sa
+  langue (`transfer_sent`, `transfer_received`).
+- **Bornes** : 60 demandes de transfert par minute et par adresse IP ; 30 transferts tentés
+  par heure et par compte.
+- Permissions nouvelles `transfer_limits.read` et `transfer_limits.write`, détenues par
+  `super_admin` seul.
+- **Règles portées par la base** (erreur `MGX10`) : plafonds positifs et croissants, fixés
+  par un compte actif détenant `transfer_limits.write` ou par le rôle propriétaire, jamais
+  supprimés ; transfert entre deux comptes actifs et distincts ; niveau de vérification de
+  l'émetteur recalculé par la base ; niveau ouvert, plafonds respectés — cumuls recomptés par
+  la base, à son horloge, sous le verrou de l'émetteur ; niveau du destinataire ouvert ; à la
+  validation de la transaction, un transfert a son écriture — exactement la sienne — et
+  toute écriture de transfert a son transfert ; transferts immuables.
+- CI : le parcours à travers Nginx ouvre les transferts, constate que rien ne part sans
+  plafonds, les fixe, les relit côté titulaire, et vérifie chaque refus — sans clé
+  d'idempotence, sans le bon mot de passe, sans plafonds, au-delà du plafond, au-delà du
+  solde, montant trop précis. Aucun transfert n'y aboutit : aucune route ne crédite un
+  portefeuille.
+- ADR 0026. Migration `20261114082147_internal_transfers`. Aucune dépendance nouvelle.
+
+### Modifié
+
+- Copie des données : `formatVersion` passe à `4` — `transfers` ajouté (transferts envoyés
+  et reçus, les 2 000 plus récents).
+- Historique du compte (`GET /me/activity`) : trois types de plus — `TRANSFER_SENT`,
+  `TRANSFER_FAILED` (preuve du titulaire refusée), `TRANSFER_REFUSED`.
+- `GET /admin/roles` : le catalogue compte dix-sept permissions.
+- CORS : `Idempotency-Key` s'ajoute aux en-têtes qu'une page peut envoyer,
+  `Idempotent-Replayed` à ceux qu'elle peut lire.
+- Portefeuilles : un mouvement peut désormais porter `kind: "transfer.internal"`.
+- Le parcours `infrastructure/ci/smoke-identity.sh` ouvre les transferts et **les laisse
+  ouverts** : il reste réservé à une pile de test.
+
+### Non réalisé
+
+- **Fonds réservés** — reportés à la première opération en plusieurs temps.
+- **Valeurs des plafonds** : aucune n'est fournie ; à arrêter par le propriétaire, avec la
+  conformité.
+- Ni dépôt, ni retrait, ni frais ; pas d'annulation d'un transfert, pas de délai de
+  rétractation, pas de bénéficiaires enregistrés, pas de message joint à un transfert.
+- Pas de double validation d'un changement de plafonds ; pas de plafond en réception, ni
+  tous actifs confondus ; pas de surveillance des transactions ni de filtrage.
+- Pas de crédit ni de débit manuel par le back-office ; pas de gel d'un portefeuille.
+
 ## [Non publié] — Phase 3, lot 1 : grand livre en partie double
 
 **Aucune route ne déplace de fonds.** Ce lot livre l'endroit où les opérations écriront, et

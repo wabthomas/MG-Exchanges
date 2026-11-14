@@ -97,6 +97,10 @@ const CLOSED_BEFORE_ACCEPTANCE = [
   'POST /api/v1/me/verification/cases/{caseId}/submit',
   'GET /api/v1/me/wallets',
   'GET /api/v1/me/wallets/{assetCode}/movements',
+  'POST /api/v1/me/transfers',
+  'GET /api/v1/me/transfers',
+  'GET /api/v1/me/transfers/{transferId}',
+  'GET /api/v1/me/transfer-limits',
 ].sort();
 
 interface Member extends RegisteredUser {
@@ -885,12 +889,12 @@ describe('Conditions d’utilisation — bout en bout', () => {
         .sort();
       expect(holderRoutes).toEqual([...OPEN_BEFORE_ACCEPTANCE, ...CLOSED_BEFORE_ACCEPTANCE].sort());
       expect(OPEN_BEFORE_ACCEPTANCE).toHaveLength(16);
-      expect(CLOSED_BEFORE_ACCEPTANCE).toHaveLength(15);
+      expect(CLOSED_BEFORE_ACCEPTANCE).toHaveLength(19);
     });
 
     it('tant qu’il n’a pas accepté, ses routes répondent 403 TERMS_ACCEPTANCE_REQUIRED, avant même de valider la requête', async () => {
       const closed = operations.filter(({ id }) => CLOSED_BEFORE_ACCEPTANCE.includes(id));
-      expect(closed).toHaveLength(15);
+      expect(closed).toHaveLength(19);
       for (const operation of closed) {
         const response = await call(early, operation);
         expect({
@@ -1151,7 +1155,7 @@ describe('Conditions d’utilisation — bout en bout', () => {
         currentPassword: member.password,
       }).expect(200);
       const copy = dataExportSchema.parse(exported.body);
-      expect(copy.formatVersion).toBe(3);
+      expect(copy.formatVersion).toBe(4);
       expect(copy.terms).toEqual({
         acceptances: [{ version: registeredUnder, acceptedAt: expect.any(String) }],
       });

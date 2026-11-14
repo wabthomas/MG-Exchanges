@@ -77,9 +77,8 @@ interface Member extends RegisteredUser {
 }
 
 /**
- * Aucune route ne déplace de fonds : les écritures de ces scénarios sont passées par le service
- * du grand livre, comme le feront les opérations des lots suivants. Tout le reste passe par
- * HTTP. Les scénarios s'enchaînent — un actif enregistré, une écriture passée le sont pour
+ * Les écritures de ces scénarios sont passées par le service du grand livre, comme le font les
+ * opérations — les transferts, eux, ont leur propre fichier. Tout le reste passe par HTTP. Les scénarios s'enchaînent — un actif enregistré, une écriture passée le sont pour
  * toujours — et chaque bloc part de l'état laissé par le précédent.
  */
 describe('Grand livre et portefeuilles — bout en bout', () => {
@@ -1471,7 +1470,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       expect(entry?.metadata).toEqual({ assets: 6, balanced: true });
     });
 
-    it('consulter ne change rien au grand livre, et aucune route publiée n’y passe d’écriture', async () => {
+    it('consulter ne change rien au grand livre ; ses routes et celles des portefeuilles n’y passent aucune écriture', async () => {
       const before = await asApp(ledgerSize);
       expect(before.entries).toBe(posted);
       const [account] = (await accountsFor(root, `?userId=${alice}&assetCode=USD`)).accounts;
@@ -1480,7 +1479,9 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       await get(root.accessToken, `/admin/ledger/entries/${transferId}`).expect(200);
       expect(await asApp(ledgerSize)).toEqual(before);
 
-      // Le contrat publié : des lectures, et l'enregistrement d'un actif — rien d'autre.
+      // Le contrat publié de ces routes : des lectures, et l'enregistrement d'un actif — rien
+      // d'autre. La seule opération qui passe une écriture est le transfert entre titulaires,
+      // sous ses propres routes.
       const document = (await http.get('/api/docs-json').expect(200)).body as {
         paths: Record<string, Record<string, unknown>>;
       };
@@ -1570,7 +1571,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       const satoshis = await deposit(holder, '0.00000001', BTC);
 
       const copy = await exportOf(holder);
-      expect(copy.formatVersion).toBe(3);
+      expect(copy.formatVersion).toBe(4);
       expect(copy.wallets).toEqual([
         {
           asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
@@ -1622,13 +1623,13 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       expect(text).not.toContain(other.email);
 
       const [entry] = await auditBy(holder.id, 'user.data_exported');
-      expect(entry?.metadata).toMatchObject({ formatVersion: 3, wallets: 2 });
+      expect(entry?.metadata).toMatchObject({ formatVersion: 4, wallets: 2 });
 
       // Un compte qui n'a jamais rien reçu : aucun portefeuille dans sa copie.
       const idle = await customer();
       expect((await exportOf(idle)).wallets).toEqual([]);
       const [idleEntry] = await auditBy(idle.id, 'user.data_exported');
-      expect(idleEntry?.metadata).toMatchObject({ formatVersion: 3, wallets: 0 });
+      expect(idleEntry?.metadata).toMatchObject({ formatVersion: 4, wallets: 0 });
     });
 
     it('un compte qui détient des fonds ne se clôture pas — ni par son titulaire, ni par le personnel', async () => {

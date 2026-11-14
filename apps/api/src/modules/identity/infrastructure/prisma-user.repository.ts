@@ -59,6 +59,18 @@ export class PrismaUserRepository extends UserRepository {
     return found === null || found.status === 'CLOSED' ? null : found;
   }
 
+  async findEmails(db: DbClient, userIds: readonly string[]): Promise<Map<string, string | null>> {
+    if (userIds.length === 0) {
+      return new Map();
+    }
+    const found = await db.user.findMany({
+      where: { id: { in: [...new Set(userIds)] } },
+      select: { id: true, email: true, status: true },
+    });
+    // L'adresse d'un compte clôturé est une adresse factice : elle ne se montre pas.
+    return new Map(found.map(({ id, email, status }) => [id, status === 'CLOSED' ? null : email]));
+  }
+
   async findByEmailWithPasswordHash(
     db: DbClient,
     email: string,

@@ -1080,6 +1080,20 @@ describe('Grand livre — règles portées par la base de données', () => {
       ledger_entries: 'ledger_entries_immutable_truncate',
       ledger_postings: 'ledger_postings_immutable_truncate',
     };
+    /**
+     * Tables d'autres modules qui se réfèrent au grand livre : les vider en cascade est refusé
+     * par leurs propres déclencheurs (voir transfers-schema.spec.ts). Ils sont levés ici, pour
+     * que seules les protections du grand livre soient éprouvées.
+     */
+    const dependents: Record<string, string> = {
+      transfer_limits: 'transfer_limits_no_truncate',
+      transfers: 'transfers_immutable_truncate',
+    };
+    const disable = async (db: pg.Client, tables: Record<string, string>): Promise<void> => {
+      for (const [table, guard] of Object.entries(tables)) {
+        await db.query(`ALTER TABLE ${table} DISABLE TRIGGER ${guard}`);
+      }
+    };
 
     it('chaque table du grand livre le refuse d’elle-même, même si les autres ne sont plus protégées', async () => {
       // Vider une table entraîne celles qui s'y réfèrent, protégées elles aussi : pour savoir
@@ -1091,11 +1105,11 @@ describe('Grand livre — règles portées par la base de données', () => {
         expect(before.entries).toBeGreaterThan(0);
         for (const [table, guard] of Object.entries(guards)) {
           const outcome = await attempt(db, async () => {
-            for (const [other, otherGuard] of Object.entries(guards)) {
-              if (other !== table) {
-                await db.query(`ALTER TABLE ${other} DISABLE TRIGGER ${otherGuard}`);
-              }
-            }
+            await disable(db, dependents);
+            await disable(
+              db,
+              Object.fromEntries(Object.entries(guards).filter(([other]) => other !== table)),
+            );
             await db.query(`TRUNCATE ${table} CASCADE`);
           });
           expect({ table, guard, outcome }).toEqual({ table, guard, outcome: FORBIDDEN_MUTATION });
@@ -1103,9 +1117,8 @@ describe('Grand livre — règles portées par la base de données', () => {
         // Sans aucune protection, le vidage aboutirait : ce sont bien elles qui l'empêchent.
         expect(
           await attempt(db, async () => {
-            for (const [table, guard] of Object.entries(guards)) {
-              await db.query(`ALTER TABLE ${table} DISABLE TRIGGER ${guard}`);
-            }
+            await disable(db, dependents);
+            await disable(db, guards);
             await db.query(`TRUNCATE assets CASCADE`);
           }),
         ).toBeUndefined();

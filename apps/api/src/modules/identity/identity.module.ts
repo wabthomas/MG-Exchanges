@@ -169,6 +169,8 @@ import { MyTermsController, TermsController } from './presentation/terms.control
     VerificationStatusReader,
     MaintenanceStepRegistry,
     AccountDataRegistry,
+    // À l'usage des opérations financières : la preuve du titulaire avant de déplacer des fonds.
+    HolderProofService,
   ],
 })
 export class IdentityModule {}

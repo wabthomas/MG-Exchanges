@@ -1,3 +1,4 @@
+import { IDEMPOTENCY_KEY_HEADER, IDEMPOTENT_REPLAYED_HEADER } from '@mgx/contracts';
 import { type NestApplicationOptions, VersioningType } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import type { NextFunction, Request, Response } from 'express';
@@ -71,8 +72,8 @@ export function configureApp(app: NestExpressApplication): void {
         : [...config.http.corsAllowedOrigins],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key', REQUEST_ID_HEADER],
-      exposedHeaders: [REQUEST_ID_HEADER, 'Retry-After'],
+      allowedHeaders: ['Authorization', 'Content-Type', IDEMPOTENCY_KEY_HEADER, REQUEST_ID_HEADER],
+      exposedHeaders: [REQUEST_ID_HEADER, 'Retry-After', IDEMPOTENT_REPLAYED_HEADER],
       maxAge: 600,
     });
   }

@@ -102,6 +102,7 @@ export class DataExportService {
           verificationCases: others.verification?.cases.length ?? 0,
           termsAcceptances: terms.acceptances.length,
           wallets: others.wallets?.length ?? 0,
+          transfers: others.transfers?.items.length ?? 0,
         },
       });
       await this.outbox.append(tx, {
@@ -170,6 +171,7 @@ export class DataExportService {
       verification: others.verification ?? { level: 0, cases: [] },
       terms,
       wallets: others.wallets ?? [],
+      transfers: others.transfers ?? { items: [], truncated: false },
     };
   }
 }

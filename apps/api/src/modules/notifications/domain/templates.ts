@@ -486,6 +486,60 @@ function render(content: NotificationContent, locale: SupportedLocale): Rendered
               'If this was you, no action is needed. Otherwise, change your password immediately, sign out your other sessions and contact support.',
             ),
           };
+
+    case 'transfer_sent':
+      return fr
+        ? {
+            subject: `${PRODUCT} — transfert envoyé`,
+            text: paragraphs(
+              `Un transfert vient d'être envoyé depuis votre compte ${PRODUCT}.`,
+              [
+                `Montant : ${content.amount} ${content.assetCode}`,
+                `Destinataire : ${content.counterparty ?? 'un compte clôturé depuis'}`,
+                `Date : ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              "Si c'était vous, aucune action n'est requise. Sinon, changez immédiatement votre mot de passe, fermez vos autres sessions et contactez le support.",
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — transfer sent`,
+            text: paragraphs(
+              `A transfer was just sent from your ${PRODUCT} account.`,
+              [
+                `Amount: ${content.amount} ${content.assetCode}`,
+                `Recipient: ${content.counterparty ?? 'an account closed since'}`,
+                `Date: ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              'If this was you, no action is needed. Otherwise, change your password immediately, sign out your other sessions and contact support.',
+            ),
+          };
+
+    case 'transfer_received':
+      return fr
+        ? {
+            subject: `${PRODUCT} — transfert reçu`,
+            text: paragraphs(
+              `Vous avez reçu un transfert sur votre compte ${PRODUCT}.`,
+              [
+                `Montant : ${content.amount} ${content.assetCode}`,
+                `Expéditeur : ${content.counterparty ?? 'un compte clôturé depuis'}`,
+                `Date : ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              'Les fonds sont disponibles dans votre portefeuille.',
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — transfer received`,
+            text: paragraphs(
+              `You received a transfer on your ${PRODUCT} account.`,
+              [
+                `Amount: ${content.amount} ${content.assetCode}`,
+                `Sender: ${content.counterparty ?? 'an account closed since'}`,
+                `Date: ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              'The funds are available in your wallet.',
+            ),
+          };
   }
 }
 

@@ -6,18 +6,19 @@ En développement, il est consultable de façon interactive sur `/api/docs`.
 
 ## Conventions
 
-| Sujet            | Règle                                                                                                                                       |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base             | `/api/v{n}/…` — la version figure dans le chemin ; chaque contrôleur déclare la sienne                                                      |
-| Format           | JSON uniquement (`Content-Type: application/json`) ; les formulaires ne sont pas interprétés                                                |
-| Fichiers         | une seule route en reçoit — l'envoi d'une pièce de vérification : le fichier est le corps                                                   |
-| Montants         | chaînes décimales canoniques (`"12.34"`), **jamais** des nombres JSON                                                                       |
-| Horodatages      | ISO 8601 en UTC (`2026-01-31T12:00:00.000Z`)                                                                                                |
-| Identifiants     | UUID                                                                                                                                        |
-| Authentification | `Authorization: Bearer <jeton d'accès>` sur **toute** route, sauf celles dites publiques                                                    |
-| Entrées          | validées par schéma ; les propriétés inconnues sont refusées                                                                                |
-| Cache            | `Cache-Control: no-store` sur toutes les réponses                                                                                           |
-| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`) ; 5 Mio pour une pièce de vérification ; 1 Mio pour la publication des conditions d'utilisation |
+| Sujet            | Règle                                                                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base             | `/api/v{n}/…` — la version figure dans le chemin ; chaque contrôleur déclare la sienne                                                       |
+| Format           | JSON uniquement (`Content-Type: application/json`) ; les formulaires ne sont pas interprétés                                                 |
+| Fichiers         | une seule route en reçoit — l'envoi d'une pièce de vérification : le fichier est le corps                                                    |
+| Montants         | chaînes décimales canoniques (`"12.34"`), **jamais** des nombres JSON                                                                        |
+| Idempotence      | toute route qui déplace des fonds exige l'en-tête `Idempotency-Key` : la même requête, renvoyée sous la même clé, n'est exécutée qu'une fois |
+| Horodatages      | ISO 8601 en UTC (`2026-01-31T12:00:00.000Z`)                                                                                                 |
+| Identifiants     | UUID                                                                                                                                         |
+| Authentification | `Authorization: Bearer <jeton d'accès>` sur **toute** route, sauf celles dites publiques                                                     |
+| Entrées          | validées par schéma ; les propriétés inconnues sont refusées                                                                                 |
+| Cache            | `Cache-Control: no-store` sur toutes les réponses                                                                                            |
+| Taille du corps  | 100 Ko par défaut (`HTTP_BODY_LIMIT_BYTES`) ; 5 Mio pour une pièce de vérification ; 1 Mio pour la publication des conditions d'utilisation  |
 
 ### Identifiant de requête
 
@@ -31,7 +32,9 @@ par Nginx (celui de l'appelant est alors ignoré) et se retrouve dans les journa
 
 Limite globale par adresse IP (120 requêtes par minute par défaut). En-têtes de réponse :
 `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (secondes). Au-delà :
-`429` avec l'en-tête `Retry-After`. Les routes sensibles appliqueront des limites dédiées.
+`429` avec l'en-tête `Retry-After`. Certaines routes appliquent leur propre limite, décrite
+avec chacune : inscription, connexion et codes, vérification du téléphone, lecture et
+publication des conditions d'utilisation, demandes de transfert.
 
 ## Erreurs
 
@@ -56,33 +59,38 @@ Les clients se fondent sur **`code`** — stable, jamais renommé — et non sur
 décider du comportement et de la traduction affichée. `errors` n'est présent que pour les
 erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 
-| Code                        | Statut | Signification                                                                 |
-| --------------------------- | ------ | ----------------------------------------------------------------------------- |
-| `VALIDATION_FAILED`         | 400    | entrée invalide (détail dans `errors`)                                        |
-| `MALFORMED_REQUEST`         | 400    | requête illisible (JSON mal formé…)                                           |
-| `INVALID_OR_EXPIRED_CODE`   | 400    | code à usage unique refusé, quelle qu'en soit la cause                        |
-| `UNAUTHENTICATED`           | 401    | jeton d'accès absent, invalide ou expiré                                      |
-| `INVALID_CREDENTIALS`       | 401    | identifiant ou mot de passe erroné (sans préciser lequel)                     |
-| `FORBIDDEN`                 | 403    | action non autorisée                                                          |
-| `FEATURE_DISABLED`          | 403    | fonctionnalité non ouverte                                                    |
-| `EMAIL_NOT_VERIFIED`        | 403    | mot de passe correct, adresse e-mail non vérifiée                             |
-| `ACCOUNT_DISABLED`          | 403    | mot de passe correct, compte suspendu                                         |
-| `MFA_ENROLLMENT_REQUIRED`   | 403    | back-office : la validation en deux étapes doit d'abord être activée          |
-| `TERMS_ACCEPTANCE_REQUIRED` | 403    | la version en vigueur des conditions d'utilisation doit d'abord être acceptée |
-| `NOT_FOUND`                 | 404    | ressource ou route inexistante                                                |
-| `METHOD_NOT_ALLOWED`        | 405    |                                                                               |
-| `NOT_ACCEPTABLE`            | 406    |                                                                               |
-| `REQUEST_TIMEOUT`           | 408    | le corps de la requête a mis trop de temps à arriver                          |
-| `CONFLICT`                  | 409    | conflit avec l'état actuel                                                    |
-| `TERMS_VERSION_NOT_CURRENT` | 409    | la version des conditions désignée n'est pas — ou plus — celle en vigueur     |
-| `PAYLOAD_TOO_LARGE`         | 413    | corps trop volumineux                                                         |
-| `UNSUPPORTED_MEDIA_TYPE`    | 415    | type de contenu non accepté (envoi d'une pièce, publication des conditions)   |
-| `UNPROCESSABLE_ENTITY`      | 422    | requête comprise mais refusée par une règle métier                            |
-| `COUNTRY_NOT_SUPPORTED`     | 422    | pays de résidence non desservi                                                |
-| `RATE_LIMITED`              | 429    | trop de requêtes (voir `Retry-After`)                                         |
-| `INTERNAL_ERROR`            | 500    | erreur inattendue                                                             |
-| `MAINTENANCE`               | 503    | plateforme en maintenance                                                     |
-| `SERVICE_UNAVAILABLE`       | 503    | service momentanément indisponible                                            |
+| Code                        | Statut | Signification                                                                      |
+| --------------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `VALIDATION_FAILED`         | 400    | entrée invalide (détail dans `errors`)                                             |
+| `MALFORMED_REQUEST`         | 400    | requête illisible (JSON mal formé…)                                                |
+| `INVALID_OR_EXPIRED_CODE`   | 400    | code à usage unique refusé, quelle qu'en soit la cause                             |
+| `UNAUTHENTICATED`           | 401    | jeton d'accès absent, invalide ou expiré                                           |
+| `INVALID_CREDENTIALS`       | 401    | identifiant ou mot de passe erroné (sans préciser lequel)                          |
+| `FORBIDDEN`                 | 403    | action non autorisée                                                               |
+| `FEATURE_DISABLED`          | 403    | fonctionnalité non ouverte                                                         |
+| `EMAIL_NOT_VERIFIED`        | 403    | mot de passe correct, adresse e-mail non vérifiée                                  |
+| `ACCOUNT_DISABLED`          | 403    | mot de passe correct, compte suspendu                                              |
+| `MFA_ENROLLMENT_REQUIRED`   | 403    | back-office : la validation en deux étapes doit d'abord être activée               |
+| `TERMS_ACCEPTANCE_REQUIRED` | 403    | la version en vigueur des conditions d'utilisation doit d'abord être acceptée      |
+| `TRANSFER_NOT_PERMITTED`    | 403    | le niveau de vérification du compte n'est pas ouvert aux transferts dans cet actif |
+| `NOT_FOUND`                 | 404    | ressource ou route inexistante                                                     |
+| `METHOD_NOT_ALLOWED`        | 405    |                                                                                    |
+| `NOT_ACCEPTABLE`            | 406    |                                                                                    |
+| `REQUEST_TIMEOUT`           | 408    | le corps de la requête a mis trop de temps à arriver                               |
+| `CONFLICT`                  | 409    | conflit avec l'état actuel                                                         |
+| `TERMS_VERSION_NOT_CURRENT` | 409    | la version des conditions désignée n'est pas — ou plus — celle en vigueur          |
+| `PAYLOAD_TOO_LARGE`         | 413    | corps trop volumineux                                                              |
+| `UNSUPPORTED_MEDIA_TYPE`    | 415    | type de contenu non accepté (envoi d'une pièce, publication des conditions)        |
+| `UNPROCESSABLE_ENTITY`      | 422    | requête comprise mais refusée par une règle métier                                 |
+| `COUNTRY_NOT_SUPPORTED`     | 422    | pays de résidence non desservi                                                     |
+| `IDEMPOTENCY_KEY_REUSED`    | 422    | la clé d'idempotence a déjà servi à une requête différente                         |
+| `INSUFFICIENT_FUNDS`        | 422    | le portefeuille ne détient pas le montant demandé                                  |
+| `TRANSFER_LIMIT_EXCEEDED`   | 422    | le montant dépasse un plafond du niveau de vérification (`detail` dit lequel)      |
+| `RECIPIENT_UNAVAILABLE`     | 422    | le destinataire ne peut pas recevoir ce transfert — sans préciser pourquoi         |
+| `RATE_LIMITED`              | 429    | trop de requêtes (voir `Retry-After`)                                              |
+| `INTERNAL_ERROR`            | 500    | erreur inattendue                                                                  |
+| `MAINTENANCE`               | 503    | plateforme en maintenance                                                          |
+| `SERVICE_UNAVAILABLE`       | 503    | service momentanément indisponible                                                 |
 
 Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
 
@@ -334,8 +342,9 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
 - **Historique.** Événements de sécurité du compte, du plus récent au plus ancien : connexions
   (y compris échouées), mot de passe, second facteur, profil, téléphone, vérification
   d'identité (dépôt, acceptation, refus, retrait), acceptation des conditions d'utilisation
-  (`TERMS_ACCEPTED`), interventions du support. La liste des
-  types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
+  (`TERMS_ACCEPTED`), transferts — envoyé (`TRANSFER_SENT`), demandé sans la preuve du
+  titulaire (`TRANSFER_FAILED`), refusé (`TRANSFER_REFUSED`) —, interventions du support. La
+  liste des types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
   l'appareil d'origine — sauf pour une intervention du personnel. Ce qu'un membre du
   personnel fait au compte d'un client figure dans l'historique de ce client, pas dans le sien.
   Pagination par curseur : `before` = `nextCursor` de la page précédente ; `limit` ≤ 100.
@@ -356,15 +365,18 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   erronés sont comptés comme ailleurs (`429 RATE_LIMITED` avec `Retry-After`) et inscrits à
   l'historique du compte.
 - **Copie des données.** Un document JSON (`Content-Disposition: attachment`,
-  `mg-exchange-data.json`) : `formatVersion` (`3`), `generatedAt`, `account`, `profile`,
+  `mg-exchange-data.json`) : `formatVersion` (`4`), `generatedAt`, `account`, `profile`,
   `security`, `sessions`, `activity` (les 2 000 événements les plus récents ; `truncated`
   indique s'il en existe de plus anciens), `verification` (niveau et dossiers), `terms`
   (`acceptances` : chaque version des conditions d'utilisation acceptée et sa date, de la
-  plus récente à la plus ancienne) et `wallets` (chaque portefeuille sur lequel au moins un
+  plus récente à la plus ancienne), `wallets` (chaque portefeuille sur lequel au moins un
   mouvement a été passé : son actif, son solde, et ses mouvements du plus récent au plus
-  ancien — les 2 000 plus récents ; `truncated` indique s'il en existe de plus anciens). Le
-  format `2` a ajouté `terms` et retiré `account.termsAcceptedAt` ; le format `3` a ajouté
-  `wallets`. Elle ne contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
+  ancien — les 2 000 plus récents ; `truncated` indique s'il en existe de plus anciens) et
+  `transfers` (`items` : les transferts envoyés et reçus, du plus récent au plus ancien, tels
+  que les rend `GET /api/v1/me/transfers` — les 2 000 plus récents ; `truncated` indique s'il
+  en existe de plus anciens). Le format `2` a ajouté `terms` et retiré
+  `account.termsAcceptedAt` ; le format `3` a ajouté `wallets` ; le format `4`, `transfers`.
+  Elle ne contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
   joints aux dossiers y sont **décrits, pas inclus**. Au plus **3 copies par 24 heures**
   (`429` ensuite). Chaque copie figure dans l'historique et est signalée au titulaire par
   e-mail, avec l'adresse IP d'origine. `503 SERVICE_UNAVAILABLE` si le compte a déclaré une
@@ -559,9 +571,10 @@ y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
 
 ## Portefeuilles
 
-**Lecture seule : aucune route ne dépose, ne retire ni ne transfère de fonds.** Les soldes
-sont ceux du grand livre de la plateforme ; tant qu'aucune opération n'existe, ils valent
-zéro.
+**Lecture seule.** Les soldes sont ceux du grand livre de la plateforme. **Aucune route ne
+dépose ni ne retire de fonds** : la seule opération qui modifie un solde à ce jour est le
+transfert entre titulaires (section suivante), qui ne fait que déplacer ce qui s'y trouve
+déjà.
 
 | Route                                          | Réponse                             |
 | ---------------------------------------------- | ----------------------------------- |
@@ -579,7 +592,9 @@ zéro.
   fonds entrent ; `DEBIT`, des fonds sortent. `amount` est toujours positif ; `balanceAfter`
   est le solde du portefeuille juste après le mouvement — le premier mouvement de la première
   page porte donc le solde actuel (`wallet.available`). `kind` nomme l'opération qui a
-  produit le mouvement ; des mouvements de même `entryId` appartiennent à la même opération.
+  produit le mouvement — `transfer.internal` pour un transfert, dont `entryId` est aussi
+  celui que porte le transfert ; des mouvements de même `entryId` appartiennent à la même
+  opération.
 - **Pagination** : `limit` (1 à 100, 20 par défaut) et `after`, le `nextCursor` de la page
   précédente — `null` à la dernière page. Tout autre paramètre, et un curseur qui ne vient
   pas d'une page précédente, sont refusés (`400 VALIDATION_FAILED`).
@@ -589,6 +604,120 @@ zéro.
 - Ces routes suivent le mode maintenance (`503 MAINTENANCE`) et sont fermées au compte qui
   doit encore accepter les conditions d'utilisation (`403 TERMS_ACCEPTANCE_REQUIRED`). Elles
   ne dépendent d'aucune fonctionnalité à ouvrir : elles ne font que lire.
+
+## Transferts
+
+Un titulaire envoie des fonds à un autre titulaire, **à l'intérieur de la plateforme**. Un
+transfert est **immédiat, définitif et sans frais** : il ne s'annule pas.
+
+Pour qu'un transfert aboutisse, trois choses doivent avoir été décidées par l'administration :
+l'actif est enregistré ; des plafonds sont fixés, dans cet actif, pour le niveau de
+vérification de l'émetteur **et** pour celui du destinataire ; la fonctionnalité
+`internalTransfers` est ouverte. **Aucune ne l'est par défaut**, et aucun plafond n'est livré
+avec le code.
+
+| Route                                   | Corps                                                                                | Réponse                          |
+| --------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------- |
+| `POST /api/v1/me/transfers`             | `recipientEmail`, `assetCode`, `amount`, `currentPassword`, `code` \| `recoveryCode` | `201` le transfert               |
+| `GET /api/v1/me/transfers`              | `?limit=&after=`                                                                     | `{ transfers, nextCursor }`      |
+| `GET /api/v1/me/transfers/{transferId}` | —                                                                                    | le transfert                     |
+| `GET /api/v1/me/transfer-limits`        | —                                                                                    | `{ enabled, level, allowances }` |
+
+```http
+POST /api/v1/me/transfers
+Idempotency-Key: 0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d
+
+{
+  "recipientEmail": "destinataire@example.cd",
+  "assetCode": "USD",
+  "amount": "25.50",
+  "currentPassword": "…"
+}
+```
+
+```json
+{
+  "id": "0195f3a2-8d2f-7e4b-8c2d-3a5f7b9c1d2e",
+  "direction": "SENT",
+  "asset": { "code": "USD", "name": "US dollar", "kind": "FIAT", "scale": 2 },
+  "amount": "25.50",
+  "counterparty": { "email": "destinataire@example.cd" },
+  "entryId": "0195f3a2-8d30-7f5c-9d3e-4b6a8c0d2e3f",
+  "createdAt": "2026-01-31T12:00:00.000Z"
+}
+```
+
+- **Clé d'idempotence — obligatoire.** L'en-tête `Idempotency-Key` porte une valeur choisie
+  par le client, **nouvelle pour chaque transfert voulu** : 16 à 128 caractères — lettres,
+  chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un chiffre ; un UUID convient.
+  - **Renvoyer la même requête sous la même clé ne transfère rien de plus** : la réponse est
+    celle d'origine — `201`, le même transfert — avec l'en-tête `Idempotent-Replayed: true`.
+    C'est ce qu'un client fait lorsqu'il n'a pas reçu de réponse : il renvoie, sous la même
+    clé.
+  - « La même requête » : le même destinataire, le même actif, le même montant (`"25.5"` et
+    `"25.50"` sont le même montant). Une **autre** requête sous une clé déjà employée répond
+    `422 IDEMPOTENCY_KEY_REUSED`.
+  - Une clé vaut pour le compte qui la présente, et **n'expire pas**. Une requête **refusée**
+    ne retient pas sa clé : corrigée, elle peut être renvoyée sous la même.
+  - En-tête absent, répété ou mal formé : `400 VALIDATION_FAILED`, `errors[0].path` valant
+    `Idempotency-Key`.
+- **Preuve du titulaire.** Comme pour la copie des données et la clôture : `currentPassword`
+  et — si la validation en deux étapes est activée — `code` **ou** `recoveryCode`, à chaque
+  transfert, rejoué ou non. Elle est vérifiée **avant tout le reste**. Mêmes réponses :
+  `401 INVALID_CREDENTIALS`, `422 UNPROCESSABLE_ENTITY` (second facteur attendu mais absent),
+  `400 INVALID_OR_EXPIRED_CODE`, `429 RATE_LIMITED`.
+- **Montant.** Une chaîne décimale strictement positive, d'au plus `asset.scale` décimales :
+  rien n'est arrondi. `"25.001"` est refusé pour un actif à deux décimales
+  (`400 VALIDATION_FAILED` sur `amount`) ; des zéros en trop (`"25.500"`) sont admis. Un actif
+  que la plateforme ne tient pas : `400 VALIDATION_FAILED` sur `assetCode`.
+- **Plafonds.** Ceux du niveau de vérification de l'émetteur, dans l'actif : par transfert,
+  sur 24 heures glissantes, sur 31 jours glissants — chacun inclus. Seuls comptent les
+  envois. Niveau sans plafond, ou refermé : `403 TRANSFER_NOT_PERMITTED`. Plafond dépassé :
+  `422 TRANSFER_LIMIT_EXCEEDED`, dont `detail` dit lequel.
+- **Fonds.** `422 INSUFFICIENT_FUNDS` si le portefeuille ne détient pas le montant. Il n'y a
+  pas de découvert.
+- **Destinataire.** Désigné par son adresse e-mail. Qu'elle soit inconnue, que le compte soit
+  suspendu, clôturé ou pas encore vérifié, ou que son niveau de vérification ne soit pas
+  ouvert dans l'actif, la réponse est **la même** : `422 RECIPIENT_UNAVAILABLE` (« This
+  recipient cannot receive transfers. »). Elle vient **en dernier**, après les plafonds et les
+  fonds. Le **dixième** refus de ce type en 24 heures suspend tous les transferts du compte
+  pendant 24 heures (`429`). Se désigner soi-même : `422 UNPROCESSABLE_ENTITY`.
+- **Ordre des refus** : session (`401`), conditions d'utilisation à accepter (`403`),
+  fonctionnalité fermée (`403 FEATURE_DISABLED`) — avant tout examen de la requête ; forme
+  de l'en-tête et du corps ; preuve du titulaire ; actif, précision du montant, transfert à
+  soi-même ; clé déjà employée ; bornes du compte ; puis niveau, plafonds, fonds,
+  destinataire.
+- **Bornes** : 60 demandes par minute et par adresse IP ; 30 transferts tentés par heure et
+  par compte, aboutis ou refusés — une requête rejouée ne compte pas. Au-delà : `429` avec
+  `Retry-After`.
+- **`409 CONFLICT`** : le compte a été clôturé pendant la requête (« This account is
+  closed. ») ; ou son état a changé entre l'examen et l'écriture — niveau retiré, plafond
+  abaissé — (« …the account changed meanwhile. Please try again. »). Dans les deux cas **rien
+  n'a été transféré** ; dans le second, la requête se renvoie telle quelle. Un compte
+  suspendu pendant la requête reçoit `403 ACCOUNT_DISABLED`.
+- **Le transfert** : `id` ; `direction` — `SENT` ou `RECEIVED`, selon qui le lit ; `asset` ;
+  `amount`, à exactement `asset.scale` décimales ; `counterparty.email`, l'adresse que porte
+  **aujourd'hui** le compte de l'autre partie — `null` s'il a été clôturé depuis ; `entryId`,
+  l'écriture du grand livre, que portent aussi les mouvements des deux portefeuilles ;
+  `createdAt`. Aucun nom, aucun libellé : un transfert n'a pas de message.
+- **Mes transferts** : envoyés et reçus, du plus récent au plus ancien ; `limit` (1 à 100,
+  20 par défaut) et `after`, le `nextCursor` de la page précédente. Un transfert dont on
+  n'est ni l'émetteur ni le destinataire n'existe pas : `404 NOT_FOUND`.
+- **Ce que je peux envoyer** (`GET /api/v1/me/transfer-limits`) : `enabled` — la
+  fonctionnalité est ouverte ; `level` — le niveau de vérification du compte, de 0 à 3 ;
+  `allowances`, un élément par actif tenu, dans l'ordre des codes : `asset`, `limit`
+  (`perTransfer`, `daily`, `monthly` — ou `null` si ce niveau n'a pas de plafonds dans
+  l'actif : il n'y envoie ni n'y reçoit rien), `used` (`last24Hours`, `last31Days`) et
+  `remaining`, le plus grand montant que les plafonds admettent à cet instant — sans égard au
+  solde du portefeuille.
+- **Les deux parties sont prévenues par e-mail**, chacune dans sa langue ; le message de
+  l'émetteur dit quoi faire s'il n'est pas l'auteur du transfert. Un transfert envoyé, une
+  preuve refusée et un transfert refusé figurent dans l'historique du compte.
+- **Navigateurs.** `Idempotency-Key` fait partie des en-têtes qu'une page peut envoyer, et
+  `Idempotent-Replayed` de ceux qu'elle peut lire (CORS).
+- Ces routes suivent le mode maintenance (`503 MAINTENANCE`) et sont fermées au compte qui
+  doit encore accepter les conditions d'utilisation (`403 TERMS_ACCEPTANCE_REQUIRED`). Seul
+  l'envoi dépend de la fonctionnalité : fermée, les trois lectures restent ouvertes.
 
 ## Administration
 
@@ -631,13 +760,16 @@ d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les p
 | `GET /api/v1/admin/ledger/accounts/{accountId}/postings` | `ledger.read`           | un compte et ses lignes                                      |
 | `GET /api/v1/admin/ledger/entries/{entryId}`             | `ledger.read`           | une écriture complète                                        |
 | `GET /api/v1/admin/ledger/trial-balance`                 | `ledger.read`           | balance du grand livre                                       |
+| `GET /api/v1/admin/transfer-limits`                      | `transfer_limits.read`  | plafonds de transfert fixés                                  |
+| `PUT /api/v1/admin/transfer-limits/{assetCode}/{level}`  | `transfer_limits.write` | fixer les plafonds d'un niveau dans un actif                 |
 
 Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
 `users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `users.close`,
 `kyc.read`, `kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité et ne
 clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt. Seul
 `super_admin` publie les conditions d'utilisation (`terms.publish`), consulte le grand livre
-(`ledger.read`) et y enregistre un actif (`ledger.manage_assets`).
+(`ledger.read`), y enregistre un actif (`ledger.manage_assets`), et lit ou fixe les plafonds
+de transfert (`transfer_limits.read`, `transfer_limits.write`).
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -791,8 +923,9 @@ De deux décisions simultanées sur une même demande, une seule s'applique ; l'
 
 ### Grand livre
 
-**Aucune route ne passe d'écriture** : le back-office consulte le grand livre et enregistre
-les actifs dans lesquels il tient des comptes.
+**Aucune route du back-office ne passe d'écriture** : il consulte le grand livre et
+enregistre les actifs dans lesquels il tient des comptes. Les seules écritures viennent des
+transferts que font les titulaires.
 
 ```json
 POST /api/v1/admin/ledger/assets
@@ -847,6 +980,48 @@ POST /api/v1/admin/ledger/assets
 - Ces routes restent accessibles pendant la maintenance : c'est le moment où l'on vérifie
   les comptes.
 
+### Plafonds de transfert
+
+Ce que chaque niveau de vérification peut envoyer dans chaque actif. **Aucune valeur n'est
+livrée avec le code** : tant qu'un niveau n'a pas de plafonds dans un actif, il n'y envoie ni
+n'y reçoit rien.
+
+```json
+PUT /api/v1/admin/transfer-limits/USD/1
+{
+  "perTransfer": "100.00",
+  "daily": "250.00",
+  "monthly": "1000.00",
+  "reason": "Plafonds du niveau 1 en dollars : décision du 12/03"
+}
+```
+
+Les montants ci-dessus illustrent la forme de la requête : **ce ne sont pas des valeurs
+recommandées**.
+
+- **Un couple actif-niveau à la fois.** `level` vaut 0 (adresse vérifiée, aucun dossier
+  accepté), 1, 2 ou 3. La requête fixe les plafonds, ou remplace ceux qui existaient ;
+  réponse `200` : `asset`, `level`, `perTransfer`, `daily`, `monthly`, `setBy`, `setAt`.
+- **Trois montants** — par transfert, sur 24 heures glissantes, sur 31 jours glissants : des
+  chaînes décimales positives ou nulles, d'au plus `asset.scale` décimales, **croissantes** :
+  `perTransfer` ≤ `daily` ≤ `monthly` (`400 VALIDATION_FAILED` sur le champ en cause sinon).
+- **L'effet est immédiat**, en envoi comme en réception, y compris pour ce qui a déjà été
+  envoyé : un compte dont les envois dépassent déjà un plafond abaissé ne peut plus rien
+  envoyer tant qu'ils ne sont pas sortis de la fenêtre.
+- **Refermer un niveau** : ramener les trois montants à `"0"`. Des plafonds ne se suppriment
+  pas — la ligne reste, et dit qui a décidé.
+- La justification (`reason`, 10 à 500 caractères) est inscrite au journal d'audit avec les
+  plafonds remplacés et les nouveaux (`transfer_limit.set`).
+- `404 NOT_FOUND` pour un actif que la plateforme ne tient pas ; `400 VALIDATION_FAILED` pour
+  un niveau ou un code d'actif mal formé.
+- **La base vérifie elle-même le droit de fixer des plafonds** : un auteur qui perd son rôle
+  entre le contrôle de ses droits et l'écriture reçoit `403 FORBIDDEN`.
+- **Liste** : tous les plafonds fixés, par actif puis par niveau ; `setBy` vaut `null` pour
+  des plafonds fixés hors de l'API. Chaque consultation est inscrite au journal d'audit.
+- Fixer des plafonds **n'ouvre pas** les transferts : la fonctionnalité `internalTransfers`
+  s'ouvre à part (`PUT /api/v1/admin/system-settings/features.internal_transfers`).
+- Ces routes restent accessibles pendant la maintenance.
+
 **Premier administrateur.** Aucune route ne permet d'obtenir un rôle sans l'accord de deux
 administrateurs : les premiers comptes d'administration se créent en ligne de commande, avec
 le rôle propriétaire de la base (voir `DEPLOYMENT.md`). Il en faut **au moins deux** pour que
@@ -871,10 +1046,9 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Vérification des entreprises (KYB, fin de la phase 2) ; plafonds par niveau de vérification,
-en-tête `Idempotency-Key` obligatoire sur toute opération financière, puis les premières
-opérations elles-mêmes (suite de la phase 3) ; webhooks entrants signés et protégés contre
-le rejeu (phase 4).
+Vérification des entreprises (KYB, fin de la phase 2) ; fonds réservés, crédit et débit
+manuels sous double validation, gel d'un portefeuille (suite de la phase 3) ; dépôts,
+retraits et webhooks entrants signés et protégés contre le rejeu (phase 4).
 
 ## Règles d'exposition de la documentation
 

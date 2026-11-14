@@ -42,6 +42,9 @@ const ACTIVITY_BY_ACTION: Readonly<Record<string, ActivityType>> = {
   'user.data_export_failed': 'DATA_EXPORT_FAILED',
   'user.closure_failed': 'ACCOUNT_CLOSURE_FAILED',
   'terms.accepted': 'TERMS_ACCEPTED',
+  'transfer.created': 'TRANSFER_SENT',
+  'transfer.proof_failed': 'TRANSFER_FAILED',
+  'transfer.refused': 'TRANSFER_REFUSED',
 };
 
 const VISIBLE_ACTIONS = Object.keys(ACTIVITY_BY_ACTION);

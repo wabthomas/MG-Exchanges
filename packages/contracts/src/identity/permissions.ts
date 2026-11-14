@@ -25,6 +25,8 @@ export const PERMISSIONS = {
   'terms.publish': 'Publish a new version of the terms of use and follow its acceptance.',
   'ledger.read': 'View the ledger: assets, accounts, balances, entries and the trial balance.',
   'ledger.manage_assets': 'Register the assets in which the platform keeps accounts.',
+  'transfer_limits.read': 'View the transfer limits of each verification level.',
+  'transfer_limits.write': 'Set the transfer limits of each verification level.',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -93,3 +95,9 @@ export const TERMS_PUBLICATION_PERMISSION = 'terms.publish' satisfies Permission
  * chaque enregistrement.
  */
 export const ASSET_REGISTRATION_PERMISSION = 'ledger.manage_assets' satisfies PermissionKey;
+
+/**
+ * Permission de fixer les plafonds de transfert. La base de données la vérifie elle-même à
+ * chaque modification d'un plafond.
+ */
+export const TRANSFER_LIMITS_PERMISSION = 'transfer_limits.write' satisfies PermissionKey;

@@ -7,7 +7,7 @@ import type { DbClient } from '../../../infrastructure/database/prisma.service.j
 export type AfterClosure = () => Promise<void>;
 
 /** Parties d'une copie des données qu'un autre module que l'identité fournit. */
-export type ExportedSections = Partial<Pick<DataExport, 'verification' | 'wallets'>>;
+export type ExportedSections = Partial<Pick<DataExport, 'verification' | 'wallets' | 'transfers'>>;
 
 /**
  * Module qui détient des données rattachées à un compte. Il prend part à sa clôture, à

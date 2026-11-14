@@ -54,6 +54,11 @@ nom que la base met le solde à jour lorsqu'il passe une ligne —, mais un sold
 directement n'est jamais validé (voir « Tables (phase 3 — grand livre) »). Un actif **sans
 auteur** ne s'enregistre qu'avec le rôle propriétaire.
 
+Sur les **transferts**, de même : le rôle applicatif **ajoute** des transferts sans pouvoir
+les modifier ni les supprimer ; il fixe et remplace des plafonds (`INSERT`, `UPDATE` sur
+`transfer_limits`) sans pouvoir en supprimer. Des plafonds **sans auteur** ne se fixent
+qu'avec le rôle propriétaire.
+
 En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
 utilisée pour les migrations.
 
@@ -435,8 +440,8 @@ un en-tête (`ledger_entries`) et au moins deux **lignes** (`ledger_postings`), 
 se corrige par une écriture inverse. Le solde d'un compte (`ledger_accounts.balance`) n'est
 que le reflet de sa dernière ligne.
 
-**Aucune route ne passe encore d'écriture** : ces tables sont en place, avec leurs règles,
-pour les opérations à venir.
+**Une seule opération passe des écritures à ce jour** : le transfert entre titulaires (voir
+« Tables (phase 3 — transferts) »). Aucune ne dépose ni ne retire de fonds.
 
 ### `assets` — actifs tenus par la plateforme
 
@@ -609,6 +614,111 @@ désactivés par le propriétaire du schéma, restauration partielle) : elle est
 inscrite au journal d'audit (`ledger.verification_failed`), et **rien n'est corrigé
 automatiquement**.
 
+## Tables (phase 3 — transferts)
+
+Transferts de fonds entre deux titulaires (ADR 0026). Un transfert est **une ligne et une
+écriture** : la ligne (`transfers`) dit qui a envoyé quoi à qui, sous quelle clé et à quel
+niveau de vérification ; l'écriture du grand livre déplace les fonds. L'une ne va pas sans
+l'autre, et la base le vérifie. Les plafonds (`transfer_limits`) sont **des données** : aucun
+n'est créé par migration.
+
+### `transfer_limits` — plafonds par actif et par niveau de vérification
+
+| Colonne            | Type            | Notes                                                                 |
+| ------------------ | --------------- | --------------------------------------------------------------------- |
+| `asset_code`       | `varchar(12)`   | l'actif — clé primaire avec `kyc_level`                               |
+| `kyc_level`        | `smallint`      | niveau de vérification : 0 (aucun dossier accepté) à 3                |
+| `per_transfer_max` | `numeric(38,0)` | plafond d'un transfert, en unités minimales ; **zéro : niveau fermé** |
+| `daily_max`        | `numeric(38,0)` | plafond des envois sur 24 heures glissantes                           |
+| `monthly_max`      | `numeric(38,0)` | plafond des envois sur 31 jours glissants                             |
+| `set_by`           | `uuid`          | le membre du personnel qui les a fixés ; `NULL` : fixés hors de l'API |
+| `set_at`           | `timestamptz`   | **heure de la base**, à chaque modification                           |
+
+- **Pas de ligne, pas de transfert** : un niveau sans plafonds dans un actif n'y envoie ni
+  n'y reçoit rien. Un niveau est **ouvert** si sa ligne existe et que `per_transfer_max > 0`.
+- contraintes : `transfer_limits_kyc_level_check` (0 à 3), `transfer_limits_amounts_check`
+  (`0 ≤ per_transfer_max ≤ daily_max ≤ monthly_max`) ;
+- déclencheur `transfer_limits_enforce` (fonction `mgx_enforce_transfer_limit()`), erreur
+  `MGX10` : **seul les fixe un compte actif détenant `transfer_limits.write`**, relu au
+  moment d'écrire ; sans auteur, seulement le **rôle propriétaire** de la table — jamais
+  celui de l'API. Une ligne ne change ni d'actif, ni de niveau ;
+- **des plafonds ne se suppriment pas** (déclencheurs `transfer_limits_no_delete`,
+  `transfer_limits_no_truncate`, erreur `MGX01`) : refermer un niveau, c'est ramener ses trois
+  montants à zéro — la ligne reste, et dit qui l'a décidé. Le rôle applicatif n'a que
+  `SELECT`, `INSERT` et `UPDATE` ;
+- la ligne ne garde que les plafonds **en vigueur** : leur historique — valeurs remplacées,
+  auteur, justification — est dans `audit_logs` (`transfer_limit.set`).
+
+### `transfers` — transferts entre titulaires
+
+| Colonne           | Type            | Notes                                                                       |
+| ----------------- | --------------- | --------------------------------------------------------------------------- |
+| `id`              | `uuid`          | UUID v7                                                                     |
+| `sender_id`       | `uuid`          | le compte qui envoie                                                        |
+| `recipient_id`    | `uuid`          | le compte qui reçoit — **un autre**                                         |
+| `asset_code`      | `varchar(12)`   | l'actif                                                                     |
+| `amount`          | `numeric(38,0)` | unités minimales, **strictement positif**                                   |
+| `entry_id`        | `uuid`          | l'écriture du grand livre qui le réalise — **unique**                       |
+| `idempotency_key` | `varchar(128)`  | la clé fournie par le client — **unique par émetteur**                      |
+| `request_digest`  | `bytea`         | empreinte SHA-256 de la requête (destinataire, actif, montant)              |
+| `sender_level`    | `smallint`      | niveau de vérification de l'émetteur **à cet instant** : celui des plafonds |
+| `created_at`      | `timestamptz`   | **heure de la base** — c'est elle que comptent les fenêtres de 24 h et 31 j |
+
+- index : `(sender_id, idempotency_key)` unique — **la même requête ne s'exécute qu'une
+  fois** ; `entry_id` unique ; `(sender_id, asset_code, created_at)` pour les cumuls ;
+  `(sender_id, id)` et `(recipient_id, id)` pour les listes ;
+- contraintes : `transfers_amount_check`, `transfers_parties_check` (émetteur ≠ destinataire),
+  `transfers_sender_level_check` (0 à 3), `transfers_idempotency_key_format_check` (16 à 128
+  caractères : lettres, chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un
+  chiffre — le format du contrat), `transfers_request_digest_check` (32 octets) ;
+- déclencheur `transfers_enforce` (fonction `mgx_enforce_transfer()`), erreur `MGX10` —
+  **les plafonds sont imposés ici, quel que soit le code qui écrit** :
+  - il **verrouille l'émetteur** (`FOR NO KEY UPDATE`) jusqu'à la fin de la transaction : un
+    transfert à la fois par émetteur, le suivant compte celui-ci dans ses cumuls. Ce verrou
+    exclut aussi la suspension et la clôture du compte, mais pas celui qu'une écriture prend
+    sur ses titulaires (`FOR KEY SHARE`) : deux transferts croisés ne s'interbloquent pas ;
+  - l'émetteur et le destinataire sont **actifs** — le destinataire est retenu
+    (`FOR KEY SHARE`) jusqu'à la fin de la transaction ;
+  - `sender_level` est bien le niveau de vérification de l'émetteur, **recalculé par la
+    base** ;
+  - ce niveau est **ouvert** dans l'actif ;
+  - le montant ne dépasse pas le plafond par transfert ; ajouté aux envois des 24 dernières
+    heures, il ne dépasse pas `daily_max` ; ajouté à ceux des 744 dernières heures (31
+    jours), il ne dépasse pas `monthly_max` — bornes incluses ;
+  - le niveau de vérification du **destinataire** est ouvert dans l'actif, lui aussi ;
+  - il fixe `created_at` — ce que l'appelant fournit est ignoré ;
+- **un transfert ne se modifie ni ne s'efface** (déclencheurs `transfers_immutable_row`,
+  `transfers_immutable_truncate`, `MGX01`), même pour le propriétaire du schéma : c'est sur
+  lui que se comptent les plafonds. Le rôle applicatif n'a que `SELECT` et `INSERT` ;
+- déclencheur de contrainte **différé** `transfers_entry_matches` (fonction
+  `mgx_check_transfer_entry()`), vérifié à la validation de la transaction — **l'écriture
+  désignée est bien celle du transfert** (`MGX10`) : de type `transfer.internal`, **deux
+  lignes exactement**, l'une au débit du compte `user_available` de l'émetteur, l'autre au
+  crédit de celui du destinataire, chacune du montant du transfert, dans son actif. Chaque
+  ligne est vérifiée pour elle-même ; leur ordre est indifférent ;
+- déclencheur de contrainte **différé** `ledger_entries_transfer_recorded` (fonction
+  `mgx_check_transfer_recorded()`), posé sur `ledger_entries` — réciproquement, **une
+  écriture de type `transfer.internal` n'existe pas sans son transfert** (`MGX10`) : aucun
+  mouvement de ce type n'échappe aux plafonds.
+
+**Niveau de vérification.** `mgx_verified_level(uuid)` rend le plus haut niveau dont tous les
+précédents sont acceptés : un niveau 2 accepté ne compte pas tant que le niveau 1 ne l'est
+pas — ou ne l'est plus. C'est la règle de l'application (`verifiedLevelOf`) ; un test vérifie
+que les deux s'accordent sur toutes les combinaisons.
+
+**Cumuls.** `mgx_transfer_usage(uuid, varchar)` rend, pour un émetteur et un actif, la somme
+de ses envois des 24 dernières heures et des 744 dernières heures, **à l'horloge de la
+base**. Les durées sont comptées en heures : elles ne dépendent d'aucun fuseau horaire, ni
+de la longueur des mois. L'application lit ses cumuls par la même fonction : ce qu'elle
+annonce au titulaire est ce que la base comptera.
+
+**Ce que la base ne vérifie pas** : le solde — c'est l'affaire du grand livre, qui refuse
+tout découvert (`MGX09`) ; et l'idempotence au-delà de l'unicité de la clé — comparer
+l'empreinte d'une requête renvoyée à celle d'origine est fait par l'application.
+
+**Chemin de recherche figé.** Les six fonctions de la migration `internal_transfers` ne
+résolvent les noms que dans le schéma de l'application (`search_path = <schéma>, pg_temp`).
+
 ## Éléments écrits à la main dans les migrations
 
 Prisma ne modélise ni les contraintes `CHECK`, ni les index partiels, ni les déclencheurs.
@@ -678,11 +788,20 @@ Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** 
 | fonction `mgx_enforce_closure_ledger_retention()` ; déclencheur `account_closures_ledger_retention`                                                                                                                                                                                                                                                     | `account_closures`                                       |
 | chemin de recherche figé (`search_path = <schéma>, pg_temp`) des huit fonctions de la migration `ledger`                                                                                                                                                                                                                                                | —                                                        |
 | données initiales : permissions `ledger.read` et `ledger.manage_assets`, attribuées à `super_admin`                                                                                                                                                                                                                                                     | `permissions`, `role_permissions`                        |
+| fonction `mgx_verified_level()` (niveau de vérification d'un compte, tel que la base le calcule)                                                                                                                                                                                                                                                        | `kyc_cases`                                              |
+| `transfer_limits_kyc_level_check`, `transfer_limits_amounts_check`                                                                                                                                                                                                                                                                                      | `transfer_limits`                                        |
+| fonction `mgx_enforce_transfer_limit()` ; déclencheurs `transfer_limits_enforce`, `transfer_limits_no_delete`, `transfer_limits_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                            | `transfer_limits`                                        |
+| `transfers_amount_check`, `…_parties_check`, `…_sender_level_check`, `…_idempotency_key_format_check`, `…_request_digest_check`                                                                                                                                                                                                                         | `transfers`                                              |
+| fonctions `mgx_transfer_usage()`, `mgx_enforce_transfer()`, `mgx_check_transfer_entry()` ; déclencheurs `transfers_enforce`, `transfers_immutable_row`, `transfers_immutable_truncate`, déclencheur de contrainte différé `transfers_entry_matches` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                           | `transfers`                                              |
+| fonction `mgx_check_transfer_recorded()` ; déclencheur de contrainte différé `ledger_entries_transfer_recorded`                                                                                                                                                                                                                                         | `ledger_entries`                                         |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des six fonctions de la migration `internal_transfers`                                                                                                                                                                                                                                     | —                                                        |
+| données initiales : permissions `transfer_limits.read` et `transfer_limits.write`, attribuées à `super_admin`                                                                                                                                                                                                                                           | `permissions`, `role_permissions`                        |
 
 Leur présence et leur effet sont vérifiés par les tests d'intégration
 `database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
 `back-office-schema.spec.ts`, `kyc-schema.spec.ts`, `account-closure-schema.spec.ts`,
-`terms-schema.spec.ts` et `ledger-schema.spec.ts` (dans `apps/api/test/integration/`).
+`terms-schema.spec.ts`, `ledger-schema.spec.ts` et `transfers-schema.spec.ts` (dans
+`apps/api/test/integration/`).
 
 **Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
 
@@ -697,6 +816,7 @@ Leur présence et leur effet sont vérifiés par les tests d'intégration
 | `MGX07` | numéro de version qui n'est pas — ou plus — celui attendu : à la publication, le suivant ; à l'acceptation, celui en vigueur                                                                                                                             |
 | `MGX08` | règle du grand livre enfreinte : écriture incomplète ou déséquilibrée, ligne dans un autre actif que son compte, solde qui n'est pas celui de la dernière ligne, compte ouvert à qui ne peut pas détenir de fonds, actif enregistré sans y être habilité |
 | `MGX09` | fonds insuffisants : la ligne rendrait négatif le solde d'un compte                                                                                                                                                                                      |
+| `MGX10` | règle des transferts enfreinte : plafonds fixés sans y être habilité, partie qui n'est pas active, niveau de vérification erroné ou non ouvert dans l'actif, plafond dépassé, transfert sans son écriture — ou écriture de transfert sans son transfert  |
 
 `MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
 une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
@@ -717,6 +837,17 @@ prononcé **à la validation de la transaction** (écriture incomplète, solde n
 n'est pas traduit : c'est toujours un défaut du code, et l'erreur de la base remonte telle
 quelle. À l'enregistrement d'un actif, `MGX08` signifie que l'auteur a perdu son droit entre
 le contrôle de l'API et l'écriture : `403 FORBIDDEN`.
+
+Pour les transferts, `TransferService` fait les mêmes contrôles que `mgx_enforce_transfer()`,
+dans le même ordre, sous le même verrou de l'émetteur : la base n'est atteinte que si l'état
+d'un compte change entre ces contrôles et l'écriture — un dossier de vérification retiré, des
+plafonds abaissés, un destinataire suspendu. `MGX10` à l'écriture d'un transfert devient
+`TransferRefusedByDatabaseError`, et l'API répond `409 CONFLICT` : rien n'est écrit, et la
+requête, renvoyée, est examinée dans l'état nouveau. `MGX10` à l'écriture de plafonds
+(`LimitChangeDeniedError`) signifie que l'auteur a perdu son droit entre le contrôle de l'API
+et l'écriture : `403 FORBIDDEN`. Un refus prononcé à la validation de la transaction — un
+transfert et son écriture qui ne s'accordent pas — est un défaut du code, et n'est pas
+traduit.
 
 **Transactions qui se croisent.** `40001` (conflit de sérialisation) et `40P01`
 (interblocage) ne sont pas des défauts : PostgreSQL a annulé une transaction pour laisser
@@ -781,6 +912,8 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 | `kyc_cases`, `kyc_documents`                           | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces                                                                                                                           |
 | `assets`, `ledger_account_types`                       | conservés **indéfiniment** : un actif enregistré et un type de compte ne se modifient ni ne se retirent                                                                                                                                                                                                                                                                                   |
 | `ledger_accounts`, `ledger_entries`, `ledger_postings` | conservés **indéfiniment** : une écriture a toujours deux côtés, l'effacer déséquilibrerait le grand livre. **Après la clôture d'un compte**, ses comptes et leurs lignes restent, rattachés à une ligne `users` qui ne porte plus aucun identifiant ; l'adresse et le numéro gardés par `account_closures` permettent de les rattacher à une personne pendant dix ans, puis sont effacés |
+| `transfers`                                            | conservés **indéfiniment**, comme les écritures qu'ils désignent : un transfert ne se modifie ni ne s'efface. **Après la clôture d'un compte**, ses transferts restent, rattachés à une ligne `users` qui ne porte plus aucun identifiant : l'autre partie n'en voit plus l'adresse                                                                                                       |
+| `transfer_limits`                                      | conservés **indéfiniment** : des plafonds se remplacent, ils ne se suppriment pas. L'historique des valeurs est dans `audit_logs`                                                                                                                                                                                                                                                         |
 
 La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file
 `account-maintenance`), bornée à 500 lignes par catégorie et par exécution — 200 comptes pour
@@ -805,7 +938,7 @@ par un conseil juridique avant l'ouverture au public.
 
 ## Tables à venir
 
-Le modèle cible (vérification des entreprises, réservations de fonds, transferts, dépôts et
-retraits, échanges, paiements, blockchain, P2P, séquestre, risque, support…) sera introduit
+Le modèle cible (vérification des entreprises, réservations de fonds, dépôts et retraits,
+échanges, paiements, blockchain, P2P, séquestre, risque, support…) sera introduit
 phase par phase, chaque table arrivant avec le module qui l'utilise, ses contraintes et ses
 tests. Le plan de comptes s'étendra avec elles.

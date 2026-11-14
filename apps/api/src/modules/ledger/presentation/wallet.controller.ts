@@ -24,8 +24,9 @@ import { WalletService } from '../application/wallet.service.js';
 
 /**
  * Portefeuilles du titulaire : ses soldes et ses mouvements, tels que le grand livre les tient.
- * **Lecture seule** : aucune route ne déplace de fonds. Comme toute route authentifiée, fermée
- * au compte qui doit encore accepter les conditions d'utilisation, et pendant la maintenance.
+ * **Lecture seule** : les fonds se déplacent par les opérations — les transferts, à ce jour.
+ * Comme toute route authentifiée, fermée au compte qui doit encore accepter les conditions
+ * d'utilisation, et pendant la maintenance.
  */
 @ApiTags('Wallets')
 @ApiBearerAuth()
@@ -40,7 +41,7 @@ export class WalletController {
       'One wallet per asset in which the platform keeps accounts, in the order of asset codes ' +
       '— at zero until funds are posted to it. The list is empty while no asset is registered. ' +
       '`available` is a **decimal string** with exactly `asset.scale` decimals, never a JSON ' +
-      'number. Read-only: no route moves funds yet.',
+      'number. Read-only: funds move through operations, such as `POST /me/transfers`.',
   })
   @ApiOkResponse({ schema: toOpenApiSchema(walletListSchema) })
   @ApiProblemResponses(401, 403, 429, 503)

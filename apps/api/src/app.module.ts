@@ -17,6 +17,7 @@ import { LedgerModule } from './modules/ledger/ledger.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { OutboxModule } from './modules/outbox/outbox.module.js';
 import { SystemSettingsModule } from './modules/system-settings/system-settings.module.js';
+import { TransfersModule } from './modules/transfers/transfers.module.js';
 
 /**
  * Racine du monolithe modulaire.
@@ -44,6 +45,7 @@ import { SystemSettingsModule } from './modules/system-settings/system-settings.
     IdentityModule,
     KycModule,
     LedgerModule,
+    TransfersModule,
     HealthModule,
   ],
   providers: [
