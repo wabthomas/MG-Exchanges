@@ -540,7 +540,8 @@ describe('Profil, téléphone et historique d’activité — bout en bout', () 
         );
         pages.push(page.entries.map((entry) => entry.id));
         cursor = page.nextCursor;
-      } while (cursor !== null);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (cursor !== null && pages.length < 10);
       expect(pages.map((page) => page.length)).toEqual([4, 3]);
       expect(pages.flat()).toEqual(all.entries.map((entry) => entry.id));
 

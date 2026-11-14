@@ -842,7 +842,8 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
         expect(page.wallet.available).toBe('35.25');
         pages.push(page.movements.map(({ id }) => id));
         after = page.nextCursor;
-      } while (after !== null);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (after !== null && pages.length < 10);
       expect(pages.map(({ length }) => length)).toEqual([2, 2, 2]);
       expect(pages.flat()).toEqual(all.movements.map(({ id }) => id));
 
@@ -1091,7 +1092,8 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
         seen.push(...page.accounts.map(({ id }) => id));
         after = page.nextCursor;
         pages += 1;
-      } while (after !== null);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (after !== null && pages < 10);
       expect(pages).toBe(4);
       expect(seen).toEqual(ids);
       // Une page exactement pleine est la dernière.

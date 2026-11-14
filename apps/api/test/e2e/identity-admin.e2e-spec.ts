@@ -455,7 +455,8 @@ describe('Back-office des comptes — bout en bout', () => {
         );
         seen.push(...page.users.map((user) => user.id));
         cursor = page.nextCursor;
-      } while (cursor !== null);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (cursor !== null && seen.length <= total);
       expect(seen).toHaveLength(total);
       expect(new Set(seen).size).toBe(total);
     });

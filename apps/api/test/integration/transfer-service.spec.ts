@@ -1334,14 +1334,15 @@ describe('Transferts entre titulaires — service (PostgreSQL réel)', () => {
         [made[6], made[5], made[3], made[2], made[1], made[0]].map((transfer) => transfer!.id),
       );
 
-      // Page par page : rien n'est rendu deux fois, rien n'est omis.
+      // Page par page : rien n'est rendu deux fois, rien n'est omis. Le parcours est borné :
+      // un curseur ignoré rendrait sans fin la même page, et l'essai doit échouer, non attendre.
       const pages = [];
       let after: string | undefined;
       do {
         const page = await transfers.list(alice.id, { limit: 4, ...(after ? { after } : {}) });
         pages.push(page.transfers.map(({ amount }) => amount));
         after = page.nextCursor ?? undefined;
-      } while (after !== undefined);
+      } while (after !== undefined && pages.length < 5);
       expect(pages).toEqual([
         ['7.00', '6.00', '4.00', '3.00'],
         ['2.00', '1.00'],
