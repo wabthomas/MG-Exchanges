@@ -790,6 +790,8 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
   Un défaut a été ajouté avec ces corrections. Les vingt défauts concernés ont été
   relancés, puis **les 320 l'ont été d'une traite sur le code livré : tous sont détectés.**
+  L'un d'eux ne l'était que par un test resté bloqué jusqu'à son délai : la vérification du
+  lot 2 l'a montré, et le test a été corrigé (voir plus bas).
 
   Trois d'entre eux faisaient échouer d'un coup les 65 tests d'un fichier : la préparation
   commune de ces tests ne pouvait plus ouvrir les comptes de la plateforme. Ils ont été
@@ -798,16 +800,16 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   « Problèmes identifiés »).
 
 - Lots 1 à 5 de la phase 2 après ce lot, qui modifie la clôture, la copie des données, la
-  tâche horaire, les transactions et le support commun des tests. Les 890 défauts
-  rejouables par script — 31 au lot 1, 107 au lot 2, 226 au lot 3, 249 au lot 4, 277 au
-  lot 5 — ont été rejoués sur le code livré. **889 sont détectés**, chacun par l'échec d'un
-  test, aucun par un blocage. **Le dernier n'a plus d'effet, et a été retiré.** Placé dans
-  la migration du lot 5, il privait `super_admin` de la permission de publier les
-  conditions ; or la migration du grand livre, appliquée ensuite, attribue de nouveau tout
-  le catalogue à `super_admin`. Deux bases ont été installées, l'une avec ce défaut,
-  l'autre sans, puis comparées : même structure, mêmes rôles, mêmes permissions — alors
-  qu'arrêtées à la migration du lot 5, la permission manque à la première. Le même défaut,
-  placé dans la migration du grand livre, est détecté : il compte parmi les 320.
+  tâche horaire, les transactions et le support commun des tests. Les 890 défauts rejouables
+  par script — 31 au lot 1, 107 au lot 2, 226 au lot 3, 249 au lot 4, 277 au lot 5 — ont été
+  rejoués sur le code livré. **889 sont détectés**, chacun par l'échec d'un test, sans
+  qu'aucune exécution ait dû être interrompue. **Le dernier n'a plus d'effet, et a été
+  retiré.** Placé dans la migration du lot 5, il privait `super_admin` de la permission de
+  publier les conditions ; or la migration du grand livre, appliquée ensuite, attribue de
+  nouveau tout le catalogue à `super_admin`. Deux bases ont été installées, l'une avec ce
+  défaut, l'autre sans, puis comparées : même structure, mêmes rôles, mêmes permissions —
+  alors qu'arrêtées à la migration du lot 5, la permission manque à la première. Le même
+  défaut, placé dans la migration du grand livre, est détecté : il compte parmi les 320.
 - Phase 3, lot 2 : 338 défauts — 125 dans les règles SQL des transferts et des plafonds, 213
   dans le code (règles du domaine, service, plafonds, lecture et écriture en base, routes,
   clé d'idempotence, bornes, messages, historique, copie des données, contrats). 341 avaient
@@ -826,13 +828,11 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
     de vider chacune des deux tables ne change rien, ce droit ne lui étant jamais accordé ;
     le troisième modifie un calcul sans en changer aucun résultat. Ils ne sont pas comptés.
 
-  Les défauts concernés ont été relancés : tous sont détectés. Quatre faisaient échouer
-  d'un coup les 78 tests d'un fichier — la préparation commune de ces tests ne pouvait plus
-  fixer ses plafonds. Rejoués un à un contre une copie du fichier dont la préparation
-  tolère cet échec, **chacun est aussi détecté par un test qui vise la règle**.
-
-  Le rejeu d'une traite, sur le code livré, de ces 338 défauts et des 1 208 défauts
-  rejouables des lots précédents est en cours ; son résultat suivra.
+  Les défauts concernés ont été relancés, puis **les 338 l'ont été d'une traite sur le code
+  livré (commit `b72a17c`) : tous sont détectés.** Quatre font échouer d'un coup les 81
+  tests d'un fichier — la préparation commune de ces tests ne peut plus fixer ses plafonds.
+  Rejoués un à un contre une copie du fichier dont la préparation tolère cet échec, **chacun
+  est aussi détecté par un test qui vise la règle**.
 
 - Un défaut du grand livre n'a plus d'effet depuis ce lot, et a été retiré — le même cas
   qu'au lot précédent. Placé dans la migration du grand livre, il privait `super_admin` des
@@ -842,6 +842,31 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   alors qu'arrêtées à la migration du grand livre, les deux permissions manquent à la
   première. Le même défaut, placé dans la migration des transferts, est détecté : il compte
   parmi les 338.
+- Lots précédents après ce lot, qui modifie la copie des données, le catalogue des
+  permissions, les messages et plusieurs de leurs tests. Les 1 208 défauts rejouables par
+  script — 31, 107, 226, 249 et 276 pour les lots 1 à 5 de la phase 2, 319 pour le grand
+  livre — ont été rejoués sur le même code : **tous sont détectés**, sans qu'aucune
+  exécution ait dû être interrompue. Avec les 338 des transferts, **1 546 défauts ont été
+  rejoués en une seule passe**, de quatre heures vingt.
+
+  Douze d'entre eux font échouer d'un coup tous les tests d'un fichier : quatre des
+  transferts (ci-dessus), trois du grand livre, cinq de l'outil qui publie les conditions
+  d'utilisation. Chacun a été rejoué à part : tous sont aussi détectés par un test qui vise
+  la règle. Pour l'outil de publication, les scénarios s'enchaînent : le premier échoue
+  seul, pour la raison visée, et entraîne les suivants.
+
+  **Deux défauts n'étaient détectés que par un test resté bloqué jusqu'à son délai de trente
+  secondes** — et non par une vérification. Pour la première fois, la sortie complète des
+  tests a été conservée, pour les 657 défauts de la phase 3, et l'on y a cherché les tests
+  arrêtés par leur délai : une liste qui ignore son curseur rendait sans fin la même page à
+  un parcours « page par page » que rien ne bornait. L'un des deux est du lot 1, où il avait
+  passé pour une détection ordinaire. Après cette passe, les cinq parcours de ce genre que
+  comptent les tests ont été bornés, et dix défauts qui faussent le passage d'une page à la
+  suivante, relancés : chacun fait échouer une vérification, en moins de deux secondes (voir
+  « Problèmes identifiés »). **Ce point n'a pas été examiné pour les 889 défauts de la
+  phase 2**, dont les sorties n'étaient pas conservées : on sait que chacun fait échouer un
+  test, pas si c'est toujours par une vérification. L'outil conserve désormais toutes les
+  sorties ; celles-là seront examinées au prochain rejeu.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -923,7 +948,8 @@ Node.js 24.
 
 ### Pendant le lot 2 de la phase 3
 
-Tous ont été traités avant la publication du lot. Le premier touche le produit ; les quatre
+Les cinq premiers ont été traités avant la publication du lot ; le sixième, relevé par la
+vérification qui l'a suivie, l'a été le jour même. Le premier touche le produit ; les
 autres, ses tests, l'outil qui les éprouve et sa documentation.
 
 1. **La base contrôlait l'écriture d'un transfert en se fiant à l'ordre de ses deux
@@ -959,6 +985,20 @@ autres, ses tests, l'outil qui les éprouve et sa documentation.
    d'écriture » n'examinait que les routes du grand livre et des portefeuilles : exact au
    lot 1, où aucune autre n'écrivait ; trompeur depuis qu'un transfert en passe une. Le
    test dit maintenant ce qu'il vérifie.
+6. **Deux défauts volontaires n'étaient détectés que par un test bloqué.** Une liste qui
+   ignore son curseur rend toujours la même page ; le test qui la parcourait « page par
+   page » tournait alors sans fin, jusqu'au délai de trente secondes accordé à chaque test.
+   Il finissait donc par échouer — mais tard, sans dire pourquoi, et, pour le grand livre,
+   en faisant échouer six tests voisins. L'un des deux cas est dans les tests des transferts ;
+   **l'autre date du lot 1** — ni le test, ni le code en cause n'ont changé depuis —, et la
+   vérification d'alors l'avait compté comme une détection ordinaire : elle ne gardait que
+   le résumé de chaque exécution. La passe finale de ce lot garde les sorties complètes, et
+   c'est en y cherchant les tests arrêtés par leur délai que ces deux cas sont apparus. Les
+   cinq parcours de ce genre — deux datent de la phase 2 — s'arrêtent maintenant après un
+   nombre de pages qui ne peut pas être atteint sans défaut, et l'échec vient de la
+   vérification qui suit : avec les deux défauts, en moins d'une seconde, et sans entraîner
+   d'autre test. **Reste à examiner, au prochain rejeu, les sorties des 889 défauts de la
+   phase 2**, qui n'avaient pas été conservées.
 
 ### Pendant le lot 1 de la phase 3
 
