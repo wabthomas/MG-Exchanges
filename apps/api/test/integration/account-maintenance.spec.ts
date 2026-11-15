@@ -38,6 +38,7 @@ const NOTHING: MaintenanceReport = {
     'purge-stale-kyc-drafts': 0,
     // Le grand livre est vérifié à chaque passage ; ici, il ne compte aucune écriture.
     'verify-ledger': 0,
+    'expire-ledger-adjustments': 0,
   },
   failures: 0,
 };

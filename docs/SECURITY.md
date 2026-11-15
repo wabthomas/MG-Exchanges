@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2 ; phase 3, lots 1 et 2)
+## En place (phases 1 et 2 ; phase 3, lots 1 à 3)
 
 ### Configuration et secrets
 
@@ -447,10 +447,12 @@ titulaires, est décrite à la section suivante.
 
 > **Limites à connaître.**
 >
-> - **Aucune route ne crédite un portefeuille.** Ni dépôt, ni retrait : la seule opération
->   est le transfert entre titulaires, qui ne déplace que des fonds déjà présents — et il n'y
->   en a aucun tant qu'une écriture n'en a pas apporté. Les garanties ci-dessus sont
->   vérifiées par des tests qui passent des écritures directement, pas par un usage réel.
+> - **Ni dépôt, ni retrait par un titulaire.** Par l'API, des fonds n'entrent dans un
+>   portefeuille, et n'en sortent, que par un ajustement du personnel, sous double validation
+>   (voir « Opérations du personnel ») : ce que le grand livre crédite alors, c'est ce que
+>   deux personnes disent avoir reçu — rien ne le rapproche encore de ce que la plateforme
+>   détient réellement. Les garanties ci-dessus sont vérifiées par des tests, pas par un usage
+>   réel.
 > - **Le grand livre est cohérent avec lui-même ; il ne prouve pas que les fonds existent.**
 >   Le rapprochement avec ce que détiennent réellement la banque, l'opérateur de monnaie
 >   mobile ou le dépositaire reste à construire, avec les dépôts et les retraits.
@@ -500,7 +502,8 @@ Décisions et limites : ADR 0026.
 - **Jamais plus que ce que le portefeuille détient** : le grand livre refuse tout découvert,
   sous le verrou du compte — y compris quand plusieurs transferts partent ensemble.
 - **La route ne dit pas quelles adresses ont un compte.** Adresse inconnue, compte suspendu,
-  clôturé, pas encore vérifié, niveau fermé : **le même refus, mot pour mot**. Il vient en
+  clôturé, pas encore vérifié, portefeuille gelé, niveau fermé : **le même refus, mot pour
+  mot**. Il vient en
   dernier — après la preuve du titulaire, les plafonds et les fonds — et il est compté : le
   dixième en 24 heures suspend les transferts du compte pendant 24 heures.
 - **Ce que voit l'autre partie** : l'adresse e-mail que porte aujourd'hui le compte, et rien
@@ -533,9 +536,10 @@ Décisions et limites : ADR 0026.
 
 > **Limites à connaître.**
 >
-> - **Rien ne peut encore être transféré en pratique** : aucune route ne crédite un
->   portefeuille. Ces garanties sont vérifiées par des tests qui alimentent les portefeuilles
->   directement, pas par un usage réel.
+> - **Aucun usage réel** : les fonds qu'un transfert déplace ne peuvent venir que d'un
+>   ajustement du personnel, fermé par défaut. Ces garanties sont vérifiées par des tests —
+>   dont un parcours complet à travers le proxy, d'un crédit sous double validation jusqu'au
+>   transfert —, pas par un usage.
 > - **Un transfert est définitif.** Ni annulation, ni délai de rétractation, ni liste de
 >   bénéficiaires, ni confirmation d'un nouveau destinataire : des fonds envoyés à une
 >   mauvaise adresse — si elle a un compte — ne reviennent que si le destinataire les
@@ -563,13 +567,107 @@ Décisions et limites : ADR 0026.
 > - **Pas de fonds réservés** : un transfert a lieu entièrement, ou pas du tout. Les
 >   opérations en plusieurs temps (retrait en attente, séquestre) restent à construire.
 
+### Opérations du personnel : ajustements et gels
+
+- **Aucune personne seule ne crédite ni ne débite un portefeuille.** Un ajustement est
+  demandé par un membre du personnel et approuvé par un autre ; l'écriture n'est passée qu'à
+  l'approbation, dans la même transaction que la décision, sa trace au journal d'audit et
+  l'avis au titulaire. Demander et approuver sont deux permissions (`adjustments.request`,
+  `adjustments.approve`), que seul `super_admin` détient.
+- **La règle des quatre yeux est imposée par la base de données**, quel que soit le code qui
+  écrit : l'approbation et le refus viennent d'un autre que l'auteur de la demande ; nul ne
+  prend part à un ajustement de son propre portefeuille ; les deux intervenants sont actifs
+  et habilités **au moment de l'approbation** — une demande déposée par un compte suspendu
+  depuis ne s'approuve plus ; une demande se décide une seule fois, ses termes ne changent
+  jamais, et elle échoit après 72 heures, à l'horloge de la base.
+- **Un ajustement approuvé et son écriture vont ensemble**, vérifié à la validation de la
+  transaction : l'écriture désignée est celle de l'ajustement — son type, ses deux lignes,
+  son montant, le portefeuille du titulaire et le compte de conservation —, et toute écriture
+  de ce type a son ajustement approuvé. Aucune écriture **d'ajustement** n'échappe donc à la
+  double validation, même écrite en SQL sous le rôle de l'API — ce qui ne vaut pas pour une
+  écriture d'un autre type (voir les limites). Le propriétaire du schéma lui-même ne passe
+  pas un ajustement sans deux personnes habilitées, tant que les règles sont en place.
+- **Preuve de l'approbateur.** Une session ouverte ne suffit pas à déplacer des fonds :
+  l'approbation exige de nouveau le mot de passe et le second facteur de l'approbateur,
+  vérifiés avant tout examen de la demande ; les essais erronés sont bornés et tracés.
+- **Une demande identique ne s'approuve pas deux fois par mégarde** : une seule demande —
+  même portefeuille, même sens, même montant — peut être en attente.
+- **Fermé par défaut.** Demander et approuver exigent que la fonctionnalité
+  `manualAdjustments` soit ouverte ; la refermer arrête l'un et l'autre en moins de cinq
+  secondes, sans empêcher de refuser ni de retirer ce qui est en attente.
+- **Le titulaire est prévenu** de tout crédit et de tout débit passé par la plateforme : un
+  e-mail, le mouvement dans son portefeuille, l'événement dans l'historique de son compte.
+  **La justification ne lui est jamais montrée** — ni par l'API, ni par le message, ni dans la
+  copie de ses données. Elle ne figure pas non plus dans le grand livre, dont l'écriture ne
+  porte que des identifiants.
+- **Geler un portefeuille arrête tout mouvement sur lui**, dans un actif : ni envoi, ni
+  réception. La règle est posée **sur le grand livre lui-même**, à chaque ligne d'écriture :
+  elle vaut d'office pour toute opération, y compris celles qui restent à écrire. Seules
+  passent les écritures d'ajustement — qui exigent deux personnes : c'est par elles que des
+  fonds quittent un portefeuille gelé.
+- **Le gel est exact.** Il prend les verrous du titulaire et de son portefeuille : une
+  écriture en cours s'achève avant lui, toute écriture qui le suit le voit. Aucun mouvement
+  n'est validé sur un portefeuille après que son gel l'a été.
+- **Geler et lever sont deux pouvoirs.** La conformité gèle (`wallet_freezes.create`) ; lever
+  un gel (`wallet_freezes.lift`) est réservé à `super_admin`. Nul ne gèle son propre
+  portefeuille, ni n'en lève le gel. La base relit ces droits au moment d'écrire.
+- **Le titulaire sait que son portefeuille est gelé, jamais pourquoi** : le portefeuille le
+  dit (`frozen`), un transfert tenté répond `WALLET_FROZEN`, le gel et sa levée figurent dans
+  son historique. Aucun message ne lui est envoyé. Qui lui envoie des fonds reçoit le refus
+  unique du destinataire : rien ne lui apprend que le portefeuille est gelé.
+- **Un compte au portefeuille gelé ne se clôt pas** — ni par son titulaire, ni par le
+  personnel : la clôture effacerait ce qui l'identifie.
+- **Rien ne s'efface** : ni une demande d'ajustement, décidée ou non, ni un gel, levé ou
+  non. Chaque demande, chaque décision, chaque approbation refusée, chaque gel, chaque levée
+  et chaque consultation sont inscrits au journal d'audit — comme la tentative d'agir sur son
+  propre portefeuille.
+
+> **Limites à connaître.**
+>
+> - **Un ajustement crée ce que deux personnes déclarent.** Un crédit approuvé met des fonds
+>   à la disposition d'un titulaire sans que rien ne les rapproche d'un relevé bancaire ou
+>   d'une adresse : la double validation est le seul contrôle. Deux personnes habilitées qui
+>   s'entendent — ou deux comptes d'administration compromis — créditent n'importe quel
+>   portefeuille, du montant qu'elles veulent : **aucun plafond ne borne un ajustement**.
+> - **La base ne ferme pas la liste des types d'écriture.** Elle refuse une écriture
+>   d'ajustement sans son ajustement approuvé ; elle ne refuse pas une écriture équilibrée
+>   d'un **autre** type, qui créditerait un portefeuille depuis le compte de conservation,
+>   écrite en SQL sous le rôle de l'API — constaté sur la base d'aperçu. Le grand livre
+>   garantit l'arithmétique d'une écriture, non sa légitimité. La double validation portée
+>   par la base protège d'un défaut du code des ajustements, pas d'un accès en écriture à la
+>   base sous le rôle de l'API. Fermer ce chemin est proposé pour la suite (ADR 0027).
+> - **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
+>   les lui désigne. Un attaquant capable d'exécuter du SQL sous le rôle de l'API pourrait
+>   fabriquer une demande et son approbation au nom de deux administrateurs existants — et
+>   laisserait une demande ineffaçable qu'ils n'ont jamais faite (même limite que pour les
+>   rôles, ADR 0018). La preuve redemandée à l'approbateur est vérifiée par l'API, non par la
+>   base.
+> - **Aucun niveau de vérification n'est exigé du titulaire crédité** : c'est aux deux
+>   personnes d'en juger. Les plafonds de transfert, eux, s'appliquent ensuite à ce qu'il
+>   envoie.
+> - **Lever un gel est l'acte d'une seule personne**, comme le poser : une justification, pas
+>   de double validation.
+> - **Un gel se voit.** Le titulaire l'apprend à sa prochaine lecture de ses portefeuilles :
+>   il n'existe pas de gel « silencieux ». Pour une mesure qui ne doit pas alerter son objet,
+>   ce n'est pas l'outil.
+> - **Un gel vaut pour un actif.** Geler tous les portefeuilles d'un compte, c'est les geler
+>   un à un — ou suspendre le compte, qui n'envoie ni ne reçoit plus rien.
+> - **Le support ne voit pas les gels** : il ne peut pas dire à un titulaire pourquoi ses
+>   transferts sont refusés, seulement le renvoyer vers qui le peut.
+> - **La justification d'une demande ou d'un gel est un texte libre**, conservé indéfiniment :
+>   ce qu'on y écrit sur une personne y reste. Elle n'est lue que par qui détient la
+>   permission de consulter, et chaque consultation est tracée.
+> - **Les messages informent, ils ne garantissent rien** : sans serveur d'e-mail configuré,
+>   le titulaire n'est pas prévenu d'un ajustement, qui a lieu quand même.
+
 ### Conservation et purge
 
 - Une tâche horaire supprime : les inscriptions jamais vérifiées (7 jours), les sessions
   terminées (90 jours après leur échéance — la plus récente de chaque compte est conservée),
   les codes expirés (7 jours), les enrôlements de second facteur abandonnés (24 heures), les
   dossiers de vérification jamais déposés (30 jours, avec leurs pièces), les événements
-  publiés de la boîte d'envoi (30 jours), et clôt les demandes de rôle échues. Chaque
+  publiés de la boîte d'envoi (30 jours), et clôt les demandes de rôle et les demandes
+  d'ajustement échues. Chaque
   suppression d'inscription ou de dossier est tracée. Une inscription supprimée emporte
   l'acceptation des conditions qu'elle portait.
 - **Comptes clôturés** : à l'échéance (trente jours après la clôture, ou dix ans si des
@@ -600,6 +698,10 @@ Décisions et limites : ADR 0026.
   par niveau et actif par actif — et aucun n'existe par défaut. Refermer la fonctionnalité
   arrête les envois en moins de cinq secondes — le temps que chaque instance de l'API relise
   ses paramètres ; les transferts passés restent consultables.
+- Les **ajustements manuels** sont une fonctionnalité comme les autres : fermés par défaut,
+  ouverts par une décision tracée. C'est la seule route de l'API par laquelle des fonds
+  entrent dans le grand livre : tant qu'elle n'a jamais été ouverte, aucune route n'a crédité
+  un portefeuille. Geler un portefeuille, en revanche, ne dépend d'aucune ouverture.
 - Fermer la vérification d'identité aux titulaires ne ferme pas son examen : la conformité
   peut toujours vider la file et retirer une vérification, y compris pendant la maintenance.
 - Une valeur de paramètre corrompue en base est ignorée au profit de l'état fermé.
@@ -650,9 +752,11 @@ Décisions et limites : ADR 0026.
 | Plafonds de transfert : valeurs (propriétaire, conformité)                                 | —     |
 | Plafonds : double validation d'un changement, bornes en réception et tous actifs confondus | 3+    |
 | Transferts : délai de rétractation, bénéficiaires enregistrés, second facteur obligatoire  | 3+    |
-| Fonds réservés ; crédit et débit manuels sous double validation ; gel d'un portefeuille    | 3     |
+| Fonds réservés (avec la première opération en plusieurs temps)                             | 3     |
+| Ajustements : plafond par ajustement, rapprochement avec une pièce (relevé, reçu)          | 3+    |
+| Gel : double validation de la levée, gel de tout un compte, visibilité pour le support     | 3+    |
 | Grand livre : rapprochement avec les fonds réellement détenus, alerte sur une anomalie     | 3–9   |
-| Grand livre : double validation des écritures manuelles et de l'enregistrement d'un actif  | 3     |
+| Grand livre : double validation de l'enregistrement d'un actif                             | 3     |
 | Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé         | 9     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |
 | Protection CSRF du client web (les jetons y seront portés par un cookie `HttpOnly`)        | 7     |

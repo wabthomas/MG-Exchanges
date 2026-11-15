@@ -24,7 +24,8 @@ import { WalletService } from '../application/wallet.service.js';
 
 /**
  * Portefeuilles du titulaire : ses soldes et ses mouvements, tels que le grand livre les tient.
- * **Lecture seule** : les fonds se déplacent par les opérations — les transferts, à ce jour.
+ * **Lecture seule** : les fonds se déplacent par les opérations — les transferts du titulaire,
+ * les ajustements du personnel.
  * Comme toute route authentifiée, fermée au compte qui doit encore accepter les conditions
  * d'utilisation, et pendant la maintenance.
  */
@@ -41,7 +42,9 @@ export class WalletController {
       'One wallet per asset in which the platform keeps accounts, in the order of asset codes ' +
       '— at zero until funds are posted to it. The list is empty while no asset is registered. ' +
       '`available` is a **decimal string** with exactly `asset.scale` decimals, never a JSON ' +
-      'number. Read-only: funds move through operations, such as `POST /me/transfers`.',
+      'number. `frozen` is true when the platform froze the wallet: its balance stays, but ' +
+      'nothing can be sent from it nor received into it until the freeze is lifted. ' +
+      'Read-only: funds move through operations, such as `POST /me/transfers`.',
   })
   @ApiOkResponse({ schema: toOpenApiSchema(walletListSchema) })
   @ApiProblemResponses(401, 403, 429, 503)

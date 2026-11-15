@@ -80,6 +80,30 @@ export class HolderClosedError extends Error {
   }
 }
 
+/**
+ * Le portefeuille d'un des titulaires de l'écriture est gelé : seules les écritures d'ajustement
+ * y passent. Cas **attendu** — le gel a pu être posé juste avant l'opération : à elle d'en faire
+ * un refus compréhensible.
+ */
+export class WalletFrozenError extends Error {
+  constructor(
+    /**
+     * Portefeuille gelé ; `null` si c'est la base de données qui a refusé la ligne, sans que
+     * l'application ait pu le désigner.
+     */
+    readonly wallet: { readonly userId: string; readonly assetCode: string } | null,
+    options?: ErrorOptions,
+  ) {
+    super(
+      wallet === null
+        ? 'A wallet of the entry is frozen: nothing can be posted to it.'
+        : `The ${wallet.assetCode} wallet of an account of the entry is frozen: nothing can be posted to it.`,
+      options,
+    );
+    this.name = 'WalletFrozenError';
+  }
+}
+
 /** L'actif d'un montant n'est pas tenu par le grand livre. */
 export class UnknownAssetError extends Error {
   constructor(readonly assetCode: string) {

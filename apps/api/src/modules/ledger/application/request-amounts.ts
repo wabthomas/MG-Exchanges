@@ -1,8 +1,8 @@
 import { Money, MoneyError } from '@mgx/shared';
 
 import { AppError } from '../../../common/errors/app-error.js';
-import type { AssetRecord } from '../../ledger/application/ledger.repository.js';
-import { LEDGER_AMOUNT_MAX_UNITS } from '../../ledger/domain/journal-entry.js';
+import { LEDGER_AMOUNT_MAX_UNITS } from '../domain/journal-entry.js';
+import type { AssetRecord } from './ledger.repository.js';
 
 /** Refus d'un champ de la requête, tel que le rend la validation des contrats. */
 export function invalidField(path: string, message: string): AppError {

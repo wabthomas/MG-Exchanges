@@ -185,6 +185,10 @@ export {
   TERMS_PUBLICATION_PERMISSION,
   ASSET_REGISTRATION_PERMISSION,
   TRANSFER_LIMITS_PERMISSION,
+  ADJUSTMENT_REQUEST_PERMISSION,
+  ADJUSTMENT_APPROVAL_PERMISSION,
+  WALLET_FREEZE_PERMISSION,
+  WALLET_FREEZE_LIFT_PERMISSION,
 } from './identity/permissions.js';
 export {
   type AcceptTermsRequest,
@@ -381,6 +385,40 @@ export {
   type TrialBalance,
   trialBalanceSchema,
 } from './ledger/admin-ledger.js';
+export {
+  type FreezeWalletRequest,
+  freezeWalletRequestSchema,
+  type LiftWalletFreezeRequest,
+  liftWalletFreezeRequestSchema,
+  WALLET_FREEZE_STATUSES,
+  type WalletFreeze,
+  type WalletFreezeList,
+  type WalletFreezeListQuery,
+  walletFreezeListQuerySchema,
+  walletFreezeListSchema,
+  walletFreezeSchema,
+  type WalletFreezeStatus,
+} from './ledger/wallet-freezes.js';
+export {
+  type ApproveLedgerAdjustmentRequest,
+  approveLedgerAdjustmentRequestSchema,
+  type CreateLedgerAdjustmentRequest,
+  createLedgerAdjustmentRequestSchema,
+  LEDGER_ADJUSTMENT_DIRECTIONS,
+  LEDGER_ADJUSTMENT_ENTRY_KINDS,
+  LEDGER_ADJUSTMENT_STATUSES,
+  LEDGER_ADJUSTMENT_TTL_HOURS,
+  type LedgerAdjustment,
+  type LedgerAdjustmentDirection,
+  type LedgerAdjustmentList,
+  type LedgerAdjustmentListQuery,
+  ledgerAdjustmentListQuerySchema,
+  ledgerAdjustmentListSchema,
+  ledgerAdjustmentSchema,
+  type LedgerAdjustmentStatus,
+  type RejectLedgerAdjustmentRequest,
+  rejectLedgerAdjustmentRequestSchema,
+} from './adjustments/adjustments.js';
 export {
   type AdminTransferLimit,
   type AdminTransferLimitList,

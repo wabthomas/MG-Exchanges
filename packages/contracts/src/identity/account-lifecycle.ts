@@ -86,6 +86,7 @@ export const ACCOUNT_CLOSURE_BLOCKERS = [
   'ROLE_HELD',
   'VERIFICATION_PENDING_REVIEW',
   'FUNDS_REMAINING',
+  'WALLET_FROZEN',
 ] as const;
 export type AccountClosureBlocker = (typeof ACCOUNT_CLOSURE_BLOCKERS)[number];
 

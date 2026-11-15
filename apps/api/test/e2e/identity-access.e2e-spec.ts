@@ -247,6 +247,7 @@ describe('Contrôle d’accès — bout en bout', () => {
         'features.registration',
         'features.kyc',
         'features.internal_transfers',
+        'features.manual_adjustments',
         'features.fiat_deposits',
         'features.fiat_withdrawals',
         'features.crypto_deposits',

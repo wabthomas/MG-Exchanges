@@ -9,12 +9,15 @@ République démocratique du Congo ; l'architecture est prévue pour s'étendre 
 > particuliers (KYC, examen manuel), clôture de compte, copie et effacement des données,
 > conditions d'utilisation versionnées (publication, acceptation) sont livrés ; la
 > vérification des entreprises reste à faire. Phase 3 en cours : le grand livre en partie
-> double (lot 1) et une première opération, le transfert entre deux titulaires (lot 2), sont
-> en place.**
-> **Aucune route ne dépose ni ne retire de fonds : ni dépôt, ni paiement, ni retrait.** Le
-> transfert ne déplace que des fonds déjà présents dans un portefeuille — et aucune route
-> n'en apporte : tous les soldes valent zéro. Les transferts sont **fermés par défaut**, et
-> **aucun plafond n'est livré avec le code** : leurs valeurs restent à décider.
+> double (lot 1), le transfert entre deux titulaires (lot 2) et les opérations du personnel —
+> crédit et débit manuels sous double validation, gel d'un portefeuille (lot 3) — sont en
+> place.**
+> **Aucun titulaire ne dépose ni ne retire de fonds : ni dépôt, ni paiement, ni retrait.**
+> Par l'API, des fonds n'entrent dans un portefeuille que par un **ajustement du personnel**,
+> demandé par une personne et approuvé par une autre : ce que le grand livre crédite alors est
+> ce que ces deux personnes déclarent, et rien ne le rapproche encore de fonds réellement
+> détenus. Les ajustements et les transferts sont **fermés par défaut**, et **aucun plafond
+> n'est livré avec le code** : leurs valeurs restent à décider.
 > L'inscription et la vérification d'identité sont fermées par défaut, et personne ne
 > s'inscrit tant qu'aucune version des conditions d'utilisation n'est publiée — **leur texte
 > n'est pas fourni par ce dépôt**. Les e-mails partent par
@@ -33,7 +36,8 @@ packages/
   shared/              primitives métier : montants exacts (bigint), sans virgule flottante
   validation/          schémas de validation primitifs (Zod), partagés avec les futurs clients
   contracts/           contrats de l'API : erreurs, identité, vérification d'identité,
-                       back-office, grand livre, transferts, catalogue des permissions
+                       back-office, grand livre, transferts, ajustements et gels, catalogue
+                       des permissions
   config/              préréglages d'outillage : TypeScript, ESLint, Jest
 infrastructure/
   docker/              image de l'API, initialisation de PostgreSQL (rôles et privilèges)
@@ -78,7 +82,8 @@ pnpm build
 pnpm dev:api
 
 # 4. Comptes d'administration (hors de l'API, voir docs/DEPLOYMENT.md) — il en faut deux
-#    pour que les rôles puissent ensuite évoluer par l'API (double validation)
+#    pour que les rôles puissent ensuite évoluer par l'API, et pour qu'un portefeuille puisse
+#    être crédité (double validation)
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD
 pnpm admin:create --email admin@example.com
 
@@ -103,9 +108,10 @@ L'API écoute sur `http://localhost:3000` :
 | `/api/v1/auth/…`            | inscription, connexion en une ou deux étapes, mot de passe                                                                                               |
 | `/api/v1/me/…`              | compte, sessions, second facteur, profil, téléphone, historique                                                                                          |
 | `/api/v1/me/verification/…` | vérification d'identité : dossiers par niveau, envoi des pièces                                                                                          |
-| `/api/v1/me/wallets/…`      | portefeuilles : soldes et mouvements, **en lecture seule**                                                                                               |
+| `/api/v1/me/wallets/…`      | portefeuilles : soldes, mouvements, gel éventuel — **en lecture seule**                                                                                  |
 | `/api/v1/me/transfers`      | transferts entre titulaires : envoyer (clé d'idempotence, mot de passe), consulter ; `/api/v1/me/transfer-limits` : ses plafonds                         |
 | `/api/v1/admin/…`           | back-office : paramètres, comptes, rôles, examen des dossiers de vérification, grand livre, plafonds de transfert (permissions et second facteur requis) |
+| `/api/v1/admin/ledger/…`    | dont : ajustements manuels d'un portefeuille (`adjustments`, sous double validation) et gels (`wallet-freezes`)                                          |
 | `/api/v1/dev/mailbox`       | e-mails et SMS « envoyés » — développement seul                                                                                                          |
 | `/health/live`              | sonde de vivacité                                                                                                                                        |
 | `/health/ready`             | sonde de disponibilité (PostgreSQL, Redis)                                                                                                               |
@@ -124,8 +130,15 @@ Les transferts entre titulaires demandent trois décisions d'un administrateur :
 enregistré ; des plafonds sont fixés, dans cet actif, pour chaque niveau de vérification
 concerné (`PUT /api/v1/admin/transfer-limits/{actif}/{niveau}`) ; la fonctionnalité est
 ouverte (`…/features.internal_transfers`). Chaque transfert exige l'en-tête
-`Idempotency-Key` et le mot de passe du titulaire. **Aucune route ne crédite encore un
-portefeuille** : il n'y a rien à transférer tant que les dépôts n'existent pas.
+`Idempotency-Key` et le mot de passe du titulaire.
+
+Pour qu'un portefeuille détienne des fonds, il faut **deux administrateurs** : les
+ajustements manuels ouverts (`…/features.manual_adjustments`), l'un demande le crédit
+(`POST /api/v1/admin/ledger/adjustments`), l'autre l'approuve
+(`…/adjustments/{id}/approve`, avec son mot de passe et son second facteur). C'est la seule
+route de l'API qui en apporte — les dépôts n'existent pas. Un administrateur ou un agent de
+conformité peut geler un portefeuille (`POST /api/v1/admin/ledger/wallet-freezes`) : plus
+rien n'en part ni n'y arrive.
 
 Pile entièrement conteneurisée (migrations, API, Nginx sur le port 8080) :
 

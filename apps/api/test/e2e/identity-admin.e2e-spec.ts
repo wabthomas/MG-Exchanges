@@ -235,11 +235,20 @@ describe('Back-office des comptes — bout en bout', () => {
       );
       expect(roles.roles.map((role) => role.key)).toEqual(['compliance', 'super_admin', 'support']);
       const [compliance, superAdmin, supportRole] = roles.roles;
-      // La conformité examine les dossiers de vérification et clôt les comptes ; elle ne les
-      // suspend pas, ne révoque pas leurs sessions et ne touche pas à leur second facteur.
+      // La conformité examine les dossiers de vérification, clôt les comptes et gèle un
+      // portefeuille ; elle ne suspend pas un compte, ne révoque pas ses sessions et ne touche
+      // pas à son second facteur.
       expect(compliance).toMatchObject({
         isSystem: true,
-        permissions: ['kyc.read', 'kyc.review', 'kyc.revoke', 'users.close', 'users.read'],
+        permissions: [
+          'kyc.read',
+          'kyc.review',
+          'kyc.revoke',
+          'users.close',
+          'users.read',
+          'wallet_freezes.create',
+          'wallet_freezes.read',
+        ],
         holders: 0,
       });
       expect(superAdmin).toMatchObject({

@@ -35,8 +35,13 @@ import {
 } from '../../ledger/application/ledger-views.js';
 import type { AssetRecord } from '../../ledger/application/ledger.repository.js';
 import { LedgerService } from '../../ledger/application/ledger.service.js';
+import { invalidField, parseRequestAmount } from '../../ledger/application/request-amounts.js';
 import { userAccount } from '../../ledger/domain/ledger-account.js';
-import { HolderClosedError, InsufficientFundsError } from '../../ledger/domain/ledger-errors.js';
+import {
+  HolderClosedError,
+  InsufficientFundsError,
+  WalletFrozenError,
+} from '../../ledger/domain/ledger-errors.js';
 import { OutboxService } from '../../outbox/application/outbox.service.js';
 import { TRANSFER_NOTICE_REQUESTED_EVENT, TRANSFER_PARTIES } from '../domain/transfer-events.js';
 import {
@@ -46,7 +51,6 @@ import {
   ledgerKeyOf,
   requestDigest,
 } from '../domain/transfer-policy.js';
-import { invalidField, parseRequestAmount } from './transfer-amounts.js';
 import {
   RECIPIENT_REFUSALS_PER_ACCOUNT,
   TRANSFER_ATTEMPTS_PER_ACCOUNT,
@@ -61,6 +65,7 @@ import {
 /** Ce qui fait refuser un transfert — des cas attendus, que l'émetteur doit comprendre. */
 type RefusalReason =
   | 'SENDER_NOT_ACTIVE'
+  | 'WALLET_FROZEN'
   | 'LEVEL_NOT_OPEN'
   | 'LIMIT_EXCEEDED'
   | 'INSUFFICIENT_FUNDS'
@@ -96,6 +101,12 @@ class TransferRefusal extends Error {
         return this.details.senderStatus === 'SUSPENDED'
           ? new AppError('ACCOUNT_DISABLED', 'This account is disabled. Please contact support.')
           : new AppError('CONFLICT', 'This account is closed.');
+      case 'WALLET_FROZEN':
+        // Le titulaire apprend que son portefeuille est gelé — jamais pourquoi.
+        return new AppError(
+          'WALLET_FROZEN',
+          'Your wallet in this asset is frozen. Please contact support.',
+        );
       case 'LEVEL_NOT_OPEN':
         return new AppError(
           'TRANSFER_NOT_PERMITTED',
@@ -152,10 +163,15 @@ export interface TransferOutcome {
  * verrou de l'émetteur — ses transferts passent un à un — et la base de données refait le
  * calcul avant d'écrire (voir la migration `internal_transfers`).
  *
+ * **Portefeuille gelé.** Rien ne part d'un portefeuille que la plateforme a gelé : le refus le
+ * dit à son titulaire, sans la raison. Rien n'y arrive non plus — pour l'émetteur, c'est le
+ * refus unique du destinataire.
+ *
  * **Destinataire.** Désigné par son adresse e-mail. Qu'elle soit inconnue, que le compte soit
- * fermé ou suspendu, ou que son niveau de vérification ne soit pas ouvert dans l'actif, le
- * refus est le même — et il vient **en dernier**, après les plafonds et le solde : apprendre
- * qu'une adresse a un compte coûte un transfert réel. Ces refus sont comptés par émetteur.
+ * fermé ou suspendu, que son portefeuille soit gelé, ou que son niveau de vérification ne soit
+ * pas ouvert dans l'actif, le refus est le même — et il vient **en dernier**, après les
+ * plafonds et le solde : apprendre qu'une adresse a un compte coûte un transfert réel. Ces
+ * refus sont comptés par émetteur.
  *
  * **Ordre des verrous** : le compte de l'émetteur, puis — par le grand livre — les titulaires
  * de l'écriture, puis ses comptes. Deux transferts croisés ne s'interbloquent pas.
@@ -341,6 +357,11 @@ export class TransferService {
       return { record: concurrent, replayed: true };
     }
 
+    // Un gel attend le verrou de l'émetteur, tenu ici : cette lecture est exacte.
+    if (await this.reader.isWalletFrozen(tx, sender.id, assetCode)) {
+      throw new TransferRefusal('WALLET_FROZEN');
+    }
+
     const allowance = await this.transfers.allowance(tx, sender.id, assetCode);
     const decision = decideTransfer(amount.units, allowance.ceilings, allowance.usage);
     if (!decision.allowed) {
@@ -387,6 +408,12 @@ export class TransferService {
       }
       // L'émetteur est verrouillé et actif : c'est le destinataire qui vient d'être clôturé.
       if (error instanceof HolderClosedError) {
+        throw new TransferRefusal('RECIPIENT_UNAVAILABLE', { recipientId: recipient.id });
+      }
+      // Le portefeuille de l'émetteur n'est pas gelé — vu plus haut, sous son verrou : c'est
+      // celui du destinataire. Le grand livre le refuse en dernier, comme tout ce qui tient au
+      // destinataire, et par le même refus.
+      if (error instanceof WalletFrozenError) {
         throw new TransferRefusal('RECIPIENT_UNAVAILABLE', { recipientId: recipient.id });
       }
       throw error;

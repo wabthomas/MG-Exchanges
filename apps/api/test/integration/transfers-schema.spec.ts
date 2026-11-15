@@ -356,7 +356,7 @@ describe('Transferts — règles portées par la base de données', () => {
             .sort()
             .map((key) => ({ key, held: true })),
         );
-        expect(rows).toHaveLength(17);
+        expect(rows).toHaveLength(23);
       });
     });
   });
@@ -1752,11 +1752,21 @@ describe('Transferts — règles portées par la base de données', () => {
         transfer_limits: 'transfer_limits_no_truncate',
         transfers: 'transfers_immutable_truncate',
       };
+      // D'autres tables se réfèrent aux actifs et aux écritures, et refusent elles aussi d'être
+      // vidées (voir staff-operations-schema.spec.ts) : leurs protections sont levées ici.
+      const otherGuards: Record<string, string> = {
+        ledger_adjustments: 'ledger_adjustments_no_truncate',
+        wallet_freezes: 'wallet_freezes_no_truncate',
+      };
       await asOwner(async (db) => {
         const before = { transfers: await transferCount(db), ledger: await ledgerSize(db) };
         const truncating = (kept: string): Promise<string | undefined> =>
           attempt(db, async () => {
-            for (const [table, guard] of Object.entries({ ...ledgerGuards, ...ownGuards })) {
+            for (const [table, guard] of Object.entries({
+              ...ledgerGuards,
+              ...otherGuards,
+              ...ownGuards,
+            })) {
               if (table !== kept) {
                 await db.query(`ALTER TABLE ${table} DISABLE TRIGGER ${guard}`);
               }

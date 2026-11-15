@@ -1082,12 +1082,15 @@ describe('Grand livre — règles portées par la base de données', () => {
     };
     /**
      * Tables d'autres modules qui se réfèrent au grand livre : les vider en cascade est refusé
-     * par leurs propres déclencheurs (voir transfers-schema.spec.ts). Ils sont levés ici, pour
-     * que seules les protections du grand livre soient éprouvées.
+     * par leurs propres déclencheurs (voir transfers-schema.spec.ts et
+     * staff-operations-schema.spec.ts). Ils sont levés ici, pour que seules les protections du
+     * grand livre soient éprouvées.
      */
     const dependents: Record<string, string> = {
       transfer_limits: 'transfer_limits_no_truncate',
       transfers: 'transfers_immutable_truncate',
+      ledger_adjustments: 'ledger_adjustments_no_truncate',
+      wallet_freezes: 'wallet_freezes_no_truncate',
     };
     const disable = async (db: pg.Client, tables: Record<string, string>): Promise<void> => {
       for (const [table, guard] of Object.entries(tables)) {

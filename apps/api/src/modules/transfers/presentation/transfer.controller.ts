@@ -82,8 +82,9 @@ export class TransferController {
       '**Limits.** Those of my verification level in this asset, per transfer, over 24 hours ' +
       'and over 31 days (`GET /me/transfer-limits`): `TRANSFER_NOT_PERMITTED` if none is set ' +
       'for my level, `TRANSFER_LIMIT_EXCEEDED` if the amount exceeds one of them.\n\n' +
-      '**Refusals** — nothing is moved: `INSUFFICIENT_FUNDS`; `RECIPIENT_UNAVAILABLE`, the ' +
-      'same answer whether the address is unknown, the account closed or suspended, or its ' +
+      '**Refusals** — nothing is moved: `WALLET_FROZEN` if the platform froze my wallet in ' +
+      'this asset; `INSUFFICIENT_FUNDS`; `RECIPIENT_UNAVAILABLE`, the same answer whether the ' +
+      'address is unknown, the account closed or suspended, its wallet frozen, or its ' +
       'verification level not open in this asset — after too many of these, `429`; `422` ' +
       'when the recipient is my own account; `409` when the account changed during the ' +
       'request — send it again. At most 30 attempts per hour. Both parties are told by ' +

@@ -35,6 +35,11 @@ export const ERROR_CODES = {
    * continuer : la lire (`GET /terms/current`), puis l'accepter (`POST /me/terms/acceptance`).
    */
   TERMS_ACCEPTANCE_REQUIRED: { status: 403, title: 'Forbidden' },
+  /**
+   * Le portefeuille du compte dans cet actif est gelé par la plateforme : aucun mouvement n'y
+   * est admis tant que le gel n'est pas levé. Contacter le support.
+   */
+  WALLET_FROZEN: { status: 403, title: 'Forbidden' },
   NOT_FOUND: { status: 404, title: 'Not Found' },
   METHOD_NOT_ALLOWED: { status: 405, title: 'Method Not Allowed' },
   NOT_ACCEPTABLE: { status: 406, title: 'Not Acceptable' },
@@ -64,7 +69,8 @@ export const ERROR_CODES = {
   TRANSFER_LIMIT_EXCEEDED: { status: 422, title: 'Unprocessable Content' },
   /**
    * Le destinataire ne peut pas recevoir ce transfert — sans préciser pourquoi : adresse
-   * inconnue, compte fermé ou suspendu, ou niveau de vérification auquel l'actif n'est pas ouvert.
+   * inconnue, compte fermé ou suspendu, portefeuille gelé, ou niveau de vérification auquel
+   * l'actif n'est pas ouvert.
    */
   RECIPIENT_UNAVAILABLE: { status: 422, title: 'Unprocessable Content' },
   RATE_LIMITED: { status: 429, title: 'Too Many Requests' },

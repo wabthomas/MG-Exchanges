@@ -27,6 +27,13 @@ export const PERMISSIONS = {
   'ledger.manage_assets': 'Register the assets in which the platform keeps accounts.',
   'transfer_limits.read': 'View the transfer limits of each verification level.',
   'transfer_limits.write': 'Set the transfer limits of each verification level.',
+  'adjustments.read': 'View the manual adjustments of wallets and the decisions taken on them.',
+  'adjustments.request': 'Request the manual credit or debit of a wallet.',
+  'adjustments.approve':
+    'Approve or reject a manual adjustment of a wallet requested by someone else.',
+  'wallet_freezes.read': 'View the freezes of wallets.',
+  'wallet_freezes.create': 'Freeze a wallet.',
+  'wallet_freezes.lift': 'Lift the freeze of a wallet.',
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -50,13 +57,22 @@ export const ROLE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
  *    second facteur, n'agit pas sur les comptes du personnel et ne voit aucune pièce
  *    d'identité ;
  *  - `compliance` examine les dossiers de vérification d'identité : il consulte les pièces,
- *    accepte, refuse, et retire une vérification. Sur les comptes, il n'a qu'un pouvoir : les
- *    clôturer.
+ *    accepte, refuse, et retire une vérification. Sur les comptes, il a deux pouvoirs : les
+ *    clôturer, et geler un portefeuille — il ne lève pas un gel, et ne prend part à aucun
+ *    ajustement.
  */
 export const SYSTEM_ROLES = {
   super_admin: PERMISSION_KEYS,
   support: ['users.read', 'users.suspend', 'users.revoke_sessions'],
-  compliance: ['users.read', 'users.close', 'kyc.read', 'kyc.review', 'kyc.revoke'],
+  compliance: [
+    'users.read',
+    'users.close',
+    'kyc.read',
+    'kyc.review',
+    'kyc.revoke',
+    'wallet_freezes.read',
+    'wallet_freezes.create',
+  ],
 } as const satisfies Record<string, readonly PermissionKey[]>;
 
 export type SystemRoleKey = keyof typeof SYSTEM_ROLES;
@@ -101,3 +117,18 @@ export const ASSET_REGISTRATION_PERMISSION = 'ledger.manage_assets' satisfies Pe
  * chaque modification d'un plafond.
  */
 export const TRANSFER_LIMITS_PERMISSION = 'transfer_limits.write' satisfies PermissionKey;
+
+/**
+ * Permissions des ajustements manuels que la base de données vérifie elle-même : la première
+ * lorsqu'une demande est déposée, et de nouveau lorsqu'elle est approuvée ; la seconde lorsque
+ * la demande est approuvée ou refusée.
+ */
+export const ADJUSTMENT_REQUEST_PERMISSION = 'adjustments.request' satisfies PermissionKey;
+export const ADJUSTMENT_APPROVAL_PERMISSION = 'adjustments.approve' satisfies PermissionKey;
+
+/**
+ * Permissions du gel des portefeuilles que la base de données vérifie elle-même : la première
+ * lorsqu'un portefeuille est gelé, la seconde lorsqu'un gel est levé.
+ */
+export const WALLET_FREEZE_PERMISSION = 'wallet_freezes.create' satisfies PermissionKey;
+export const WALLET_FREEZE_LIFT_PERMISSION = 'wallet_freezes.lift' satisfies PermissionKey;

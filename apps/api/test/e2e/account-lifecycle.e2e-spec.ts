@@ -356,7 +356,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       // Le schéma publié décrit tout le document : aucune clé n'en sort.
       expect(response.body).toEqual(copy);
 
-      expect(copy.formatVersion).toBe(4);
+      expect(copy.formatVersion).toBe(5);
       expect(copy.account).toMatchObject({
         id: member.id,
         email: member.email,
@@ -441,7 +441,7 @@ describe('Clôture du compte, effacement et copie des données — bout en bout'
       const [entry] = await auditEntries('user.data_exported', member.id);
       expect(entry).toMatchObject({ actorId: member.id, outcome: 'SUCCESS', ipAddress: ip });
       expect(entry?.metadata).toEqual({
-        formatVersion: 4,
+        formatVersion: 5,
         transfers: 0,
         sessions: 1,
         activityEntries: copy.activity.entries.length,

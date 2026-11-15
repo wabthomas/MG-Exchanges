@@ -122,6 +122,27 @@ import {
   transferListQuerySchema,
   transferListSchema,
   transferSchema,
+  ADJUSTMENT_APPROVAL_PERMISSION,
+  ADJUSTMENT_REQUEST_PERMISSION,
+  approveLedgerAdjustmentRequestSchema,
+  createLedgerAdjustmentRequestSchema,
+  freezeWalletRequestSchema,
+  LEDGER_ADJUSTMENT_DIRECTIONS,
+  LEDGER_ADJUSTMENT_ENTRY_KINDS,
+  LEDGER_ADJUSTMENT_STATUSES,
+  LEDGER_ADJUSTMENT_TTL_HOURS,
+  ledgerAdjustmentListQuerySchema,
+  ledgerAdjustmentListSchema,
+  ledgerAdjustmentSchema,
+  liftWalletFreezeRequestSchema,
+  rejectLedgerAdjustmentRequestSchema,
+  WALLET_FREEZE_LIFT_PERMISSION,
+  WALLET_FREEZE_PERMISSION,
+  WALLET_FREEZE_STATUSES,
+  walletFreezeListQuerySchema,
+  walletFreezeListSchema,
+  walletFreezeSchema,
+  walletListSchema,
 } from './index.js';
 
 describe('catalogue des codes d’erreur', () => {
@@ -373,14 +394,17 @@ describe('contrats du back-office', () => {
       'users.revoke_sessions',
       'users.suspend',
     ]);
-    // La conformité examine les dossiers et clôt les comptes ; elle ne les suspend pas, ne
-    // touche ni à leurs sessions ni à leur second facteur, et n'a aucune prise sur les rôles.
+    // La conformité examine les dossiers, clôt les comptes et gèle un portefeuille ; elle ne
+    // suspend pas un compte, ne touche ni à ses sessions ni à son second facteur, et n'a aucune
+    // prise sur les rôles.
     expect([...SYSTEM_ROLES.compliance].sort()).toEqual([
       'kyc.read',
       'kyc.review',
       'kyc.revoke',
       'users.close',
       'users.read',
+      'wallet_freezes.create',
+      'wallet_freezes.read',
     ]);
     // Le support ne clôt pas un compte : la clôture est définitive.
     expect(SYSTEM_ROLES.support).not.toContain(ACCOUNT_CLOSURE_PERMISSION);
@@ -1084,12 +1108,13 @@ describe('contrats du grand livre', () => {
   });
 
   it('un montant est une chaîne décimale, jamais un nombre', () => {
-    expect(walletSchema.parse({ asset: usd, available: '12.34' })).toEqual({
+    expect(walletSchema.parse({ asset: usd, available: '12.34', frozen: false })).toEqual({
       asset: usd,
       available: '12.34',
+      frozen: false,
     });
     for (const available of [12.34, 12, '12,34', '1e3', ' 12.34', '', null]) {
-      expect(walletSchema.safeParse({ asset: usd, available }).success).toBe(false);
+      expect(walletSchema.safeParse({ asset: usd, available, frozen: false }).success).toBe(false);
     }
     const movement = {
       id: UUID,
@@ -1259,19 +1284,23 @@ describe('contrats du grand livre', () => {
   });
 
   it('clôture et copie des données : des fonds s’opposent à la clôture, les écritures se gardent dix ans', () => {
-    expect(ACCOUNT_CLOSURE_BLOCKERS).toEqual([
-      'ROLE_HELD',
-      'VERIFICATION_PENDING_REVIEW',
-      'FUNDS_REMAINING',
-    ]);
+    expect(ACCOUNT_CLOSURE_BLOCKERS).toContain('FUNDS_REMAINING');
     expect(FINANCIAL_RECORDS_RETENTION_YEARS).toBe(10);
-    // Le format de la copie a changé de version avec les portefeuilles (3), puis avec les
-    // transferts (4).
-    expect(DATA_EXPORT_FORMAT_VERSION).toBe(4);
+    // Le format de la copie a changé de version avec les portefeuilles (3), avec les transferts
+    // (4), puis avec le gel des portefeuilles (5).
+    expect(DATA_EXPORT_FORMAT_VERSION).toBe(5);
     expect(DATA_EXPORT_MOVEMENTS_MAX_ENTRIES).toBe(2000);
-    const wallet = { asset: usd, available: '2.34', movements: [], truncated: false };
+    const wallet = {
+      asset: usd,
+      available: '2.34',
+      frozen: false,
+      movements: [],
+      truncated: false,
+    };
     expect(exportedWalletSchema.parse(wallet)).toEqual(wallet);
-    expect(exportedWalletSchema.safeParse({ asset: usd, available: '2.34' }).success).toBe(false);
+    expect(
+      exportedWalletSchema.safeParse({ asset: usd, available: '2.34', frozen: false }).success,
+    ).toBe(false);
   });
 });
 
@@ -1566,7 +1595,6 @@ describe('contrats des transferts', () => {
       'transfer_limits.read',
       'transfer_limits.write',
     ]);
-    expect(PERMISSION_KEYS).toHaveLength(17);
     // Celle que la base de données vérifie elle-même à chaque modification d'un plafond.
     expect(TRANSFER_LIMITS_PERMISSION).toBe('transfer_limits.write');
     // Les plafonds engagent la plateforme : ni le support, ni la conformité ne les consultent
@@ -1609,5 +1637,306 @@ describe('contrats des transferts', () => {
     expect(exportedTransfersSchema.safeParse({ truncated: false }).success).toBe(false);
     // La section fait partie de la copie : un document sans elle n'en est pas une.
     expect(Object.keys(dataExportSchema.shape)).toContain('transfers');
+  });
+});
+
+describe('contrats des opérations du personnel', () => {
+  const UUID = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d';
+  const OTHER = '0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1e';
+  const REASON = 'Dépôt en espèces constaté au guichet';
+  const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
+  const PASSWORD = 'correct horse battery staple';
+
+  it('un ajustement : un portefeuille, un sens, un montant strictement positif et une raison', () => {
+    expect(LEDGER_ADJUSTMENT_DIRECTIONS).toEqual(['CREDIT', 'DEBIT']);
+    const request = {
+      userId: UUID,
+      assetCode: 'USD',
+      direction: 'CREDIT',
+      amount: '250.00',
+      reason: REASON,
+    };
+    expect(createLedgerAdjustmentRequestSchema.parse(request)).toEqual(request);
+    // La raison est débarrassée de ses espaces de bord, comme toute justification.
+    expect(
+      createLedgerAdjustmentRequestSchema.parse({ ...request, reason: `  ${REASON}  ` }).reason,
+    ).toBe(REASON);
+    for (const invalid of [
+      { ...request, userId: 'not-an-id' },
+      { ...request, assetCode: 'usd' },
+      { ...request, direction: 'credit' },
+      { ...request, direction: 'IN' },
+      { ...request, amount: 250 },
+      { ...request, amount: '0' },
+      { ...request, amount: '0.00' },
+      { ...request, amount: '-250.00' },
+      { ...request, amount: '1e3' },
+      { ...request, reason: 'court' },
+      { ...request, reason: 'x'.repeat(501) },
+      { ...request, reason: undefined },
+      { ...request, direction: undefined },
+      { ...request, amount: undefined },
+      { ...request, assetCode: undefined },
+      { ...request, userId: undefined },
+      // Ni la contrepartie, ni l'approbateur ne se choisissent ; aucune propriété inconnue.
+      { ...request, counterpart: 'platform_fees' },
+      { ...request, approvedBy: OTHER },
+    ]) {
+      expect(createLedgerAdjustmentRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('un type d’écriture par sens ; cinq statuts ; une échéance de 72 heures', () => {
+    expect(LEDGER_ADJUSTMENT_ENTRY_KINDS).toEqual({
+      CREDIT: 'adjustment.credit',
+      DEBIT: 'adjustment.debit',
+    });
+    for (const kind of Object.values(LEDGER_ADJUSTMENT_ENTRY_KINDS)) {
+      expect(kind).toMatch(LEDGER_ENTRY_KIND_PATTERN);
+      expect(kind.length).toBeLessThanOrEqual(LEDGER_ENTRY_KIND_MAX_LENGTH);
+    }
+    expect(LEDGER_ADJUSTMENT_STATUSES).toEqual([
+      'PENDING',
+      'APPROVED',
+      'REJECTED',
+      'CANCELLED',
+      'EXPIRED',
+    ]);
+    expect(LEDGER_ADJUSTMENT_TTL_HOURS).toBe(72);
+  });
+
+  it('approuver exige de nouveau le mot de passe, et au plus une preuve du second facteur ; un refus est motivé', () => {
+    expect(
+      approveLedgerAdjustmentRequestSchema.parse({ currentPassword: PASSWORD, code: '123456' }),
+    ).toEqual({ currentPassword: PASSWORD, code: '123456' });
+    expect(
+      approveLedgerAdjustmentRequestSchema.parse({
+        currentPassword: PASSWORD,
+        recoveryCode: 'ABCDE-FGHIJ',
+        note: '  Reçu vérifié  ',
+      }),
+    ).toMatchObject({ note: 'Reçu vérifié' });
+    for (const invalid of [
+      {},
+      { code: '123456' },
+      { currentPassword: '' },
+      { currentPassword: PASSWORD, code: '12345' },
+      { currentPassword: PASSWORD, code: '123456', recoveryCode: 'ABCDE-FGHIJ' },
+      { currentPassword: PASSWORD, code: '123456', note: '' },
+      { currentPassword: PASSWORD, code: '123456', note: 'x'.repeat(501) },
+      { currentPassword: PASSWORD, code: '123456', entryId: UUID },
+    ]) {
+      expect(approveLedgerAdjustmentRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    expect(rejectLedgerAdjustmentRequestSchema.parse({ note: REASON })).toEqual({ note: REASON });
+    for (const invalid of [{}, { note: 'court' }, { note: 'x'.repeat(501) }, { note: 42 }]) {
+      expect(rejectLedgerAdjustmentRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('un ajustement rendu au back-office : ses intervenants, son montant en chaîne décimale, son écriture', () => {
+    const pending = {
+      id: UUID,
+      user: { id: OTHER, email: 'titulaire@example.cd' },
+      asset: usd,
+      direction: 'DEBIT',
+      amount: '250.00',
+      reason: REASON,
+      status: 'PENDING',
+      requestedBy: { id: UUID, email: 'finance@example.cd' },
+      requestedAt: '2026-11-14T21:00:00.000Z',
+      expiresAt: '2026-11-17T21:00:00.000Z',
+      decidedBy: null,
+      decidedAt: null,
+      decisionNote: null,
+      entryId: null,
+    };
+    expect(ledgerAdjustmentSchema.parse(pending)).toEqual(pending);
+    const approved = {
+      ...pending,
+      status: 'APPROVED',
+      // Le compte de l'approbateur a été clôturé depuis : il n'a plus d'adresse.
+      decidedBy: { id: OTHER, email: null },
+      decidedAt: '2026-11-14T21:05:00.000Z',
+      decisionNote: 'Reçu vérifié',
+      entryId: UUID,
+    };
+    expect(ledgerAdjustmentSchema.parse(approved)).toEqual(approved);
+    for (const invalid of [
+      { ...pending, amount: 250 },
+      { ...pending, status: 'DONE' },
+      { ...pending, direction: 'OUT' },
+      { ...pending, user: { id: OTHER } },
+      { ...pending, entryId: 'not-an-id' },
+      { ...pending, expiresAt: '17/11/2026' },
+    ]) {
+      expect(ledgerAdjustmentSchema.safeParse(invalid).success).toBe(false);
+    }
+    const list = { adjustments: [pending, approved], nextCursor: null };
+    expect(ledgerAdjustmentListSchema.parse(list)).toEqual(list);
+    expect(ledgerAdjustmentListSchema.safeParse({ adjustments: [pending] }).success).toBe(false);
+  });
+
+  it('les ajustements se filtrent par statut ou par titulaire, et se lisent par pages bornées', () => {
+    expect(ledgerAdjustmentListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(
+      ledgerAdjustmentListQuerySchema.parse({
+        status: 'PENDING',
+        userId: UUID,
+        limit: '100',
+        after: 'MDE5NWYzYTI',
+      }),
+    ).toEqual({ status: 'PENDING', userId: UUID, limit: 100, after: 'MDE5NWYzYTI' });
+    for (const query of [
+      { status: 'pending' },
+      { userId: 'not-an-id' },
+      { limit: '0' },
+      { limit: '101' },
+      { after: 'pas un curseur !' },
+      { direction: 'CREDIT' },
+      { requestedBy: UUID },
+    ]) {
+      expect(ledgerAdjustmentListQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+
+  it('geler un portefeuille : un titulaire, un actif, une raison ; lever un gel : une raison', () => {
+    const request = { userId: UUID, assetCode: 'USD', reason: REASON };
+    expect(freezeWalletRequestSchema.parse(request)).toEqual(request);
+    for (const invalid of [
+      { ...request, userId: 'not-an-id' },
+      { ...request, assetCode: 'usd' },
+      { ...request, reason: 'court' },
+      { ...request, reason: 'x'.repeat(501) },
+      { userId: UUID, assetCode: 'USD' },
+      { userId: UUID, reason: REASON },
+      { assetCode: 'USD', reason: REASON },
+      // Un gel ne se limite ni à un montant, ni à un sens, ni à une durée.
+      { ...request, amount: '10.00' },
+      { ...request, direction: 'DEBIT' },
+      { ...request, until: '2026-12-01T00:00:00.000Z' },
+      { ...request, notifyUser: true },
+    ]) {
+      expect(freezeWalletRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+
+    expect(liftWalletFreezeRequestSchema.parse({ reason: `  ${REASON} ` })).toEqual({
+      reason: REASON,
+    });
+    for (const invalid of [{}, { reason: 'court' }, { reason: REASON, userId: UUID }]) {
+      expect(liftWalletFreezeRequestSchema.safeParse(invalid).success).toBe(false);
+    }
+  });
+
+  it('un gel rendu au back-office : en vigueur ou levé, avec qui, quand et pourquoi', () => {
+    expect(WALLET_FREEZE_STATUSES).toEqual(['ACTIVE', 'LIFTED']);
+    const active = {
+      id: UUID,
+      userId: OTHER,
+      asset: usd,
+      status: 'ACTIVE',
+      reason: REASON,
+      frozenBy: UUID,
+      frozenAt: '2026-11-14T21:00:00.000Z',
+      liftedBy: null,
+      liftedAt: null,
+      liftReason: null,
+    };
+    expect(walletFreezeSchema.parse(active)).toEqual(active);
+    const lifted = {
+      ...active,
+      status: 'LIFTED',
+      liftedBy: UUID,
+      liftedAt: '2026-11-15T08:00:00.000Z',
+      liftReason: 'Vérification terminée',
+    };
+    expect(walletFreezeSchema.parse(lifted)).toEqual(lifted);
+    for (const invalid of [
+      { ...active, status: 'FROZEN' },
+      { ...active, frozenBy: null },
+      { ...active, asset: 'USD' },
+      { ...active, frozenAt: '14/11/2026' },
+    ]) {
+      expect(walletFreezeSchema.safeParse(invalid).success).toBe(false);
+    }
+    const list = { freezes: [active, lifted], nextCursor: 'MDE5NWYzYTI' };
+    expect(walletFreezeListSchema.parse(list)).toEqual(list);
+
+    expect(walletFreezeListQuerySchema.parse({})).toEqual({ limit: 20 });
+    expect(
+      walletFreezeListQuerySchema.parse({ status: 'ACTIVE', userId: UUID, limit: '5' }),
+    ).toEqual({ status: 'ACTIVE', userId: UUID, limit: 5 });
+    for (const query of [
+      { status: 'active' },
+      { active: 'true' },
+      { userId: 'x' },
+      { limit: '101' },
+      { assetCode: 'USD' },
+    ]) {
+      expect(walletFreezeListQuerySchema.safeParse(query).success).toBe(false);
+    }
+  });
+
+  it('le portefeuille du titulaire dit s’il est gelé — et rien de plus', () => {
+    const wallet = { asset: usd, available: '12.34', frozen: true };
+    expect(walletSchema.parse(wallet)).toEqual(wallet);
+    expect(walletSchema.safeParse({ asset: usd, available: '12.34' }).success).toBe(false);
+    expect(walletSchema.safeParse({ ...wallet, frozen: 'yes' }).success).toBe(false);
+    // Ni la raison du gel, ni son auteur n'ont de place dans ce que voit le titulaire.
+    expect(Object.keys(walletSchema.shape)).toEqual(['asset', 'available', 'frozen']);
+    expect(walletListSchema.parse({ wallets: [wallet] })).toEqual({ wallets: [wallet] });
+  });
+
+  it('six permissions : trois pour les ajustements, trois pour les gels', () => {
+    expect(PERMISSION_KEYS.filter((key) => key.startsWith('adjustments.'))).toEqual([
+      'adjustments.read',
+      'adjustments.request',
+      'adjustments.approve',
+    ]);
+    expect(PERMISSION_KEYS.filter((key) => key.startsWith('wallet_freezes.'))).toEqual([
+      'wallet_freezes.read',
+      'wallet_freezes.create',
+      'wallet_freezes.lift',
+    ]);
+    expect(PERMISSION_KEYS).toHaveLength(23);
+    // Celles que la base de données vérifie elle-même.
+    expect(ADJUSTMENT_REQUEST_PERMISSION).toBe('adjustments.request');
+    expect(ADJUSTMENT_APPROVAL_PERMISSION).toBe('adjustments.approve');
+    expect(WALLET_FREEZE_PERMISSION).toBe('wallet_freezes.create');
+    expect(WALLET_FREEZE_LIFT_PERMISSION).toBe('wallet_freezes.lift');
+    // Demander et approuver sont deux permissions : un rôle peut n'avoir que l'une.
+    expect(ADJUSTMENT_REQUEST_PERMISSION).not.toBe(ADJUSTMENT_APPROVAL_PERMISSION);
+    expect(WALLET_FREEZE_PERMISSION).not.toBe(WALLET_FREEZE_LIFT_PERMISSION);
+
+    for (const key of SYSTEM_ROLE_KEYS) {
+      const permissions: readonly string[] = SYSTEM_ROLES[key];
+      // Créditer ou débiter un portefeuille engage la plateforme : super_admin seulement.
+      expect(permissions.some((permission) => permission.startsWith('adjustments.'))).toBe(
+        key === 'super_admin',
+      );
+      // Geler protège : la conformité le peut. Lever un gel libère des fonds : elle ne le peut pas.
+      expect(permissions.includes(WALLET_FREEZE_PERMISSION)).toBe(key !== 'support');
+      expect(permissions.includes(WALLET_FREEZE_LIFT_PERMISSION)).toBe(key === 'super_admin');
+    }
+  });
+
+  it('une fonctionnalité fermée par défaut, un code d’erreur, quatre événements, un motif de refus de clôture', () => {
+    expect(FEATURE_KEYS).toContain('manualAdjustments');
+    expect(ERROR_CODES.WALLET_FROZEN.status).toBe(403);
+    expect(ACTIVITY_TYPES).toEqual(
+      expect.arrayContaining([
+        'WALLET_CREDITED',
+        'WALLET_DEBITED',
+        'WALLET_FROZEN',
+        'WALLET_UNFROZEN',
+      ]),
+    );
+    expect(ACCOUNT_CLOSURE_BLOCKERS).toEqual([
+      'ROLE_HELD',
+      'VERIFICATION_PENDING_REVIEW',
+      'FUNDS_REMAINING',
+      'WALLET_FROZEN',
+    ]);
   });
 });

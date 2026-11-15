@@ -598,20 +598,32 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
           {
             asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
             available: '0.00000000',
+            frozen: false,
           },
-          { asset: { code: 'CDF', name: 'Asset CDF', kind: 'FIAT', scale: 2 }, available: '0.00' },
+          {
+            asset: { code: 'CDF', name: 'Asset CDF', kind: 'FIAT', scale: 2 },
+            available: '0.00',
+            frozen: false,
+          },
           {
             asset: { code: 'ETH', name: 'Ether', kind: 'CRYPTO', scale: 18 },
             available: '0.000000000000000000',
+            frozen: false,
           },
           {
             asset: { code: 'EUR', name: eur.name, kind: 'FIAT', scale: eur.scale },
             available: eur.scale === 2 ? '0.00' : '0.0000',
+            frozen: false,
           },
-          { asset: { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 }, available: '0.00' },
+          {
+            asset: { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 },
+            available: '0.00',
+            frozen: false,
+          },
           {
             asset: { code: 'XAF', name: 'CFA franc (BEAC)', kind: 'FIAT', scale: 0 },
             available: '0',
+            frozen: false,
           },
         ],
       });
@@ -623,6 +635,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
         wallet: {
           asset: { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 },
           available: '0.00',
+          frozen: false,
         },
         movements: [],
         nextCursor: null,
@@ -679,7 +692,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
     it('les mouvements : du plus récent au plus ancien, chacun avec le solde qu’il a laissé', async () => {
       const usd = { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 };
       expect(await movementsOf(alice, 'USD')).toEqual({
-        wallet: { asset: usd, available: '81.00' },
+        wallet: { asset: usd, available: '81.00', frozen: false },
         movements: [
           {
             id: second.postings[1]!.id,
@@ -716,6 +729,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
         wallet: {
           asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
           available: '0.50000000',
+          frozen: false,
         },
         movements: [
           {
@@ -732,7 +746,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       });
       // Bob : la même écriture, vue de son côté.
       expect(await movementsOf(bob, 'USD')).toEqual({
-        wallet: { asset: usd, available: '30.25' },
+        wallet: { asset: usd, available: '30.25', frozen: false },
         movements: [
           {
             id: sent.postings[1]!.id,
@@ -1482,13 +1496,17 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       expect(await asApp(ledgerSize)).toEqual(before);
 
       // Le contrat publié de ces routes : des lectures, et l'enregistrement d'un actif — rien
-      // d'autre. La seule opération qui passe une écriture est le transfert entre titulaires,
-      // sous ses propres routes.
+      // d'autre. Une écriture ne passe que par une opération, sous ses propres routes : le
+      // transfert entre titulaires, l'ajustement du personnel (et le gel d'un portefeuille,
+      // qui n'en passe aucune) — chacun a son fichier.
       const document = (await http.get('/api/docs-json').expect(200)).body as {
         paths: Record<string, Record<string, unknown>>;
       };
       const operations = Object.entries(document.paths)
         .filter(([path]) => path.includes('/ledger') || path.includes('/wallets'))
+        .filter(
+          ([path]) => !path.includes('/ledger/adjustments') && !path.includes('/wallet-freezes'),
+        )
         .flatMap(([path, methods]) =>
           Object.keys(methods).map((method) => `${method.toUpperCase()} ${path}`),
         )
@@ -1573,11 +1591,12 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       const satoshis = await deposit(holder, '0.00000001', BTC);
 
       const copy = await exportOf(holder);
-      expect(copy.formatVersion).toBe(4);
+      expect(copy.formatVersion).toBe(5);
       expect(copy.wallets).toEqual([
         {
           asset: { code: 'BTC', name: 'Bitcoin', kind: 'CRYPTO', scale: 8 },
           available: '0.00000001',
+          frozen: false,
           movements: [
             {
               id: satoshis.postings[1]!.id,
@@ -1594,6 +1613,7 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
         {
           asset: { code: 'USD', name: 'US dollar', kind: 'FIAT', scale: 2 },
           available: '24.50',
+          frozen: false,
           movements: [
             {
               id: given.postings[0]!.id,
@@ -1625,13 +1645,13 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
       expect(text).not.toContain(other.email);
 
       const [entry] = await auditBy(holder.id, 'user.data_exported');
-      expect(entry?.metadata).toMatchObject({ formatVersion: 4, wallets: 2 });
+      expect(entry?.metadata).toMatchObject({ formatVersion: 5, wallets: 2 });
 
       // Un compte qui n'a jamais rien reçu : aucun portefeuille dans sa copie.
       const idle = await customer();
       expect((await exportOf(idle)).wallets).toEqual([]);
       const [idleEntry] = await auditBy(idle.id, 'user.data_exported');
-      expect(idleEntry?.metadata).toMatchObject({ formatVersion: 4, wallets: 0 });
+      expect(idleEntry?.metadata).toMatchObject({ formatVersion: 5, wallets: 0 });
     });
 
     it('un compte qui détient des fonds ne se clôture pas — ni par son titulaire, ni par le personnel', async () => {

@@ -92,7 +92,7 @@ export const LEDGER_ACCOUNT_TYPE_KEYS = Object.keys(LEDGER_ACCOUNT_TYPES) as [
 export const LEDGER_ACCOUNT_TYPE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 
 /**
- * Format du type d'une écriture (`transfer.internal`, `deposit.confirmed`…) : il dit quelle
+ * Format du type d'une écriture (`transfer.internal`, `adjustment.credit`…) : il dit quelle
  * opération l'a produite. Les types arrivent avec les opérations ; un type publié n'est jamais
  * renommé — les clients s'appuient sur lui pour présenter un mouvement.
  */
@@ -103,11 +103,14 @@ export const LEDGER_ENTRY_KIND_MAX_LENGTH = 64;
 
 /**
  * Portefeuille d'un titulaire dans un actif. `available` est ce dont il dispose, en chaîne
- * décimale à `asset.scale` décimales — jamais un nombre JSON.
+ * décimale à `asset.scale` décimales — jamais un nombre JSON. `frozen` : la plateforme a gelé
+ * ce portefeuille — son solde demeure, mais rien n'en part et rien n'y arrive tant que le gel
+ * n'est pas levé.
  */
 export const walletSchema = z.object({
   asset: assetSchema,
   available: decimalAmountSchema,
+  frozen: z.boolean(),
 });
 export type Wallet = z.infer<typeof walletSchema>;
 

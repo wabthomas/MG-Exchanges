@@ -203,6 +203,14 @@ model User {
   receivedTransfers Transfer[]      @relation("TransferRecipient")
   setTransferLimits TransferLimit[]
 
+  ledgerAdjustments          LedgerAdjustment[] @relation("AdjustmentHolder")
+  requestedLedgerAdjustments LedgerAdjustment[] @relation("AdjustmentRequester")
+  decidedLedgerAdjustments   LedgerAdjustment[] @relation("AdjustmentDecider")
+
+  walletFreezes       WalletFreeze[] @relation("FrozenWalletHolder")
+  placedWalletFreezes WalletFreeze[] @relation("WalletFreezeAuthor")
+  liftedWalletFreezes WalletFreeze[] @relation("WalletFreezeLifter")
+
   // Recherche d'un compte par son numéro, vérifié ou non (back-office).
   @@index([phone])
   @@map("users")
@@ -851,11 +859,13 @@ model Asset {
   /// Heure de l'enregistrement, lue à l'horloge de la base.
   registeredAt DateTime  @default(now()) @map("registered_at") @db.Timestamptz(6)
 
-  registrar      User?           @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
+  registrar      User?              @relation(fields: [registeredBy], references: [id], onDelete: Restrict)
   accounts       LedgerAccount[]
   postings       LedgerPosting[]
   transfers      Transfer[]
   transferLimits TransferLimit[]
+  adjustments    LedgerAdjustment[]
+  walletFreezes  WalletFreeze[]
 
   @@map("assets")
 }
@@ -926,8 +936,9 @@ model LedgerEntry {
   /// Heure de l'écriture, lue à l'horloge de la base.
   postedAt       DateTime       @default(now()) @map("posted_at") @db.Timestamptz(6)
 
-  postings LedgerPosting[]
-  transfer Transfer?
+  postings   LedgerPosting[]
+  transfer   Transfer?
+  adjustment LedgerAdjustment?
 
   @@map("ledger_entries")
 }
@@ -1028,4 +1039,101 @@ model Transfer {
   @@index([senderId, id])
   @@index([recipientId, id])
   @@map("transfers")
+}
+
+// ---------------------------------------------------------------------------------------
+// Opérations du personnel : ajustements manuels, gel d'un portefeuille
+// ---------------------------------------------------------------------------------------
+
+enum LedgerAdjustmentStatus {
+  PENDING
+  /// Approuvé par un second membre du personnel : l'écriture a été passée.
+  APPROVED
+  /// Refusé par un second membre du personnel.
+  REJECTED
+  /// Retiré par son auteur.
+  CANCELLED
+  /// Resté sans décision jusqu'à son échéance.
+  EXPIRED
+
+  @@map("ledger_adjustment_status")
+}
+
+/// Crédit ou débit manuel du portefeuille d'un titulaire, sous **double validation** : un
+/// membre du personnel le demande, un second l'approuve — et l'écriture du grand livre est
+/// passée dans la transaction de l'approbation. La contrepartie est le compte de conservation
+/// de la plateforme. Une demande ne se modifie ni ne s'efface : elle est la trace de la décision.
+///
+/// La base impose elle-même la règle des quatre yeux, la qualité des deux intervenants,
+/// l'échéance, et — à la validation de la transaction — que l'écriture désignée soit bien celle
+/// de l'ajustement : voir la migration « staff_ledger_operations » et docs/DATABASE.md.
+model LedgerAdjustment {
+  id           String                 @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Titulaire du portefeuille.
+  userId       String                 @map("user_id") @db.Uuid
+  assetCode    String                 @map("asset_code") @db.VarChar(12)
+  /// Sens, vu du portefeuille : CREDIT, des fonds y entrent ; DEBIT, des fonds en sortent.
+  direction    LedgerSide
+  /// Montant, en unités minimales de l'actif : strictement positif.
+  amount       Decimal                @db.Decimal(38, 0)
+  /// Justification de la demande : interne, jamais montrée au titulaire.
+  reason       String                 @db.VarChar(500)
+  status       LedgerAdjustmentStatus @default(PENDING)
+  requestedBy  String                 @map("requested_by") @db.Uuid
+  /// Heure de la demande, lue à l'horloge de la base.
+  requestedAt  DateTime               @default(now()) @map("requested_at") @db.Timestamptz(6)
+  /// Échéance, fixée par la base : une demande restée sans décision ne peut plus être approuvée.
+  expiresAt    DateTime               @map("expires_at") @db.Timestamptz(6)
+  /// Auteur de la décision ; NULL pour une demande en attente ou échue.
+  decidedBy    String?                @map("decided_by") @db.Uuid
+  /// Heure de la décision, lue à l'horloge de la base.
+  decidedAt    DateTime?              @map("decided_at") @db.Timestamptz(6)
+  decisionNote String?                @map("decision_note") @db.VarChar(500)
+  /// Écriture du grand livre qui réalise l'ajustement ; NULL tant qu'il n'est pas approuvé.
+  entryId      String?                @unique @map("entry_id") @db.Uuid
+
+  user      User         @relation("AdjustmentHolder", fields: [userId], references: [id], onDelete: Restrict)
+  asset     Asset        @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  requester User         @relation("AdjustmentRequester", fields: [requestedBy], references: [id], onDelete: Restrict)
+  decider   User?        @relation("AdjustmentDecider", fields: [decidedBy], references: [id], onDelete: Restrict)
+  entry     LedgerEntry? @relation(fields: [entryId], references: [id], onDelete: Restrict)
+
+  // Ajustements par statut, du plus récent au plus ancien (l'identifiant croît avec le temps).
+  @@index([status, id])
+  @@index([userId, id])
+  @@map("ledger_adjustments")
+}
+
+/// Gel du portefeuille d'un titulaire dans un actif. Tant qu'il est en vigueur (`liftedAt` NULL),
+/// aucune ligne ne passe sur les comptes du titulaire dans cet actif — hors les ajustements du
+/// personnel. Un gel levé reste : c'est sa trace. Un seul gel en vigueur par portefeuille
+/// (index unique partiel, écrit dans la migration).
+///
+/// La base impose elle-même la qualité de qui gèle et de qui lève, et fait attendre au gel
+/// toute écriture en cours sur le portefeuille : voir la migration « staff_ledger_operations »
+/// et docs/DATABASE.md.
+model WalletFreeze {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  /// Titulaire du portefeuille.
+  userId     String    @map("user_id") @db.Uuid
+  assetCode  String    @map("asset_code") @db.VarChar(12)
+  /// Justification du gel : interne, jamais montrée au titulaire.
+  reason     String    @db.VarChar(500)
+  frozenBy   String    @map("frozen_by") @db.Uuid
+  /// Heure du gel, lue à l'horloge de la base.
+  frozenAt   DateTime  @default(now()) @map("frozen_at") @db.Timestamptz(6)
+  /// Auteur de la levée ; NULL tant que le gel est en vigueur.
+  liftedBy   String?   @map("lifted_by") @db.Uuid
+  /// Heure de la levée, lue à l'horloge de la base.
+  liftedAt   DateTime? @map("lifted_at") @db.Timestamptz(6)
+  liftReason String?   @map("lift_reason") @db.VarChar(500)
+
+  user   User  @relation("FrozenWalletHolder", fields: [userId], references: [id], onDelete: Restrict)
+  asset  Asset @relation(fields: [assetCode], references: [code], onDelete: Restrict)
+  author User  @relation("WalletFreezeAuthor", fields: [frozenBy], references: [id], onDelete: Restrict)
+  lifter User? @relation("WalletFreezeLifter", fields: [liftedBy], references: [id], onDelete: Restrict)
+
+  // Gels d'un titulaire, du plus récent au plus ancien (l'identifiant croît avec le temps).
+  @@index([userId, id])
+  @@map("wallet_freezes")
 }

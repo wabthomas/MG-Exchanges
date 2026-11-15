@@ -41,6 +41,7 @@ const BLOCKER_MESSAGES: Record<AccountClosureBlocker, string> = {
   VERIFICATION_PENDING_REVIEW:
     'an identity verification case awaits review, and must be decided first',
   FUNDS_REMAINING: 'it still holds funds, which must be withdrawn or transferred first',
+  WALLET_FROZEN: 'one of its wallets is frozen, and the freeze must be lifted first',
 };
 
 function blocked(blockers: readonly AccountClosureBlocker[]): AppError {

@@ -23,9 +23,9 @@ export type DataExportRequest = z.infer<typeof dataExportRequestSchema>;
  * Version du format de la copie. `2` : les conditions d'utilisation acceptées figurent dans
  * `terms` ; `account.termsAcceptedAt` a disparu. `3` : les portefeuilles du titulaire et leurs
  * mouvements figurent dans `wallets`. `4` : ses transferts, envoyés et reçus, figurent dans
- * `transfers`.
+ * `transfers`. `5` : chaque portefeuille dit s'il est gelé (`frozen`).
  */
-export const DATA_EXPORT_FORMAT_VERSION = 4;
+export const DATA_EXPORT_FORMAT_VERSION = 5;
 
 /** Nombre maximal d'événements d'activité inclus dans une copie (les plus récents). */
 export const DATA_EXPORT_ACTIVITY_MAX_ENTRIES = 2000;

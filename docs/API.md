@@ -73,6 +73,7 @@ erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 | `MFA_ENROLLMENT_REQUIRED`   | 403    | back-office : la validation en deux étapes doit d'abord être activée               |
 | `TERMS_ACCEPTANCE_REQUIRED` | 403    | la version en vigueur des conditions d'utilisation doit d'abord être acceptée      |
 | `TRANSFER_NOT_PERMITTED`    | 403    | le niveau de vérification du compte n'est pas ouvert aux transferts dans cet actif |
+| `WALLET_FROZEN`             | 403    | le portefeuille du compte dans cet actif est gelé par la plateforme                |
 | `NOT_FOUND`                 | 404    | ressource ou route inexistante                                                     |
 | `METHOD_NOT_ALLOWED`        | 405    |                                                                                    |
 | `NOT_ACCEPTABLE`            | 406    |                                                                                    |
@@ -131,6 +132,7 @@ Public. Ce qu'un client doit savoir au démarrage. Reste accessible en mode main
     "registration": false,
     "kyc": false,
     "internalTransfers": false,
+    "manualAdjustments": false,
     "fiatDeposits": false,
     "fiatWithdrawals": false,
     "cryptoDeposits": false,
@@ -343,7 +345,9 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   (y compris échouées), mot de passe, second facteur, profil, téléphone, vérification
   d'identité (dépôt, acceptation, refus, retrait), acceptation des conditions d'utilisation
   (`TERMS_ACCEPTED`), transferts — envoyé (`TRANSFER_SENT`), demandé sans la preuve du
-  titulaire (`TRANSFER_FAILED`), refusé (`TRANSFER_REFUSED`) —, interventions du support. La
+  titulaire (`TRANSFER_FAILED`), refusé (`TRANSFER_REFUSED`) —, interventions du support, et
+  ce que la plateforme fait d'un portefeuille : crédité (`WALLET_CREDITED`), débité
+  (`WALLET_DEBITED`), gelé (`WALLET_FROZEN`), dégelé (`WALLET_UNFROZEN`) — jamais la raison. La
   liste des types est fermée (`type`) ; chaque entrée porte `occurredAt`, `outcome`, et l'adresse IP et
   l'appareil d'origine — sauf pour une intervention du personnel. Ce qu'un membre du
   personnel fait au compte d'un client figure dans l'historique de ce client, pas dans le sien.
@@ -365,17 +369,19 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   erronés sont comptés comme ailleurs (`429 RATE_LIMITED` avec `Retry-After`) et inscrits à
   l'historique du compte.
 - **Copie des données.** Un document JSON (`Content-Disposition: attachment`,
-  `mg-exchange-data.json`) : `formatVersion` (`4`), `generatedAt`, `account`, `profile`,
+  `mg-exchange-data.json`) : `formatVersion` (`5`), `generatedAt`, `account`, `profile`,
   `security`, `sessions`, `activity` (les 2 000 événements les plus récents ; `truncated`
   indique s'il en existe de plus anciens), `verification` (niveau et dossiers), `terms`
   (`acceptances` : chaque version des conditions d'utilisation acceptée et sa date, de la
   plus récente à la plus ancienne), `wallets` (chaque portefeuille sur lequel au moins un
-  mouvement a été passé : son actif, son solde, et ses mouvements du plus récent au plus
-  ancien — les 2 000 plus récents ; `truncated` indique s'il en existe de plus anciens) et
+  mouvement a été passé : son actif, son solde, s'il est gelé — `frozen` —, et ses mouvements
+  du plus récent au plus ancien — les 2 000 plus récents ; `truncated` indique s'il en existe
+  de plus anciens) et
   `transfers` (`items` : les transferts envoyés et reçus, du plus récent au plus ancien, tels
   que les rend `GET /api/v1/me/transfers` — les 2 000 plus récents ; `truncated` indique s'il
   en existe de plus anciens). Le format `2` a ajouté `terms` et retiré
-  `account.termsAcceptedAt` ; le format `3` a ajouté `wallets` ; le format `4`, `transfers`.
+  `account.termsAcceptedAt` ; le format `3` a ajouté `wallets` ; le format `4`, `transfers` ;
+  le format `5`, `frozen` sur chaque portefeuille.
   Elle ne contient **aucun secret** ; le numéro d'une pièce d'identité y est masqué ; les fichiers
   joints aux dossiers y sont **décrits, pas inclus**. Au plus **3 copies par 24 heures**
   (`429` ensuite). Chaque copie figure dans l'historique et est signalée au titulaire par
@@ -401,6 +407,9 @@ ces routes exigent une session ; celles qui modifient le second facteur exigent 
   `409 CONFLICT` si l'un de ses portefeuilles **détient encore des fonds** : ils doivent
   d'abord être retirés ou transférés (« it still holds funds, which must be withdrawn or
   transferred first »).
+  `409 CONFLICT` si l'un de ses portefeuilles **est gelé** : le gel doit d'abord être levé,
+  par qui en a le droit (« one of its wallets is frozen, and the freeze must be lifted
+  first »). Le personnel ne clôt pas davantage un tel compte.
   `409 CONFLICT` aussi, plus rarement, si une autre requête modifie le compte au même instant
   et tarde à s'achever : rien n'a changé, la demande est à refaire.
 
@@ -572,9 +581,10 @@ y joint ses pièces, puis le dépose ; la conformité l'accepte ou le refuse.
 ## Portefeuilles
 
 **Lecture seule.** Les soldes sont ceux du grand livre de la plateforme. **Aucune route ne
-dépose ni ne retire de fonds** : la seule opération qui modifie un solde à ce jour est le
-transfert entre titulaires (section suivante), qui ne fait que déplacer ce qui s'y trouve
-déjà.
+permet à un titulaire de déposer ni de retirer des fonds** : il les déplace par un transfert
+(section suivante). Des fonds n'entrent dans un portefeuille, et n'en sortent, que par un
+**ajustement du personnel**, demandé par une personne et approuvé par une autre (voir
+« Ajustements manuels »).
 
 | Route                                          | Réponse                             |
 | ---------------------------------------------- | ----------------------------------- |
@@ -582,9 +592,13 @@ déjà.
 | `GET /api/v1/me/wallets/{assetCode}/movements` | `{ wallet, movements, nextCursor }` |
 
 - **Un portefeuille par actif** dans lequel la plateforme tient des comptes, dans l'ordre des
-  codes : `asset` (`code`, `name`, `kind` — `FIAT` ou `CRYPTO` —, `scale`) et `available`, ce
-  dont le titulaire dispose. Un portefeuille vaut zéro tant qu'aucun mouvement n'y a été
-  passé ; la liste est vide tant qu'aucun actif n'est enregistré.
+  codes : `asset` (`code`, `name`, `kind` — `FIAT` ou `CRYPTO` —, `scale`), `available`, ce
+  dont le titulaire dispose, et `frozen`. Un portefeuille vaut zéro tant qu'aucun mouvement
+  n'y a été passé ; la liste est vide tant qu'aucun actif n'est enregistré.
+- **`frozen`** vaut `true` lorsque la plateforme a gelé ce portefeuille : son solde demeure,
+  mais **rien n'en part et rien n'y arrive** tant que le gel n'est pas levé. Le titulaire le
+  voit, et le retrouve dans l'historique de son compte ; il n'en lit jamais la raison, et ne
+  reçoit aucun message. Les autres portefeuilles du compte ne sont pas concernés.
 - **Montants** : des chaînes décimales à exactement `asset.scale` décimales — `"0.00"` pour
   un actif à deux décimales, `"0.00000000"` pour un actif à huit —, jamais des nombres JSON.
 - **Mouvements**, du plus récent au plus ancien : `id`, `entryId`, `kind`, `side`, `amount`,
@@ -593,8 +607,9 @@ déjà.
   est le solde du portefeuille juste après le mouvement — le premier mouvement de la première
   page porte donc le solde actuel (`wallet.available`). `kind` nomme l'opération qui a
   produit le mouvement — `transfer.internal` pour un transfert, dont `entryId` est aussi
-  celui que porte le transfert ; des mouvements de même `entryId` appartiennent à la même
-  opération.
+  celui que porte le transfert ; `adjustment.credit` ou `adjustment.debit` pour un crédit ou
+  un débit passé par la plateforme ; des mouvements de même `entryId` appartiennent à la même
+  opération. Un client affiche tel quel un type qu'il ne connaît pas : il en viendra d'autres.
 - **Pagination** : `limit` (1 à 100, 20 par défaut) et `after`, le `nextCursor` de la page
   précédente — `null` à la dernière page. Tout autre paramètre, et un curseur qui ne vient
   pas d'une page précédente, sont refusés (`400 VALIDATION_FAILED`).
@@ -674,19 +689,23 @@ Idempotency-Key: 0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d
   sur 24 heures glissantes, sur 31 jours glissants — chacun inclus. Seuls comptent les
   envois. Niveau sans plafond, ou refermé : `403 TRANSFER_NOT_PERMITTED`. Plafond dépassé :
   `422 TRANSFER_LIMIT_EXCEEDED`, dont `detail` dit lequel.
+- **Portefeuille gelé.** `403 WALLET_FROZEN` si la plateforme a gelé le portefeuille de
+  l'émetteur dans cet actif (« Your wallet in this asset is frozen. Please contact
+  support. ») : rien n'en part, quel que soit le montant. Ce refus passe avant les plafonds
+  et les fonds.
 - **Fonds.** `422 INSUFFICIENT_FUNDS` si le portefeuille ne détient pas le montant. Il n'y a
   pas de découvert.
 - **Destinataire.** Désigné par son adresse e-mail. Qu'elle soit inconnue, que le compte soit
-  suspendu, clôturé ou pas encore vérifié, ou que son niveau de vérification ne soit pas
-  ouvert dans l'actif, la réponse est **la même** : `422 RECIPIENT_UNAVAILABLE` (« This
-  recipient cannot receive transfers. »). Elle vient **en dernier**, après les plafonds et les
+  suspendu, clôturé ou pas encore vérifié, que son portefeuille dans cet actif soit gelé, ou
+  que son niveau de vérification ne soit pas ouvert dans l'actif, la réponse est **la
+  même** : `422 RECIPIENT_UNAVAILABLE` (« This recipient cannot receive transfers. »). Elle vient **en dernier**, après les plafonds et les
   fonds. Le **dixième** refus de ce type en 24 heures suspend tous les transferts du compte
   pendant 24 heures (`429`). Se désigner soi-même : `422 UNPROCESSABLE_ENTITY`.
 - **Ordre des refus** : session (`401`), conditions d'utilisation à accepter (`403`),
   fonctionnalité fermée (`403 FEATURE_DISABLED`) — avant tout examen de la requête ; forme
   de l'en-tête et du corps ; preuve du titulaire ; actif, précision du montant, transfert à
-  soi-même ; clé déjà employée ; bornes du compte ; puis niveau, plafonds, fonds,
-  destinataire.
+  soi-même ; clé déjà employée ; bornes du compte ; puis portefeuille gelé, niveau, plafonds,
+  fonds, destinataire.
 - **Bornes** : 60 demandes par minute et par adresse IP ; 30 transferts tentés par heure et
   par compte, aboutis ou refusés — une requête rejouée ne compte pas. Au-delà : `429` avec
   `Retry-After`.
@@ -760,16 +779,28 @@ d'administration répond `403 MFA_ENROLLMENT_REQUIRED`, quelles que soient les p
 | `GET /api/v1/admin/ledger/accounts/{accountId}/postings` | `ledger.read`           | un compte et ses lignes                                      |
 | `GET /api/v1/admin/ledger/entries/{entryId}`             | `ledger.read`           | une écriture complète                                        |
 | `GET /api/v1/admin/ledger/trial-balance`                 | `ledger.read`           | balance du grand livre                                       |
+| `GET /api/v1/admin/ledger/adjustments`                   | `adjustments.read`      | ajustements manuels et leurs décisions                       |
+| `POST /api/v1/admin/ledger/adjustments`                  | `adjustments.request`   | demander le crédit ou le débit d'un portefeuille             |
+| `GET /api/v1/admin/ledger/adjustments/{id}`              | `adjustments.read`      | un ajustement                                                |
+| `POST /api/v1/admin/ledger/adjustments/{id}/approve`     | `adjustments.approve`   | approuver — **par une seconde personne**, avec sa preuve     |
+| `POST /api/v1/admin/ledger/adjustments/{id}/reject`      | `adjustments.approve`   | refuser (`note`) — par une seconde personne                  |
+| `POST /api/v1/admin/ledger/adjustments/{id}/cancel`      | `adjustments.request`   | retirer sa propre demande                                    |
+| `GET /api/v1/admin/ledger/wallet-freezes`                | `wallet_freezes.read`   | gels de portefeuilles                                        |
+| `POST /api/v1/admin/ledger/wallet-freezes`               | `wallet_freezes.create` | geler un portefeuille (`userId`, `assetCode`, `reason`)      |
+| `POST /api/v1/admin/ledger/wallet-freezes/{id}/lift`     | `wallet_freezes.lift`   | lever un gel (`reason`)                                      |
 | `GET /api/v1/admin/transfer-limits`                      | `transfer_limits.read`  | plafonds de transfert fixés                                  |
 | `PUT /api/v1/admin/transfer-limits/{assetCode}/{level}`  | `transfer_limits.write` | fixer les plafonds d'un niveau dans un actif                 |
 
 Rôles système : **`super_admin`** (toutes les permissions), **`support`** (`users.read`,
 `users.suspend`, `users.revoke_sessions`) et **`compliance`** (`users.read`, `users.close`,
-`kyc.read`, `kyc.review`, `kyc.revoke`). Le support ne voit aucune pièce d'identité et ne
-clôt aucun compte ; la conformité ne suspend ni ne déconnecte un compte : elle le clôt. Seul
-`super_admin` publie les conditions d'utilisation (`terms.publish`), consulte le grand livre
-(`ledger.read`), y enregistre un actif (`ledger.manage_assets`), et lit ou fixe les plafonds
-de transfert (`transfer_limits.read`, `transfer_limits.write`).
+`kyc.read`, `kyc.review`, `kyc.revoke`, `wallet_freezes.read`, `wallet_freezes.create`). Le
+support ne voit aucune pièce d'identité et ne clôt aucun compte ; la conformité ne suspend ni
+ne déconnecte un compte : elle le clôt, et **gèle un portefeuille — sans pouvoir lever un
+gel**. Seul `super_admin` publie les conditions d'utilisation (`terms.publish`), consulte le
+grand livre (`ledger.read`), y enregistre un actif (`ledger.manage_assets`), lit ou fixe les
+plafonds de transfert (`transfer_limits.read`, `transfer_limits.write`), prend part à un
+ajustement (`adjustments.read`, `adjustments.request`, `adjustments.approve`) et lève un gel
+(`wallet_freezes.lift`).
 
 ```json
 PUT /api/v1/admin/system-settings/features.registration
@@ -923,9 +954,10 @@ De deux décisions simultanées sur une même demande, une seule s'applique ; l'
 
 ### Grand livre
 
-**Aucune route du back-office ne passe d'écriture** : il consulte le grand livre et
-enregistre les actifs dans lesquels il tient des comptes. Les seules écritures viennent des
-transferts que font les titulaires.
+Ces routes consultent le grand livre et enregistrent les actifs dans lesquels il tient des
+comptes : **aucune ne passe d'écriture**. Les écritures viennent des transferts que font les
+titulaires, et des ajustements du personnel — demandés par une personne, approuvés par une
+autre (section « Ajustements manuels »).
 
 ```json
 POST /api/v1/admin/ledger/assets
@@ -956,7 +988,8 @@ POST /api/v1/admin/ledger/assets
 - **Comptes** : ceux des titulaires et ceux de la plateforme elle-même, du plus anciennement
   ouvert au plus récent. Filtres : `userId`, `assetCode`, `type` (`user_available`,
   `platform_custody`, `platform_fees`). Un compte est ouvert par la première écriture qui le
-  touche : un titulaire sans compte dans un actif n'y détient rien. `balance` est exprimé
+  touche — ou par le gel de son portefeuille, vide : un titulaire sans compte dans un actif
+  n'y détient rien. `balance` est exprimé
   dans le sens normal du compte (`normalSide`) et n'est jamais négatif ; `postingCount` est
   le nombre de lignes passées sur le compte.
 - **Un compte et ses lignes** : de la plus récente à la plus ancienne. `accountSequence`
@@ -1022,10 +1055,139 @@ recommandées**.
   s'ouvre à part (`PUT /api/v1/admin/system-settings/features.internal_transfers`).
 - Ces routes restent accessibles pendant la maintenance.
 
+### Ajustements manuels : double validation
+
+Le crédit ou le débit du portefeuille d'un titulaire, par le personnel : pour constater des
+fonds reçus ou rendus hors de l'API, corriger une erreur par une écriture inverse, ou faire
+sortir les fonds d'un compte suspendu, d'un portefeuille gelé ou d'un compte à clôturer.
+**Aucune route ne crédite ni ne débite un portefeuille en une fois** : une demande, puis
+l'approbation d'une seconde personne. La contrepartie de l'écriture est le compte de
+conservation de la plateforme (`platform_custody`).
+
+**Fermé par défaut** : demander et approuver exigent que la fonctionnalité
+`manualAdjustments` soit ouverte
+(`PUT /api/v1/admin/system-settings/features.manual_adjustments`) ; sinon,
+`403 FEATURE_DISABLED`. Consulter, refuser et retirer restent possibles.
+
+```json
+POST /api/v1/admin/ledger/adjustments
+{
+  "userId": "0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d",
+  "assetCode": "USD",
+  "direction": "CREDIT",
+  "amount": "250.00",
+  "reason": "Dépôt en espèces constaté au guichet, reçu n° 2026-11-0042"
+}
+```
+
+```json
+POST /api/v1/admin/ledger/adjustments/{id}/approve
+{ "currentPassword": "…", "code": "123456", "note": "Reçu vérifié" }
+```
+
+1. Un membre du personnel **demande** l'ajustement : `userId` (le titulaire), `assetCode`,
+   `direction` — `CREDIT`, des fonds entrent dans le portefeuille ; `DEBIT`, des fonds en
+   sortent —, `amount` (chaîne décimale strictement positive, d'au plus `asset.scale`
+   décimales : rien n'est arrondi) et `reason` (10 à 500 caractères). Réponse `201` : la
+   demande, `PENDING`. **Rien ne bouge.** Elle échoit après **72 heures**.
+2. Un **second** l'**approuve** : l'écriture est passée au grand livre dans la même
+   transaction que la décision, sa trace au journal d'audit et l'avis au titulaire — ou rien.
+   Il peut aussi la **refuser** (`note` obligatoire, 10 à 500 caractères) ; l'auteur peut la
+   **retirer**.
+
+- **Quatre yeux.** Nul ne prend part à un ajustement de son propre portefeuille, ni pour le
+  demander, ni pour le décider ; l'approbation et le refus viennent d'une autre personne que
+  l'auteur de la demande (`403 FORBIDDEN` sinon, et la tentative est inscrite au journal
+  d'audit). Ces règles sont imposées par la base de données elle-même, qui vérifie en outre,
+  à l'approbation, que la demande n'est pas échue, que son auteur et l'approbateur sont
+  toujours actifs et détiennent toujours leur permission (`409 CONFLICT` sinon), et — à la
+  validation de la transaction — que l'écriture est bien celle de l'ajustement.
+- **Preuve de l'approbateur.** Une session ouverte ne suffit pas à déplacer des fonds :
+  l'approbation exige de nouveau `currentPassword` et le second facteur — `code` **ou**
+  `recoveryCode` —, vérifiés **avant tout examen** de la demande. Mêmes réponses que pour un
+  transfert : `401 INVALID_CREDENTIALS`, `422 UNPROCESSABLE_ENTITY` (second facteur absent),
+  `400 INVALID_OR_EXPIRED_CODE`, `429 RATE_LIMITED`.
+- **Une seule demande identique en attente** — même portefeuille, même sens, même montant
+  (`"25"` et `"25.00"` sont le même montant) : une seconde répond `409 CONFLICT`. Une demande
+  renvoyée par erreur ne peut donc pas être approuvée deux fois. Une fois la première
+  décidée, une demande identique se dépose de nouveau — et une seconde personne en décide.
+- **Compte.** Actif ou suspendu (`409 CONFLICT` s'il est clôturé, ou si l'inscription n'a
+  jamais été vérifiée ; `422` s'il est inconnu). Aucun niveau de vérification n'est exigé du
+  titulaire, et aucun plafond ne borne un ajustement : c'est aux deux personnes d'en juger.
+  **Un portefeuille gelé s'ajuste** : c'est ainsi que des fonds en sortent.
+- **Fonds.** Un débit que le portefeuille ne couvre pas répond `422 INSUFFICIENT_FUNDS` — à
+  la demande, et de nouveau à l'approbation si le solde a baissé depuis : la demande reste
+  alors en attente.
+- **L'ajustement** : `id` ; `user`, `requestedBy`, `decidedBy` — chacun `{ id, email }`,
+  l'adresse étant celle que porte **aujourd'hui** le compte, `null` s'il a été clôturé ;
+  `asset` ; `direction` ; `amount`, à exactement `asset.scale` décimales ; `reason` ;
+  `status` — `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED`, `EXPIRED` — ; `requestedAt`,
+  `expiresAt`, `decidedAt` ; `decisionNote` ; `entryId`, l'écriture du grand livre d'un
+  ajustement approuvé (`null` sinon), consultable par
+  `GET /api/v1/admin/ledger/entries/{entryId}`.
+- **Le titulaire** trouve le mouvement dans son portefeuille (`kind` : `adjustment.credit` ou
+  `adjustment.debit`), l'événement dans l'historique de son compte, et reçoit un e-mail, dans
+  sa langue, qui donne le sens, le montant et la date — **jamais la raison**, qui reste
+  interne. Une demande refusée, retirée ou échue ne lui est pas signalée.
+- **Liste** : du plus récent au plus ancien ; filtres `status` et `userId` ; `limit` (1 à
+  100, 20 par défaut) et `after`, le `nextCursor` de la page précédente.
+- De deux décisions simultanées sur une même demande, une seule s'applique ; l'autre reçoit
+  `409 CONFLICT`. Une demande déjà décidée répond de même ; une demande approuvée ne
+  s'approuve pas deux fois.
+- **Toute consultation est inscrite au journal d'audit**, comme chaque demande, chaque
+  décision, chaque approbation refusée et chaque preuve refusée.
+- Ces routes restent accessibles pendant la maintenance.
+
+### Gel d'un portefeuille
+
+Geler le portefeuille d'un titulaire dans un actif, c'est y arrêter tout mouvement : **plus
+rien n'en part, plus rien n'y arrive** — ni par un transfert, ni par aucune opération à
+venir. Seuls y passent encore les ajustements du personnel, sous double validation. Le solde
+demeure ; les autres portefeuilles du compte ne sont pas concernés.
+
+```json
+POST /api/v1/admin/ledger/wallet-freezes
+{
+  "userId": "0195f3a2-7c1e-7d3a-9b1c-2f4e6a8b0c1d",
+  "assetCode": "USD",
+  "reason": "Signalement du service conformité, dossier 2026-118"
+}
+```
+
+- **Effet immédiat.** Un mouvement en cours sur le portefeuille s'achève d'abord ; tout
+  mouvement qui suit est refusé. C'est la base de données qui applique le gel, à chaque ligne
+  d'écriture, quelle que soit l'opération. Réponse `201` : le gel.
+- **Pour le titulaire** : son portefeuille porte `frozen: true` ; un transfert qu'il tente
+  répond `403 WALLET_FROZEN` ; qui lui envoie des fonds reçoit le refus unique du
+  destinataire (`422 RECIPIENT_UNAVAILABLE`). Le gel et sa levée figurent dans l'historique
+  de son compte. **Il n'en lit jamais la raison, et ne reçoit aucun message.**
+- **Geler et lever sont deux permissions** : `wallet_freezes.create` et
+  `wallet_freezes.lift`. Lever (`POST …/{id}/lift`, `reason` obligatoire) rend le
+  portefeuille utilisable aussitôt ; le gel levé reste, avec qui l'a levé, quand et pourquoi.
+  Nul ne gèle son propre portefeuille, ni n'en lève le gel (`403 FORBIDDEN`).
+- **Compte.** Actif ou suspendu (`409 CONFLICT` s'il est clôturé, ou si l'inscription n'a
+  jamais été vérifiée ; `422` s'il est inconnu). Un actif que la plateforme ne tient pas :
+  `400 VALIDATION_FAILED` sur `assetCode`. Un portefeuille déjà gelé : `409 CONFLICT`.
+- **Clôture.** Un compte dont un portefeuille est gelé ne se clôt pas, ni par son titulaire
+  ni par le personnel (`409 CONFLICT`) : le gel est d'abord levé.
+- **Le gel** : `id`, `userId`, `asset`, `status` — `ACTIVE` ou `LIFTED` —, `reason`,
+  `frozenBy`, `frozenAt`, `liftedBy`, `liftedAt`, `liftReason`.
+- **Liste** : du plus récent au plus ancien ; filtres `userId` et `status` ; `limit` et
+  `after`. Chaque consultation est inscrite au journal d'audit.
+- **La base vérifie elle-même le droit de geler et de lever** : un auteur qui perd son rôle
+  entre le contrôle de ses droits et l'écriture reçoit `403 FORBIDDEN`.
+- Ces routes restent accessibles pendant la maintenance, et ne dépendent d'aucune
+  fonctionnalité à ouvrir : on gèle à tout moment.
+
+**Sortir les fonds d'un compte à clôturer.** Un compte qui détient des fonds ne se clôt pas.
+S'il ne peut pas les envoyer lui-même — compte suspendu, portefeuille gelé —, un **débit**
+sous double validation les fait sortir (la plateforme les rend au titulaire hors de l'API) ;
+le gel éventuel est levé ; le compte est alors clos (`POST /api/v1/admin/users/{userId}/close`).
+
 **Premier administrateur.** Aucune route ne permet d'obtenir un rôle sans l'accord de deux
 administrateurs : les premiers comptes d'administration se créent en ligne de commande, avec
 le rôle propriétaire de la base (voir `DEPLOYMENT.md`). Il en faut **au moins deux** pour que
-les rôles puissent évoluer par l'API.
+les rôles puissent évoluer par l'API — et pour qu'un ajustement puisse être approuvé.
 
 ## Boîte de réception de développement
 
@@ -1046,9 +1208,9 @@ téléphone sans prestataire SMS — ce qui est le cas partout hors développeme
 
 ## À venir
 
-Vérification des entreprises (KYB, fin de la phase 2) ; fonds réservés, crédit et débit
-manuels sous double validation, gel d'un portefeuille (suite de la phase 3) ; dépôts,
-retraits et webhooks entrants signés et protégés contre le rejeu (phase 4).
+Vérification des entreprises (KYB, fin de la phase 2) ; fonds réservés, rapprochement avec
+les fonds réellement détenus (suite de la phase 3) ; dépôts, retraits et webhooks entrants
+signés et protégés contre le rejeu (phase 4).
 
 ## Règles d'exposition de la documentation
 

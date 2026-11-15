@@ -147,6 +147,8 @@ describe('Vérification d’identité — règles portées par la base de donné
           'kyc.revoke',
           'users.close',
           'users.read',
+          'wallet_freezes.create',
+          'wallet_freezes.read',
         ]);
         expect(byRole['compliance']).toEqual([...SYSTEM_ROLES.compliance].sort());
         // L'administrateur détient tout le catalogue ; le support ne voit aucun dossier.

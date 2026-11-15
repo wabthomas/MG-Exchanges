@@ -71,34 +71,40 @@ apps/api/src/
     kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
                           examen par la conformité
     ledger/               grand livre en partie double : actifs, comptes, écritures ;
-                          portefeuilles en lecture ; vérification périodique
+                          portefeuilles en lecture ; gel d'un portefeuille ; vérification
+                          périodique
     transfers/            transferts entre titulaires : clé d'idempotence, preuve du
                           titulaire, plafonds par niveau de vérification ; administration
                           des plafonds
+    adjustments/          ajustements manuels du personnel : crédit et débit d'un
+                          portefeuille, sous double validation
   cli/                    outil d'exploitation (création des premiers administrateurs,
                           publication des conditions d'utilisation)
 ```
 
-**Sens des dépendances entre modules métier.** `kyc`, `ledger` et `transfers` dépendent
-d'`identity` (comptes, gardes, permissions, preuve du titulaire) ; l'inverse n'est pas vrai :
-l'identité n'importe rien de ces modules. `transfers` dépend en outre de `ledger` — il y
-passe ses écritures (`LedgerService.postWithin`) et y lit les actifs et les soldes
-(`LedgerReader`) — ; le grand livre, lui, ignore tout des opérations qui s'en servent.
+**Sens des dépendances entre modules métier.** `kyc`, `ledger`, `transfers` et `adjustments`
+dépendent d'`identity` (comptes, gardes, permissions, preuve du titulaire) ; l'inverse n'est
+pas vrai : l'identité n'importe rien de ces modules. `transfers` et `adjustments` dépendent
+en outre de `ledger` — ils y passent leurs écritures (`LedgerService.postWithin`) et y lisent
+les actifs, les soldes et les gels (`LedgerReader`) — ; le grand livre, lui, ignore tout des
+opérations qui s'en servent. **Le gel d'un portefeuille appartient au grand livre**, non à
+une opération : c'est lui qui le fait respecter, à chaque ligne, pour toutes.
 
 - Pour connaître le niveau d'un compte et son profil vérifié, elle **lit** les dossiers
   acceptés à travers son propre port, `VerificationStatusReader` — en lecture seule : seul le
   module `kyc` écrit un dossier.
 - Pour la purge des dossiers abandonnés, elle expose un registre, `MaintenanceStepRegistry` :
   un module y inscrit une étape, exécutée avec la tâche horaire — une purge, ou une
-  vérification : le grand livre y inscrit la sienne (`verify-ledger`). Un module ajouté plus
-  tard se branche de la même façon, sans que l'identité le connaisse.
+  vérification : le grand livre y inscrit la sienne (`verify-ledger`), les ajustements la
+  clôture de leurs demandes échues (`expire-ledger-adjustments`). Un module ajouté plus tard
+  se branche de la même façon, sans que l'identité le connaisse.
 - Pour la clôture d'un compte, elle expose un second registre, `AccountDataRegistry`. Un
   module qui détient des données rattachées à un compte s'y inscrit (`AccountDataHolder`) et
   répond de ce qu'il détient : ce qui s'oppose à la clôture, jusqu'à quand la loi impose de
   conserver, ce qui s'efface à la clôture puis à l'échéance, ce qui figure dans la copie
-  remise au titulaire. Le grand livre s'y inscrit : des fonds s'opposent à la clôture, une
-  écriture passée impose dix ans de conservation, rien ne s'efface, les portefeuilles
-  figurent dans la copie. Les transferts s'y inscrivent aussi, pour la seule copie des
+  remise au titulaire. Le grand livre s'y inscrit : des fonds s'opposent à la clôture, un
+  portefeuille gelé aussi, une écriture passée impose dix ans de conservation, rien ne
+  s'efface, les portefeuilles figurent dans la copie. Les transferts s'y inscrivent aussi, pour la seule copie des
   données : ils ne retiennent pas la clôture — ce sont les fonds restants qui la retiennent,
   et le grand livre le dit — et ne s'effacent pas. **Tout module à venir qui rattache des
   données à un compte — les ordres, par exemple — doit s'y inscrire** : sans cela, la clôture
@@ -151,16 +157,19 @@ Un envoi irrecevable est donc refusé sans avoir été lu.
 
 ### Tâches de fond
 
-| Tâche                        | Cadence        | Rôle                                                               |
-| ---------------------------- | -------------- | ------------------------------------------------------------------ |
-| relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction     |
-| traitement des événements    | à la demande   | envoi des codes, des messages de sécurité et des avis de transfert |
-| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés,  |
-|                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés  |
-|                              |                | à l'échéance d'effacement, événements publiés depuis trente jours  |
-| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie  |
-|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est        |
-|                              |                | corrigé automatiquement                                            |
+| Tâche                        | Cadence        | Rôle                                                              |
+| ---------------------------- | -------------- | ----------------------------------------------------------------- |
+| relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
+| traitement des événements    | à la demande   | envoi des codes, des messages de sécurité, des avis de transfert  |
+|                              |                | et des avis d'ajustement                                          |
+| purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
+|                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés |
+|                              |                | à l'échéance d'effacement, événements publiés depuis trente jours |
+| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie |
+|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est       |
+|                              |                | corrigé automatiquement                                           |
+| échéance des ajustements     | chaque heure   | étape de la même tâche : clôt les demandes d'ajustement restées   |
+|                              |                | sans décision pendant 72 heures                                   |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
@@ -184,12 +193,15 @@ que l'application lui présente : ce sont des preuves, et l'ordre des versions e
 en va de même de la date d'une écriture du grand livre, de l'enregistrement d'un actif et de
 l'ouverture d'un compte ; de celle d'un transfert — **c'est elle que comptent les plafonds
 sur 24 heures et sur 31 jours**, recalculés par la base à sa propre horloge — et de celle
-d'une modification de plafonds.
+d'une modification de plafonds ; de la date d'une demande d'ajustement, de **son échéance**
+et de sa décision ; de celle d'un gel et de sa levée.
 
 ### Couches d'un module métier
 
-`system-settings`, `identity`, `kyc`, `ledger` et `transfers` servent de modèles aux modules
-métier à venir — `transfers` étant celui d'une **opération qui déplace des fonds** :
+`system-settings`, `identity`, `kyc`, `ledger`, `transfers` et `adjustments` servent de
+modèles aux modules métier à venir — `transfers` étant celui d'une **opération qu'un
+titulaire demande**, `adjustments` celui d'une **opération du personnel, sous double
+validation** :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
@@ -210,7 +222,9 @@ d'audit en ajout seul, double validation des changements de rôle, parcours d'un
 vérification d'identité, clôture d'un compte, publication et acceptation des conditions
 d'utilisation, grand livre (écritures entières et équilibrées, soldes jamais négatifs, rien
 qui se modifie ni ne s'efface), transferts (plafonds du niveau de vérification, un transfert
-pour chaque écriture de transfert). Elles sont alors
+pour chaque écriture de transfert), ajustements (deux personnes habilitées, un ajustement
+approuvé pour chaque écriture d'ajustement), gel d'un portefeuille (aucune ligne n'y passe).
+Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
@@ -248,6 +262,23 @@ l'attente ; les plafonds, les fonds, le destinataire ; puis l'écriture
 Un refus annule tout : il est inscrit au journal **après** l'annulation, hors transaction, et
 ne retient pas la clé. Ce que le client a demandé d'identique rend le résultat d'origine ; ce
 qu'il a demandé d'autre sous la même clé est refusé.
+
+**Une opération du personnel, deux personnes.** L'ajustement en est le modèle
+(`AdjustmentService`, ADR 0027). La demande n'écrit qu'elle-même. L'approbation, elle :
+hors transaction d'abord, **la preuve de l'approbateur** — mot de passe et second facteur —,
+puis ce que la demande permet (en attente, une autre personne que son auteur et que le
+titulaire) ; dans la transaction ensuite, et dans cet ordre : **verrouiller la demande** —
+deux décisions simultanées passent l'une après l'autre — ; l'écriture
+(`LedgerService.postWithin`, sous une clé propre à l'ajustement) ; la décision, qui désigne
+l'écriture ; le journal d'audit et l'événement. La base vérifie les deux personnes à la
+décision, et l'accord de l'ajustement et de son écriture à la validation.
+
+**Un gel est une règle du grand livre.** Aucune opération n'a à s'en souvenir : la base
+refuse toute ligne sur un portefeuille gelé, et `LedgerService` le dit avant d'écrire
+(`WalletFrozenError`). Une opération qui veut un refus plus clair, ou plus tôt, le lit par
+`LedgerReader.isWalletFrozen` — sous le verrou du titulaire, que le gel attend, la lecture
+est exacte. Seuls les types d'écriture listés dans `ledger/domain/wallet-freeze.ts` passent
+un gel ; la base tient la même liste, et un test vérifie qu'elles s'accordent.
 
 **Rien d'important sans trace.** `AuditService.record(tx, …)` écrit dans la transaction de
 l'opération auditée : une action sensible ne peut pas aboutir sans son entrée d'audit.
@@ -297,7 +328,8 @@ partie du code ne lit `process.env` en dehors de `config/` et des deux points d'
    l'opération — jamais par une écriture directe dans les tables du grand livre. Une route
    qui déplace des fonds exige en plus la clé du client (`@IdempotencyKey()`) et la preuve du
    titulaire (`HolderProofService`), et suit l'ordre décrit sous « Une opération, une
-   transaction ».
+   transaction ». Un portefeuille gelé la refuse d'office : ne l'ajouter aux types qui
+   passent un gel que si deux personnes doivent pouvoir la mener sur un portefeuille gelé.
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.

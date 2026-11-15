@@ -1155,7 +1155,7 @@ describe('Conditions d’utilisation — bout en bout', () => {
         currentPassword: member.password,
       }).expect(200);
       const copy = dataExportSchema.parse(exported.body);
-      expect(copy.formatVersion).toBe(4);
+      expect(copy.formatVersion).toBe(5);
       expect(copy.terms).toEqual({
         acceptances: [{ version: registeredUnder, acceptedAt: expect.any(String) }],
       });

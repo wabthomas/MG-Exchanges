@@ -167,8 +167,8 @@ export class AssetRegistrationDeniedError extends Error {
  * décimale.
  *
  * Les refus de la base sont traduits : fonds insuffisants → `InsufficientFundsError` ;
- * titulaire clôturé → `HolderClosedError` ; règle du grand livre enfreinte →
- * `LedgerIntegrityError`.
+ * titulaire clôturé → `HolderClosedError` ; portefeuille gelé → `WalletFrozenError` ; règle du
+ * grand livre enfreinte → `LedgerIntegrityError`.
  */
 export abstract class LedgerRepository {
   // --- Actifs ---
@@ -224,7 +224,7 @@ export abstract class LedgerRepository {
   /**
    * Passe les lignes, dans l'ordre donné.
    *
-   * @throws InsufficientFundsError, HolderClosedError, LedgerIntegrityError
+   * @throws InsufficientFundsError, HolderClosedError, WalletFrozenError, LedgerIntegrityError
    */
   abstract insertPostings(
     tx: DbClient,

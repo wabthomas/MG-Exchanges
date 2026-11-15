@@ -45,6 +45,10 @@ const ACTIVITY_BY_ACTION: Readonly<Record<string, ActivityType>> = {
   'transfer.created': 'TRANSFER_SENT',
   'transfer.proof_failed': 'TRANSFER_FAILED',
   'transfer.refused': 'TRANSFER_REFUSED',
+  'user.wallet_credited': 'WALLET_CREDITED',
+  'user.wallet_debited': 'WALLET_DEBITED',
+  'user.wallet_frozen': 'WALLET_FROZEN',
+  'user.wallet_unfrozen': 'WALLET_UNFROZEN',
 };
 
 const VISIBLE_ACTIONS = Object.keys(ACTIVITY_BY_ACTION);

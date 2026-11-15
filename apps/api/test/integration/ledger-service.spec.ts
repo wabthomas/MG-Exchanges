@@ -1526,6 +1526,7 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
           {
             asset: { code: 'BTC', name: 'Asset BTC', kind: 'CRYPTO', scale: 8 },
             available: '0.50000000',
+            frozen: false,
             movements: [
               {
                 id: expect.stringMatching(UUID),
@@ -1542,6 +1543,7 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
           {
             asset: { code: 'USD', name: 'Asset USD', kind: 'FIAT', scale: 2 },
             available: '9.50',
+            frozen: false,
             movements: [
               {
                 id: transfer.postings[0]!.id,
@@ -1572,6 +1574,7 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
           {
             asset: { code: 'USD', name: 'Asset USD', kind: 'FIAT', scale: 2 },
             available: '2.50',
+            frozen: false,
             movements: [
               {
                 id: transfer.postings[1]!.id,

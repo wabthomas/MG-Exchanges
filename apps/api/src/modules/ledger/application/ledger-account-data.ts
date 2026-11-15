@@ -10,6 +10,7 @@ import {
 } from '../../identity/application/account-data.registry.js';
 import { addYearsUtc } from '../../identity/domain/account-closure.js';
 import { LedgerRepository } from './ledger.repository.js';
+import { WalletFreezeRepository } from './wallet-freeze.repository.js';
 import { WalletService } from './wallet.service.js';
 
 /**
@@ -17,6 +18,8 @@ import { WalletService } from './wallet.service.js';
  *
  *  - Un compte **ne se clôt pas tant qu'il détient des fonds** : ils sont d'abord retirés ou
  *    transférés. La base de données le refuse elle aussi.
+ *  - Un compte **ne se clôt pas tant qu'un de ses portefeuilles est gelé** : le gel est d'abord
+ *    levé, par qui en a le droit. La base de données le refuse elle aussi.
  *  - **Rien n'est effacé, jamais** : une écriture a toujours deux côtés, et l'effacer
  *    déséquilibrerait le grand livre. Les comptes et leurs lignes restent, rattachés à une
  *    ligne de compte qui ne porte plus aucun identifiant.
@@ -30,6 +33,7 @@ export class LedgerAccountData implements AccountDataHolder, OnModuleInit {
 
   constructor(
     private readonly ledger: LedgerRepository,
+    private readonly freezes: WalletFreezeRepository,
     private readonly wallets: WalletService,
     private readonly registry: AccountDataRegistry,
   ) {}
@@ -40,14 +44,19 @@ export class LedgerAccountData implements AccountDataHolder, OnModuleInit {
 
   async closureBlockers(db: DbClient, userId: string): Promise<readonly AccountClosureBlocker[]> {
     const accounts = await this.ledger.accountsOfUser(db, userId);
-    return accounts.some(({ balance }) => balance !== 0n) ? ['FUNDS_REMAINING'] : [];
+    const frozen = await this.freezes.frozenAssetsOf(db, userId);
+    return [
+      ...(accounts.some(({ balance }) => balance !== 0n) ? (['FUNDS_REMAINING'] as const) : []),
+      ...(frozen.length > 0 ? (['WALLET_FROZEN'] as const) : []),
+    ];
   }
 
   /**
    * Rien à verrouiller. Une ligne ne passe sur un compte du titulaire qu'en tenant un verrou
    * sur le titulaire lui-même, que la clôture exclut : une fois le compte verrouillé par la
    * clôture, ses soldes ne bougent plus — toute écriture en cours s'est achevée, toute écriture
-   * à venir attend, puis est refusée.
+   * à venir attend, puis est refusée. Il en va de même d'un gel, qui verrouille lui aussi le
+   * titulaire.
    */
   lockForClosure(): Promise<void> {
     return Promise.resolve();

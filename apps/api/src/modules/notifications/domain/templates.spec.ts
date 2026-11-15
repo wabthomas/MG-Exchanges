@@ -115,6 +115,22 @@ const SAMPLES: {
       occurredAt: '2026-11-14T09:30:00.123Z',
     },
   ],
+  wallet_adjusted: [
+    {
+      template: 'wallet_adjusted',
+      direction: 'CREDIT',
+      amount: '250.00',
+      assetCode: 'USD',
+      occurredAt: '2026-11-14T21:05:00.123Z',
+    },
+    {
+      template: 'wallet_adjusted',
+      direction: 'DEBIT',
+      amount: '0.00012000',
+      assetCode: 'BTC',
+      occurredAt: '2026-11-14T21:05:00.123Z',
+    },
+  ],
 };
 
 const CONTENTS: readonly NotificationContent[] = Object.values(SAMPLES).flat();
@@ -392,6 +408,51 @@ describe('avis de clôture et de copie des données', () => {
         const closed = rendered({ template, ...details, counterparty: null }, locale).text;
         expect(closed).toMatch(fr ? /un compte clôturé depuis/ : /an account closed since/);
         expect(closed).not.toContain('@');
+      }
+    },
+  );
+
+  it.each(SUPPORTED_LOCALES)(
+    '%s : un ajustement est annoncé au titulaire avec son sens, son montant et sa date',
+    (locale) => {
+      const fr = locale === 'fr';
+      const details = {
+        amount: '1250.00',
+        assetCode: 'USD',
+        occurredAt: '2026-11-14T21:05:00.123Z',
+      };
+
+      const credited = rendered(
+        { template: 'wallet_adjusted', direction: 'CREDIT', ...details },
+        locale,
+      );
+      const debited = rendered(
+        { template: 'wallet_adjusted', direction: 'DEBIT', ...details },
+        locale,
+      );
+      expect(credited.subject).toMatch(fr ? /portefeuille crédité$/ : /wallet credited$/);
+      expect(debited.subject).toMatch(fr ? /portefeuille débité$/ : /wallet debited$/);
+      expect(credited.text).toMatch(
+        fr ? /vient de créditer votre portefeuille USD/ : /has just credited your USD wallet/,
+      );
+      expect(debited.text).toMatch(
+        fr ? /vient de débiter votre portefeuille USD/ : /has just debited your USD wallet/,
+      );
+
+      for (const message of [credited, debited]) {
+        expect(message.text).toContain(fr ? 'Montant : 1250.00 USD' : 'Amount: 1250.00 USD');
+        expect(message.text).toContain('2026-11-14 21:05 UTC');
+        // Le titulaire sait que le mouvement ne vient pas de son compte, et où le retrouver.
+        expect(message.text).toMatch(
+          fr
+            ? /par la plateforme, et non depuis votre compte/
+            : /by the platform, not from your account/,
+        );
+        expect(message.text).toMatch(
+          fr ? /mouvements de votre portefeuille/ : /movements of your wallet/,
+        );
+        // Ni le montant ni l'actif dans l'objet : il s'affiche sur un écran verrouillé.
+        expect(message.subject).not.toMatch(/1250|USD/);
       }
     },
   );

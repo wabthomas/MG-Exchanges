@@ -21,9 +21,10 @@ import {
   SEQUENCE_CURSOR_PATTERN,
 } from './ledger-views.js';
 import { type AssetRecord, LedgerRepository, type StatementLine } from './ledger.repository.js';
+import { WalletFreezeRepository } from './wallet-freeze.repository.js';
 
-function walletOf(asset: AssetRecord, balance: bigint): Wallet {
-  return { asset: assetViewOf(asset), available: amountText(balance, asset) };
+function walletOf(asset: AssetRecord, balance: bigint, frozen: boolean): Wallet {
+  return { asset: assetViewOf(asset), available: amountText(balance, asset), frozen };
 }
 
 /**
@@ -47,24 +48,33 @@ function movementOf(line: StatementLine, asset: AssetRecord): WalletMovement {
  *
  * Lecture seule. Un portefeuille existe dans chaque actif tenu par la plateforme, à zéro tant
  * qu'aucune écriture n'y a été passée — le compte du grand livre, lui, n'est ouvert qu'à la
- * première écriture. Chaque lecture est filtrée par le compte de l'appelant.
+ * première écriture, ou à son gel. Chaque lecture est filtrée par le compte de l'appelant.
+ *
+ * Un portefeuille gelé est montré comme tel (`frozen`) : son titulaire voit qu'il ne peut ni
+ * en envoyer, ni y recevoir de fonds — jamais pourquoi.
  */
 @Injectable()
 export class WalletService {
   constructor(
     private readonly ledger: LedgerRepository,
+    private readonly freezes: WalletFreezeRepository,
     private readonly prisma: PrismaService,
   ) {}
 
   async list(userId: string): Promise<WalletList> {
     const assets = await this.ledger.listAssets(this.prisma);
     const accounts = await this.ledger.accountsOfUser(this.prisma, userId);
+    const frozen = new Set(await this.freezes.frozenAssetsOf(this.prisma, userId));
     const balances = new Map(
       accounts
         .filter(({ type }) => type === WALLET_ACCOUNT_TYPE)
         .map(({ assetCode, balance }) => [assetCode, balance]),
     );
-    return { wallets: assets.map((asset) => walletOf(asset, balances.get(asset.code) ?? 0n)) };
+    return {
+      wallets: assets.map((asset) =>
+        walletOf(asset, balances.get(asset.code) ?? 0n, frozen.has(asset.code)),
+      ),
+    };
   }
 
   /** Mouvements d'un portefeuille, du plus récent au plus ancien. */
@@ -81,6 +91,7 @@ export class WalletService {
     if (asset === undefined) {
       throw new AppError('NOT_FOUND', 'Wallet not found.');
     }
+    const frozen = (await this.freezes.frozenAssetsOf(this.prisma, userId)).includes(assetCode);
     const [account] = await this.ledger.findAccounts(this.prisma, [
       { type: WALLET_ACCOUNT_TYPE, assetCode, userId },
     ]);
@@ -92,13 +103,13 @@ export class WalletService {
             limit: query.limit + 1,
           });
     if (statement === null) {
-      return { wallet: walletOf(asset, 0n), movements: [], nextCursor: null };
+      return { wallet: walletOf(asset, 0n, frozen), movements: [], nextCursor: null };
     }
 
     const page = statement.lines.slice(0, query.limit);
     const last = page.at(-1);
     return {
-      wallet: walletOf(asset, statement.balance),
+      wallet: walletOf(asset, statement.balance, frozen),
       movements: page.map((line) => movementOf(line, asset)),
       nextCursor:
         statement.lines.length > query.limit && last !== undefined
@@ -119,6 +130,7 @@ export class WalletService {
       db,
       accounts.map(({ assetCode }) => assetCode),
     );
+    const frozen = new Set(await this.freezes.frozenAssetsOf(db, userId));
 
     const wallets: ExportedWallet[] = [];
     for (const account of accounts) {
@@ -130,7 +142,7 @@ export class WalletService {
         throw new Error(`Ledger account ${account.id} cannot be read back.`);
       }
       wallets.push({
-        ...walletOf(asset, statement.balance),
+        ...walletOf(asset, statement.balance, frozen.has(asset.code)),
         movements: statement.lines.map((line) => movementOf(line, asset)),
         truncated: statement.postingCount > BigInt(statement.lines.length),
       });

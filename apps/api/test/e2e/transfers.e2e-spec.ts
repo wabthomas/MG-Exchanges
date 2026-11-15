@@ -1090,7 +1090,7 @@ describe('Transferts entre titulaires — bout en bout', () => {
         }).expect(200);
         const copy = dataExportSchema.parse(response.body);
         expect(response.body).toEqual(copy);
-        expect(copy.formatVersion).toBe(4);
+        expect(copy.formatVersion).toBe(5);
         expect(copy.transfers).toEqual({
           items: [
             { ...back, direction: 'RECEIVED', counterparty: { email: recipient.email } },

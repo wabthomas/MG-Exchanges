@@ -32,11 +32,14 @@ import {
   HolderClosedError,
   InsufficientFundsError,
   LedgerIntegrityError,
+  WalletFrozenError,
 } from '../domain/ledger-errors.js';
 
 /** SQLSTATE levés par la base (voir la migration `ledger`). */
 const LEDGER_RULE_VIOLATION = 'MGX08';
 const INSUFFICIENT_FUNDS = 'MGX09';
+/** Ligne passée sur un portefeuille gelé (voir la migration `staff_ledger_operations`). */
+const WALLET_FROZEN = 'MGX12';
 
 interface AssetRow {
   code: string;
@@ -176,6 +179,9 @@ async function refusedByDatabase<T>(work: () => Promise<T>): Promise<T> {
     }
     if (sqlState === ACCOUNT_CLOSED_SQLSTATE) {
       throw new HolderClosedError({ cause: error });
+    }
+    if (sqlState === WALLET_FROZEN) {
+      throw new WalletFrozenError(null, { cause: error });
     }
     if (sqlState === LEDGER_RULE_VIOLATION) {
       throw new LedgerIntegrityError({ cause: error });

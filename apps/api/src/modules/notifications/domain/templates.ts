@@ -540,6 +540,33 @@ function render(content: NotificationContent, locale: SupportedLocale): Rendered
               'The funds are available in your wallet.',
             ),
           };
+
+    case 'wallet_adjusted': {
+      const credited = content.direction === 'CREDIT';
+      return fr
+        ? {
+            subject: `${PRODUCT} — portefeuille ${credited ? 'crédité' : 'débité'}`,
+            text: paragraphs(
+              `${PRODUCT} vient de ${credited ? 'créditer' : 'débiter'} votre portefeuille ${content.assetCode}.`,
+              [
+                `Montant : ${content.amount} ${content.assetCode}`,
+                `Date : ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              'Ce mouvement a été passé par la plateforme, et non depuis votre compte. Il figure dans les mouvements de votre portefeuille. Pour toute question, contactez le support.',
+            ),
+          }
+        : {
+            subject: `${PRODUCT} — wallet ${credited ? 'credited' : 'debited'}`,
+            text: paragraphs(
+              `${PRODUCT} has just ${credited ? 'credited' : 'debited'} your ${content.assetCode} wallet.`,
+              [
+                `Amount: ${content.amount} ${content.assetCode}`,
+                `Date: ${formatUtc(content.occurredAt)}`,
+              ].join('\n'),
+              'This movement was made by the platform, not from your account. It appears in the movements of your wallet. If you have any question, contact support.',
+            ),
+          };
+    }
   }
 }
 

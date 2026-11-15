@@ -9,19 +9,24 @@ import { LedgerReader } from './application/ledger-reader.js';
 import { LedgerVerification } from './application/ledger-verification.js';
 import { LedgerRepository } from './application/ledger.repository.js';
 import { LedgerService } from './application/ledger.service.js';
+import { WalletFreezeRepository } from './application/wallet-freeze.repository.js';
+import { WalletFreezeService } from './application/wallet-freeze.service.js';
 import { WalletService } from './application/wallet.service.js';
 import { PrismaLedgerRepository } from './infrastructure/prisma-ledger.repository.js';
+import { PrismaWalletFreezeRepository } from './infrastructure/prisma-wallet-freeze.repository.js';
 import { AdminLedgerController } from './presentation/admin-ledger.controller.js';
+import { AdminWalletFreezesController } from './presentation/admin-wallet-freezes.controller.js';
 import { WalletController } from './presentation/wallet.controller.js';
 
 /**
- * Grand livre en partie double : actifs, comptes, écritures.
+ * Grand livre en partie double : actifs, comptes, écritures — et gel des portefeuilles.
  *
  * C'est le socle des opérations financières — et lui seul : **aucune de ses routes ne déplace
  * de fonds**. Le module expose aux modules qui portent ces opérations `LedgerService`, par qui
  * passe toute écriture, et `LedgerReader`, pour ce qu'elles lisent avant d'écrire ; il offre au
  * titulaire la lecture de ses portefeuilles, et au back-office celle des comptes, des écritures
- * et de la balance, ainsi que l'enregistrement des actifs.
+ * et de la balance, l'enregistrement des actifs, et le gel d'un portefeuille — qui arrête toute
+ * écriture sur lui, quelle que soit l'opération.
  *
  * Il s'appuie sur l'identité (comptes, clôture, copie des données, maintenance périodique) ;
  * l'identité ne dépend pas de lui. Les règles du grand livre sont imposées par la base de
@@ -29,12 +34,14 @@ import { WalletController } from './presentation/wallet.controller.js';
  */
 @Module({
   imports: [AuditModule, SystemSettingsModule, IdentityModule],
-  controllers: [WalletController, AdminLedgerController],
+  controllers: [WalletController, AdminLedgerController, AdminWalletFreezesController],
   providers: [
     { provide: LedgerRepository, useClass: PrismaLedgerRepository },
+    { provide: WalletFreezeRepository, useClass: PrismaWalletFreezeRepository },
     LedgerService,
     LedgerReader,
     WalletService,
+    WalletFreezeService,
     LedgerAdministrationService,
     LedgerVerification,
     LedgerAccountData,

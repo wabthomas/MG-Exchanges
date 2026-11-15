@@ -3,6 +3,104 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 3 : opérations du personnel
+
+**Crédit et débit manuels d'un portefeuille, sous double validation ; gel d'un
+portefeuille** (ADR 0027). C'est la première route de l'API par laquelle des fonds entrent
+dans un portefeuille — constatés par deux membres du personnel, **sans rapprochement avec
+des fonds réellement détenus** — et le moyen de faire sortir ceux d'un compte suspendu, d'un
+portefeuille gelé ou d'un compte à clôturer. Les ajustements sont **fermés par défaut**
+(fonctionnalité `manualAdjustments`).
+
+### Ajouté
+
+- **Ajustement manuel d'un portefeuille** : `POST /admin/ledger/adjustments` (`userId`,
+  `assetCode`, `direction` — `CREDIT` ou `DEBIT` —, `amount`, `reason`) dépose une demande ;
+  **rien ne bouge tant qu'un second membre du personnel ne l'a pas approuvée**
+  (`POST /admin/ledger/adjustments/{id}/approve`). L'approbation passe l'écriture au grand
+  livre — contrepartie : le compte de conservation de la plateforme — dans la même
+  transaction que la décision, sa trace au journal d'audit et l'avis au titulaire. Refus
+  motivé (`…/reject`), retrait par l'auteur (`…/cancel`), échéance après 72 heures.
+  Consultation : `GET /admin/ledger/adjustments` (filtres `status`, `userId`) et
+  `GET /admin/ledger/adjustments/{id}`.
+- **Preuve de l'approbateur** : l'approbation exige de nouveau son mot de passe et son second
+  facteur (`currentPassword`, `code` ou `recoveryCode`), vérifiés avant tout examen de la
+  demande.
+- **Quatre yeux** : nul ne prend part à un ajustement de son propre portefeuille ;
+  l'approbation et le refus viennent d'un autre que l'auteur de la demande. Une seule demande
+  identique — même portefeuille, même sens, même montant — peut être en attente.
+- **Gel d'un portefeuille** : `POST /admin/ledger/wallet-freezes` (`userId`, `assetCode`,
+  `reason`) arrête tout mouvement sur le portefeuille d'un titulaire dans un actif — ni
+  envoi, ni réception —, hors les ajustements. `POST /admin/ledger/wallet-freezes/{id}/lift`
+  (`reason`) le lève ; le gel levé reste. Consultation : `GET /admin/ledger/wallet-freezes`
+  (filtres `userId`, `status`).
+- **Sortie des fonds d'un compte à fermer** : un débit sous double validation passe sur un
+  compte suspendu et sur un portefeuille gelé.
+- Fonctionnalité `manualAdjustments` (`features.manual_adjustments`), fermée par défaut :
+  demander et approuver l'exigent ; consulter, refuser, retirer, geler et lever, non.
+- Code d'erreur nouveau : `WALLET_FROZEN` (403) — un transfert depuis un portefeuille gelé.
+  Un transfert **vers** un portefeuille gelé répond le refus unique du destinataire
+  (`422 RECIPIENT_UNAVAILABLE`).
+- Permissions nouvelles : `adjustments.read`, `adjustments.request`, `adjustments.approve`,
+  `wallet_freezes.read`, `wallet_freezes.create`, `wallet_freezes.lift` — détenues par
+  `super_admin` ; `compliance` reçoit `wallet_freezes.read` et `wallet_freezes.create` : elle
+  gèle un portefeuille, sans pouvoir lever un gel.
+- **Message** : le titulaire est prévenu par e-mail de tout crédit et de tout débit passé par
+  la plateforme, dans sa langue (`wallet_adjusted`) — sans la justification. Un gel et sa
+  levée n'envoient aucun message.
+- **Règles portées par la base** (erreurs `MGX11`, `MGX12`) : demande déposée par un compte
+  actif détenant `adjustments.request`, pour un autre que lui ; décidée une seule fois, par
+  un second compte actif détenant `adjustments.approve`, sans que ses termes changent ;
+  approuvée seulement si elle n'est pas échue — à l'horloge de la base — et si son auteur est
+  toujours habilité ; à la validation de la transaction, un ajustement approuvé a son
+  écriture — exactement la sienne — et toute écriture d'ajustement a son ajustement
+  approuvé ; gel posé et levé par des comptes habilités, jamais sur son propre portefeuille ;
+  le gel attend l'écriture en cours et toute écriture qui le suit le voit ; **aucune ligne
+  d'écriture ne passe sur un portefeuille gelé** (`MGX12`), quelle que soit l'opération ; un
+  compte au portefeuille gelé ne se clôt pas ; ni demande, ni gel ne s'effacent.
+- Tâche horaire : les demandes d'ajustement échues sont closes (`expire-ledger-adjustments`).
+- CI : le parcours à travers Nginx ouvre les ajustements, fait créditer un portefeuille par
+  deux administrateurs, **mène un transfert à son terme** — renvoyé sous la même clé, il
+  n'est pas fait deux fois —, gèle le portefeuille, en sort le solde par un débit, lève le
+  gel. Il se règle désormais sur la limite de débit que l'API annonce.
+- ADR 0027. Migration `20261114204743_staff_ledger_operations`. Aucune dépendance nouvelle.
+
+### Modifié
+
+- Portefeuilles (`GET /me/wallets`, `GET /me/wallets/{assetCode}/movements`) : chaque
+  portefeuille porte **`frozen`**. Un mouvement peut porter `kind: "adjustment.credit"` ou
+  `"adjustment.debit"`.
+- Copie des données : `formatVersion` passe à `5` — `frozen` sur chaque portefeuille.
+- Historique du compte (`GET /me/activity`) : quatre types de plus — `WALLET_CREDITED`,
+  `WALLET_DEBITED`, `WALLET_FROZEN`, `WALLET_UNFROZEN`.
+- `GET /system/status` : `features.manualAdjustments`.
+- `GET /admin/roles` : le catalogue compte vingt-trois permissions ; `compliance` en détient
+  sept.
+- Clôture d'un compte : un portefeuille gelé la retient (`409`), pour le titulaire comme pour
+  le personnel.
+- Transferts : un portefeuille gelé s'ajoute aux causes du refus unique du destinataire.
+- Le parcours `infrastructure/ci/smoke-identity.sh` ouvre les ajustements, **crédite un
+  portefeuille** et laisse le tout ouvert : il reste réservé à une pile de test. Pour la
+  double validation, il lui faut un second administrateur (`SECOND_ADMIN_EMAIL`,
+  `SECOND_ADMIN_PASSWORD`) ; sous GitHub Actions, il le crée lui-même. Il inscrit désormais
+  **deux comptes par exécution** — le second reçoit le transfert : sur une pile conservée,
+  l'inscription étant limitée à dix par heure et par adresse, il ne se rejoue que cinq fois
+  par heure.
+
+### Non réalisé
+
+- **Rapprochement** d'un ajustement avec des fonds réellement détenus ; plafond par
+  ajustement ; pièce justificative jointe (la justification est un texte).
+- **La base ne ferme pas la liste des types d'écriture** : elle exige d'une écriture
+  `adjustment.credit` ou `adjustment.debit` qu'elle ait son ajustement approuvé, mais accepte
+  une écriture équilibrée d'un autre type. La double validation est la seule route de l'API
+  qui apporte des fonds ; elle ne protège pas d'un accès en écriture à la base sous le rôle
+  de l'API (voir `docs/SECURITY.md`, « Opérations du personnel »).
+- **Fonds réservés** — toujours reportés à la première opération en plusieurs temps.
+- Pas de double validation de la levée d'un gel ; pas de gel de tout un compte en une fois ;
+  pas de gel que le titulaire ne verrait pas ; le support ne consulte pas les gels.
+- Ni dépôt, ni retrait par un titulaire ; ni frais.
+
 ## [Non publié] — Phase 3, lot 2 : transferts entre titulaires
 
 **Première opération qui déplace des fonds** — entre deux titulaires, à l'intérieur de la

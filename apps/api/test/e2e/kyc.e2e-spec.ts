@@ -1066,6 +1066,8 @@ describe('Vérification d’identité (KYC) — bout en bout', () => {
         'kyc.revoke',
         'users.close',
         'users.read',
+        'wallet_freezes.create',
+        'wallet_freezes.read',
       ]);
       for (const path of paths) {
         await get(claire.accessToken, path).expect(200);
@@ -2686,6 +2688,7 @@ describe('Vérification d’identité sans stockage chiffré configuré — bout
     expect(report.failures).toBe(0);
     expect(Object.keys(report.otherSteps).sort()).toEqual([
       'erase-closed-accounts',
+      'expire-ledger-adjustments',
       'purge-published-events',
       'purge-stale-kyc-drafts',
       'verify-ledger',

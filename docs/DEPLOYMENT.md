@@ -104,6 +104,23 @@ Constaté de la même façon, sur une base qui contenait déjà des comptes : la
 appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
 complet sans une erreur ; puis la nouvelle version a passé le sien, transferts compris.
 
+La migration `staff_ledger_operations` (ajustements manuels, gel d'un portefeuille) ajoute
+deux tables, leurs règles et six permissions — et **une règle sur une table existante** : un
+déclencheur sur `ledger_postings`, qui refuse toute ligne sur un portefeuille gelé. Aucun
+portefeuille n'est gelé par la migration, et la version précédente de l'API ne sait pas en
+geler : pour elle, rien ne change. Elle ne crédite aucun portefeuille et n'ouvre aucune
+fonctionnalité. Constaté de la même façon, sur une base qui contenait déjà des comptes : la
+migration appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son
+parcours complet sans une erreur ; puis la nouvelle version a passé le sien.
+
+> **Une fois un portefeuille gelé, ne pas revenir à l'image précédente sans y penser.** La
+> base continue de faire respecter le gel — c'est voulu —, mais la version précédente de
+> l'API ne sait pas le dire. Constaté en gelant un portefeuille sous cette version : un
+> transfert depuis ce portefeuille, ou vers lui, y répond `500` au lieu d'un refus — rien ne
+> bouge, et le journal porte l'erreur `MGX12` — ; ni le portefeuille ni la copie des données
+> (format `4`) ne disent qu'il est gelé ; la clôture du compte, elle, reste refusée (`409`).
+> Le gel levé, tout reprend.
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -135,7 +152,7 @@ données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
 déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
 échéance** — durées dans `DATABASE.md` ; puis **vérification du grand livre**, voir « Grand
-livre »). Un échec est journalisé
+livre », et clôture des demandes d'ajustement échues). Un échec est journalisé
 (`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
 l'exécution suivante réessaie.
 
@@ -212,9 +229,10 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
 
 ## Grand livre
 
-Décisions : ADR 0025. Une seule opération passe des écritures à ce jour — le transfert
-entre titulaires, décrit à la section suivante — et **aucune route ne crédite un
-portefeuille**. Ce que l'exploitation doit savoir :
+Décisions : ADR 0025. Deux opérations passent des écritures à ce jour : le transfert entre
+titulaires, et l'ajustement du personnel sous double validation — **la seule route de l'API
+par laquelle des fonds entrent dans le grand livre ou en sortent** —, décrits aux deux
+sections suivantes. Ce que l'exploitation doit savoir :
 
 - **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
   aucun ne l'est par les migrations. Un administrateur (`super_admin`, validation en deux
@@ -261,9 +279,9 @@ portefeuille**. Ce que l'exploitation doit savoir :
   rouvrir le service.
 - **Clôture d'un compte.** Un compte dont un portefeuille détient des fonds ne se clôt pas,
   pas même par le personnel (`409`). Le titulaire peut les transférer à un autre compte, si
-  les transferts lui sont ouverts ; le personnel, lui, n'a aucun moyen de les sortir : la
-  procédure de sortie des fonds d'un compte à fermer devra exister avant l'ouverture des
-  dépôts.
+  les transferts lui sont ouverts ; sinon, le personnel les fait sortir par un **débit sous
+  double validation** (voir « Opérations du personnel »). Un compte dont un portefeuille est
+  gelé ne se clôt pas davantage : le gel est d'abord levé.
 - **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
   bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
   puis à borner, avant que le grand livre ne compte des millions de lignes.
@@ -310,8 +328,8 @@ Décisions : ADR 0026. Ce que l'exploitation doit savoir :
 - **Refermer.** Toute la fonctionnalité : le même appel avec `"value":false` — effectif en
   moins de cinq secondes sur chaque instance. Un niveau dans un actif : ses trois montants à
   `"0"` — effectif aussitôt. Des plafonds ne se suppriment pas.
-- **À ne pas ouvrir en production en l'état.** Aucune route ne crédite un portefeuille : il
-  n'y a rien à transférer tant que les dépôts n'existent pas. Les valeurs des plafonds ne
+- **À ne pas ouvrir en production en l'état.** Les seuls fonds à transférer sont ceux que le
+  personnel a crédités à la main : les dépôts n'existent pas. Les valeurs des plafonds ne
   sont pas arrêtées, et l'autorisation d'opérer reste à établir pays par pays (voir
   `SECURITY.md`).
 - **E-mail.** Chaque transfert prévient ses deux parties. Sans serveur d'envoi configuré
@@ -332,9 +350,103 @@ Décisions : ADR 0026. Ce que l'exploitation doit savoir :
   entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La
   vérification horaire du grand livre ne relit pas cette correspondance ; la base, elle, la
   vérifie à chaque écriture.
-- **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre désormais les
-  transferts, fixe des plafonds sur son actif de test, et **les laisse ouverts** : il est
-  fait pour une pile de test, jamais pour une plateforme en service.
+- **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre les transferts
+  et les ajustements manuels, fixe des plafonds sur son actif de test, **crédite un
+  portefeuille**, et laisse le tout ouvert : il est fait pour une pile de test, jamais pour
+  une plateforme en service.
+
+## Opérations du personnel : ajustements et gels
+
+Décisions : ADR 0027. Ce que l'exploitation doit savoir :
+
+- **La mise à jour n'ouvre rien et ne crédite rien.** Après la migration, les ajustements
+  manuels sont fermés (`403 FEATURE_DISABLED`), aucun portefeuille n'est gelé, et tous les
+  soldes sont ce qu'ils étaient.
+- **Il faut deux administrateurs.** Un ajustement est demandé par une personne et approuvé
+  par une autre, toutes deux habilitées — seul `super_admin` l'est à la livraison. Avec un
+  seul administrateur, **aucun ajustement ne peut aboutir** (voir « Premiers comptes
+  d'administration »). Chacun doit avoir activé la validation en deux étapes.
+- **Ouvrir les ajustements** — une décision d'administrateur, justifiée et tracée :
+
+  ```bash
+  curl -X PUT https://<hôte>/api/v1/admin/system-settings/features.manual_adjustments \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"value":true,"reason":"Ouverture des ajustements manuels : décision du 12/03"}'
+  ```
+
+  Le même appel avec `"value":false` les referme — effectif en moins de cinq secondes sur
+  chaque instance. Ce qui est en attente ne s'approuve plus, mais se refuse et se retire
+  encore.
+
+- **Créditer ou débiter un portefeuille : deux appels, par deux personnes.**
+
+  ```bash
+  # 1. Une première personne demande — rien ne bouge :
+  curl -X POST https://<hôte>/api/v1/admin/ledger/adjustments \
+    -H "Authorization: Bearer <jeton de la première>" -H "Content-Type: application/json" \
+    -d '{"userId":"<compte>","assetCode":"USD","direction":"CREDIT","amount":"<montant>","reason":"<pièce justificative>"}'
+
+  # 2. Une seconde approuve, en présentant de nouveau son mot de passe et son second facteur :
+  curl -X POST https://<hôte>/api/v1/admin/ledger/adjustments/<identifiant>/approve \
+    -H "Authorization: Bearer <jeton de la seconde>" -H "Content-Type: application/json" \
+    -d '{"currentPassword":"<mot de passe>","code":"<code à six chiffres>"}'
+  ```
+
+  **L'approbation est immédiate et définitive** : une erreur se corrige par un ajustement
+  inverse, lui aussi sous double validation. Une demande restée sans décision échoit après
+  72 heures. La justification (`reason`) est conservée indéfiniment et n'est jamais montrée
+  au titulaire : y désigner la pièce qui fonde l'ajustement — relevé, reçu, décision.
+
+- **Ce que crédite un ajustement.** La contrepartie est le compte de conservation de la
+  plateforme : un crédit dit que la plateforme détient, hors du grand livre, des fonds de
+  plus pour ce titulaire. **Rien ne le vérifie** : le rapprochement avec ce qu'elle détient
+  réellement reste à construire. Tant qu'il n'existe pas, chaque ajustement doit pouvoir être
+  rapproché à la main de sa pièce.
+- **Geler un portefeuille** — un appel, une personne (`wallet_freezes.create` : `super_admin`
+  et `compliance`) :
+
+  ```bash
+  curl -X POST https://<hôte>/api/v1/admin/ledger/wallet-freezes \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"userId":"<compte>","assetCode":"USD","reason":"<motif>"}'
+  ```
+
+  Effet immédiat : plus rien ne part de ce portefeuille, plus rien n'y arrive — sauf par un
+  ajustement. **Le titulaire le voit** (son portefeuille porte `frozen`, ses transferts
+  répondent `WALLET_FROZEN`), sans en lire le motif ni recevoir de message : un gel n'est pas
+  une mesure discrète. Il vaut pour **un actif** ; pour arrêter tout un compte, le suspendre.
+  Lever un gel (`POST …/wallet-freezes/<identifiant>/lift`, avec `reason`) est réservé à
+  `super_admin`.
+
+- **Fermer un compte qui détient des fonds.** Dans l'ordre : un **débit** du solde, sous
+  double validation — la plateforme rend les fonds au titulaire hors de l'API — ; la levée du
+  gel éventuel ; puis la clôture (`POST /api/v1/admin/users/<compte>/close`). Un débit passe
+  sur un compte suspendu et sur un portefeuille gelé.
+- **E-mail.** Chaque ajustement approuvé prévient le titulaire. Sans serveur d'envoi
+  configuré (voir « Notifications »), ce message ne part pas — et l'ajustement a lieu quand
+  même. Un gel et sa levée n'envoient aucun message.
+- **Horloge de la base.** L'échéance d'une demande (72 heures) est fixée et relue à
+  l'horloge de PostgreSQL.
+- **Journal d'audit.** `ledger_adjustment.requested`, `.approved`, `.rejected`, `.cancelled` ;
+  `ledger_adjustment.approval_refused` (approbation qui n'a pas abouti, avec son motif) ;
+  `ledger_adjustment.approval_proof_failed` (mot de passe ou second facteur erroné) ;
+  `ledger_adjustment.request_denied` et `.decision_denied` (tentative sur son propre
+  portefeuille, ou d'approuver sa propre demande) ; `user.wallet_credited`,
+  `user.wallet_debited`, `user.wallet_frozen`, `user.wallet_unfrozen` (rattachées au compte
+  du titulaire) ; `user.wallet_freeze_denied`, `user.wallet_unfreeze_denied` ; consultations :
+  `ledger_adjustment.listed_by_admin`, `.viewed_by_admin`, `wallet_freeze.listed_by_admin`.
+- **Journaux.** Avertissement `Ledger adjustment approval refused by the database` : entre
+  le contrôle de l'API et l'écriture, la demande a échu, ou l'un des deux intervenants a
+  perdu sa qualité ; la requête a répondu `409`, rien n'a été écrit. Isolé, le message est
+  sans gravité. **Répété, ou portant sur des intervenants qui n'ont rien perdu, il signale
+  que l'application et la base ne s'accordent plus sur une règle** — un défaut, à signaler.
+  Il en va de même de `Wallet freeze refused by the database` et de
+  `Ledger adjustment request refused by the database`.
+- **Sauvegarde et restauration.** Les ajustements et les gels se restaurent avec le grand
+  livre, **en entier** : un ajustement approuvé sans son écriture, ou l'inverse, serait
+  incohérent ; un gel absent d'une restauration partielle laisserait passer ce qu'il
+  arrêtait. La vérification horaire du grand livre ne relit pas ces correspondances ; la
+  base, elle, les vérifie à chaque écriture.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -384,9 +496,10 @@ des migrations), seul autorisé à écrire une attribution. L'opération est ins
 d'audit.
 
 **Il en faut au moins deux**, détenus par deux personnes : tout changement de rôle par l'API
-exige qu'un administrateur le demande et qu'un _autre_ l'approuve. Avec un seul
-administrateur, les rôles ne peuvent plus évoluer que par cet outil — qui reste aussi le
-recours si tous les administrateurs perdent leur accès.
+exige qu'un administrateur le demande et qu'un _autre_ l'approuve — et il en va de même de
+tout crédit ou débit manuel d'un portefeuille. Avec un seul administrateur, les rôles ne
+peuvent plus évoluer que par cet outil — qui reste aussi le recours si tous les
+administrateurs perdent leur accès —, et **aucun ajustement ne peut aboutir**.
 
 ```bash
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD   # saisie masquée, 10 caractères au moins
@@ -593,10 +706,38 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
    **transferts** : ouverture, rien ne part sans plafonds, plafonds fixés puis lus par le
    titulaire, demandes refusées — sans clé d'idempotence, sans le bon mot de passe, au-delà
    du plafond, au-delà du solde — sans que rien ne bouge,
+   **opérations du personnel** : ajustements fermés puis ouverts, crédit demandé par un
+   administrateur — qui ne peut pas l'approuver —, approuvé par un **second**, créé lui aussi
+   en ligne de commande, avec sa preuve ; **un vrai transfert**, renvoyé sous la même clé
+   sans être fait deux fois ; portefeuille gelé — rien n'en part, le compte ne se clôt pas —,
+   débit sous double validation, gel levé,
    puis copie des données et clôture du compte), contrôle que le volume
    ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
    sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
    propriétaire et la base fantôme créée par le script d'initialisation.
+
+**Le parcours se règle sur la limite de débit de l'API.** Toutes ses requêtes partent d'une
+même adresse, et la limite générale de l'API (120 par minute) en compte désormais 122 : il
+lit ce que chaque réponse annonce (`X-RateLimit-Limit`, `X-RateLimit-Remaining`,
+`X-RateLimit-Reset`) et, lorsqu'il ne lui reste que cinq requêtes, attend la fin de la
+fenêtre — une pause d'une minute au plus, annoncée dans sa sortie (`wait …`). La limite
+elle-même n'est ni relevée ni contournée. Sa dernière ligne `info` dit ce qu'il a envoyé : le
+nombre de requêtes, celles que la limite générale a comptées, le plus petit reste annoncé,
+les pauses. Il reconnaît la limite générale à la première valeur de `X-RateLimit-Limit`
+qu'il reçoit : si elle était réglée sur la même valeur qu'une limite propre à une route, il
+les confondrait.
+
+**Deux inscriptions par exécution.** Le parcours inscrit désormais un second compte, le
+destinataire du transfert. L'inscription est limitée à dix par heure et par adresse : sur
+une pile que l'on garde, il ne s'exécute plus que cinq fois par heure depuis une même
+adresse — au-delà, il échoue sur `POST /auth/register -> 429`.
+
+**Le second administrateur.** La double validation en exige un, et aucune route n'en crée.
+Sous GitHub Actions, le script le crée lui-même, par la commande `docker compose … admin:create`
+que l'étape du workflow emploie pour le premier — le workflow n'a donc pas eu à changer.
+Ailleurs, le désigner par `SECOND_ADMIN_EMAIL` et `SECOND_ADMIN_PASSWORD` ; sans lui, le
+script le dit (`skip …`), retire la demande au lieu de l'approuver, et n'éprouve ni
+l'approbation, ni le transfert abouti, ni le débit.
 
 **Une étape reste à ajouter au workflow.** `infrastructure/ci/publish-terms-cli.sh` publie
 une version des conditions d'utilisation avec l'outil en ligne de commande, dans la pile

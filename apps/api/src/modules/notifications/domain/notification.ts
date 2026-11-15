@@ -1,4 +1,4 @@
-import type { KycLevel, KycRejectionReason } from '@mgx/contracts';
+import type { KycLevel, KycRejectionReason, LedgerAdjustmentDirection } from '@mgx/contracts';
 import type { SupportedLocale } from '@mgx/validation';
 
 /** Contenu d'un message : un modèle et les valeurs qu'il attend. */
@@ -63,7 +63,17 @@ export type NotificationContent =
       readonly ipAddress: string | null;
     }
   | ({ readonly template: 'transfer_sent' } & TransferNoticeDetails)
-  | ({ readonly template: 'transfer_received' } & TransferNoticeDetails);
+  | ({ readonly template: 'transfer_received' } & TransferNoticeDetails)
+  | {
+      readonly template: 'wallet_adjusted';
+      /** `CREDIT` : la plateforme a crédité le portefeuille ; `DEBIT` : elle l'a débité. */
+      readonly direction: LedgerAdjustmentDirection;
+      /** Montant, en chaîne décimale au nombre de décimales de l'actif. */
+      readonly amount: string;
+      readonly assetCode: string;
+      /** Date de l'ajustement (ISO 8601, UTC). */
+      readonly occurredAt: string;
+    };
 
 /** Ce que dit d'un transfert le message adressé à l'une de ses deux parties. */
 export interface TransferNoticeDetails {

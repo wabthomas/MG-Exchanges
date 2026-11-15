@@ -29,8 +29,11 @@ import {
   LedgerIntegrityError,
   LedgerRuleError,
   UnknownAssetError,
+  WalletFrozenError,
 } from '../domain/ledger-errors.js';
+import { passesFrozenWallet, type WalletRef, walletRefText } from '../domain/wallet-freeze.js';
 import { type AccountRecord, type EntryRecord, LedgerRepository } from './ledger.repository.js';
+import { WalletFreezeRepository } from './wallet-freeze.repository.js';
 
 /** Ligne d'une écriture à passer, et le compte qu'elle désigne. */
 interface DraftedLine {
@@ -88,6 +91,10 @@ function isSameEntry(lines: readonly DraftedLine[], kind: string, recorded: Entr
  * après l'autre, sans jamais s'interbloquer, et la seconde voit le solde laissé par la
  * première. Aucun solde ne devient négatif.
  *
+ * **Portefeuille gelé.** Tant que le portefeuille d'un titulaire est gelé, aucune ligne ne passe
+ * sur ses comptes dans cet actif — hors les écritures d'ajustement du personnel. Le gel prend
+ * les verrous des comptes qu'il gèle : une écriture le voit, ou il l'attend.
+ *
  * **Ordre des verrous : les titulaires, puis les comptes.** Avant ses comptes, l'écriture
  * retient leurs titulaires (`UserRepository.holdOpen`) : aucun ne peut être clôturé tant qu'elle
  * n'est pas validée. Une opération peut donc verrouiller un titulaire — même en exclusivité,
@@ -95,14 +102,16 @@ function isSameEntry(lines: readonly DraftedLine[], kind: string, recorded: Entr
  * verrous dans l'ordre inverse d'une écriture qui la croise.
  *
  * Erreurs **attendues**, que l'opération appelante traduit pour son utilisateur :
- * `InsufficientFundsError`, `HolderClosedError`. Les autres signalent un défaut de l'appelant
- * (`LedgerRuleError`, `UnknownAssetError`, `AssetDefinitionMismatchError`,
- * `IdempotencyConflictError`) ou du grand livre lui-même (`LedgerIntegrityError`).
+ * `InsufficientFundsError`, `HolderClosedError`, `WalletFrozenError`. Les autres signalent un
+ * défaut de l'appelant (`LedgerRuleError`, `UnknownAssetError`,
+ * `AssetDefinitionMismatchError`, `IdempotencyConflictError`) ou du grand livre lui-même
+ * (`LedgerIntegrityError`).
  */
 @Injectable()
 export class LedgerService {
   constructor(
     private readonly ledger: LedgerRepository,
+    private readonly freezes: WalletFreezeRepository,
     private readonly users: UserRepository,
     private readonly unitOfWork: UnitOfWork,
   ) {}
@@ -124,9 +133,9 @@ export class LedgerService {
    * que l'opération écrit par ailleurs.
    *
    * La transaction doit être au niveau d'isolation par défaut (`READ COMMITTED`). Un refus
-   * décidé ici — fonds insuffisants, titulaire clôturé, clé déjà utilisée — survient avant
-   * toute écriture d'une ligne : la transaction reste utilisable. Un refus de la base, lui, la
-   * rend inutilisable.
+   * décidé ici — fonds insuffisants, titulaire clôturé, portefeuille gelé, clé déjà utilisée —
+   * survient avant toute écriture d'une ligne : la transaction reste utilisable. Un refus de
+   * la base, lui, la rend inutilisable.
    *
    * Une transaction qui passe **plusieurs** écritures tient les verrous de la première pendant
    * qu'elle demande ceux de la suivante : elle peut s'interbloquer avec une autre. PostgreSQL
@@ -153,6 +162,8 @@ export class LedgerService {
     if (passed !== null) {
       return this.replay(draft, lines, passed);
     }
+
+    await this.assertNoFrozenWallet(tx, draft.kind, lines);
 
     // Chaque solde est vérifié ligne après ligne, dans l'ordre où la base le fera.
     const balances = new Map<string, bigint>();
@@ -294,6 +305,34 @@ export class LedgerService {
           'The holder of one of the accounts never completed its registration: it cannot hold funds.',
         );
       }
+    }
+  }
+
+  /**
+   * Aucun portefeuille de l'écriture n'est gelé — sauf si elle est de celles qui passent un gel.
+   * Lu sous les verrous des comptes, que le gel prend lui aussi : un gel validé pendant qu'on
+   * les attendait est vu. La base de données fait de même à chaque ligne.
+   *
+   * @throws WalletFrozenError
+   */
+  private async assertNoFrozenWallet(
+    tx: DbClient,
+    kind: string,
+    lines: readonly DraftedLine[],
+  ): Promise<void> {
+    if (passesFrozenWallet(kind)) {
+      return;
+    }
+    const wallets = new Map<string, WalletRef>();
+    for (const { key } of lines) {
+      if (key.userId !== null) {
+        const wallet = { userId: key.userId, assetCode: key.assetCode };
+        wallets.set(walletRefText(wallet), wallet);
+      }
+    }
+    const [frozen] = await this.freezes.frozenAmong(tx, [...wallets.values()]);
+    if (frozen !== undefined) {
+      throw new WalletFrozenError(frozen);
     }
   }
 

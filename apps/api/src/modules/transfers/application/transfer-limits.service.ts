@@ -15,9 +15,9 @@ import type { StaffActor } from '../../identity/application/admin-users.service.
 import { LedgerReader } from '../../ledger/application/ledger-reader.js';
 import { amountText, assetViewOf } from '../../ledger/application/ledger-views.js';
 import type { AssetRecord } from '../../ledger/application/ledger.repository.js';
+import { invalidField, parseRequestAmount } from '../../ledger/application/request-amounts.js';
 import { SystemSettingsService } from '../../system-settings/application/system-settings.service.js';
 import { remainingAllowance, type TransferCeilings } from '../domain/transfer-policy.js';
-import { invalidField, parseRequestAmount } from './transfer-amounts.js';
 import { toAdminLimitView, toLimitAmounts } from './transfer-views.js';
 import { LimitChangeDeniedError, TransferRepository } from './transfer.repository.js';
 
