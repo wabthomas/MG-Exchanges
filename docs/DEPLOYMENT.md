@@ -717,10 +717,12 @@ et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
    propriétaire et la base fantôme créée par le script d'initialisation.
 
 **Le parcours se règle sur la limite de débit de l'API.** Toutes ses requêtes partent d'une
-même adresse, et la limite générale de l'API (120 par minute) en compte désormais 122 : il
-lit ce que chaque réponse annonce (`X-RateLimit-Limit`, `X-RateLimit-Remaining`,
-`X-RateLimit-Reset`) et, lorsqu'il ne lui reste que cinq requêtes, attend la fin de la
-fenêtre — une pause d'une minute au plus, annoncée dans sa sortie (`wait …`). La limite
+même adresse, et la limite générale de l'API (120 par minute) en compte désormais autant
+qu'elle en admet — 119 et 122 lors de deux exécutions, le nombre de relectures d'attente
+variant de l'une à l'autre : il lit ce que chaque réponse annonce (`X-RateLimit-Limit`,
+`X-RateLimit-Remaining`, `X-RateLimit-Reset`) et, lorsqu'il ne lui reste que cinq requêtes,
+attend la fin de la fenêtre — une pause d'une minute au plus, annoncée dans sa sortie
+(`wait …`) ; elle a duré 43 secondes lors de ces deux exécutions. La limite
 elle-même n'est ni relevée ni contournée. Sa dernière ligne `info` dit ce qu'il a envoyé : le
 nombre de requêtes, celles que la limite générale a comptées, le plus petit reste annoncé,
 les pauses. Il reconnaît la limite générale à la première valeur de `X-RateLimit-Limit`
@@ -734,10 +736,12 @@ adresse — au-delà, il échoue sur `POST /auth/register -> 429`.
 
 **Le second administrateur.** La double validation en exige un, et aucune route n'en crée.
 Sous GitHub Actions, le script le crée lui-même, par la commande `docker compose … admin:create`
-que l'étape du workflow emploie pour le premier — le workflow n'a donc pas eu à changer.
-Ailleurs, le désigner par `SECOND_ADMIN_EMAIL` et `SECOND_ADMIN_PASSWORD` ; sans lui, le
-script le dit (`skip …`), retire la demande au lieu de l'approuver, et n'éprouve ni
-l'approbation, ni le transfert abouti, ni le débit.
+que l'étape du workflow emploie pour le premier — le workflow n'a donc pas eu à changer —,
+et **échoue s'il n'en a pas** : une exécution réussie de l'intégration continue établit donc
+que la double validation, le transfert abouti et le débit ont eu lieu. Ailleurs, le désigner
+par `SECOND_ADMIN_EMAIL` et `SECOND_ADMIN_PASSWORD` ; sans lui, le script le dit (`skip …`),
+retire la demande au lieu de l'approuver, et n'éprouve ni l'approbation, ni le transfert
+abouti, ni le débit.
 
 **Une étape reste à ajouter au workflow.** `infrastructure/ci/publish-terms-cli.sh` publie
 une version des conditions d'utilisation avec l'outil en ligne de commande, dans la pile

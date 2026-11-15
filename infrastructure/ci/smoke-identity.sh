@@ -46,7 +46,9 @@
 #     par SECOND_ADMIN_EMAIL et SECOND_ADMIN_PASSWORD : nul n'approuve sa propre demande, et
 #     aucune route ne crée un administrateur. Sous GitHub Actions, où le workflow ne peut pas
 #     être modifié d'ici, le script le crée lui-même — par la commande `docker compose` que
-#     l'étape du workflow vient d'employer pour le premier ;
+#     l'étape du workflow vient d'employer pour le premier — et échoue s'il n'en a pas : la
+#     double validation n'y est pas facultative. Ailleurs, sans second administrateur, il la
+#     saute et le dit ;
 #   - la remise des notifications en mémoire (environnement local) ;
 #   - le stockage chiffré des pièces configuré (KYC_ENCRYPTION_KEY) ;
 #   - curl, jq, openssl, sha256sum et python3 (calcul du code TOTP, dates, textes).
@@ -215,6 +217,12 @@ if [ -z "$second_admin_email" ] && [ "${GITHUB_ACTIONS:-}" = "true" ] && [ -f do
 fi
 if [ -n "$second_admin_email" ] && [ -z "$second_admin_password" ]; then
   echo "FAIL  SECOND_ADMIN_EMAIL is set without SECOND_ADMIN_PASSWORD" >&2
+  exit 1
+fi
+# Sous GitHub Actions, la double validation n'est pas facultative : sans second administrateur,
+# le parcours échoue — une exécution réussie de l'intégration continue prouve qu'elle a eu lieu.
+if [ -z "$second_admin_email" ] && [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  echo "FAIL  under GitHub Actions the journey needs a second administrator: run it from the root of the repository, or set SECOND_ADMIN_EMAIL and SECOND_ADMIN_PASSWORD" >&2
   exit 1
 fi
 

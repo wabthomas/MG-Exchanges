@@ -82,7 +82,8 @@ portefeuille gelé ou d'un compte à clôturer. Les ajustements sont **fermés p
 - Le parcours `infrastructure/ci/smoke-identity.sh` ouvre les ajustements, **crédite un
   portefeuille** et laisse le tout ouvert : il reste réservé à une pile de test. Pour la
   double validation, il lui faut un second administrateur (`SECOND_ADMIN_EMAIL`,
-  `SECOND_ADMIN_PASSWORD`) ; sous GitHub Actions, il le crée lui-même. Il inscrit désormais
+  `SECOND_ADMIN_PASSWORD`) ; sous GitHub Actions, il le crée lui-même, et échoue s'il n'en
+  a pas — ailleurs, il saute la double validation et le dit. Il inscrit désormais
   **deux comptes par exécution** — le second reçoit le transfert : sur une pile conservée,
   l'inscription étant limitée à dix par heure et par adresse, il ne se rejoue que cinq fois
   par heure.
