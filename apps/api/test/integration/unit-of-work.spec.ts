@@ -115,7 +115,16 @@ describe('Transactions — conflits et nouvelles tentatives (PostgreSQL réel)',
 
     // L'une a vu la table vide ; l'autre, relancée, a vu la ligne de la première.
     expect([...results].sort()).toEqual([0, 1]);
-    expect(seen).toEqual([0, 0, 1]);
+    // Toutes deux ont d'abord lu une table vide, puis la perdante a été relancée — une fois au
+    // moins, et pas plus que prévu. Combien de fois, cela dépend du temps que met la validation
+    // de la gagnante à devenir visible : relancée avant, la perdante relit une table vide, et
+    // PostgreSQL l'annule de nouveau. Seule sa dernière lecture voit la ligne. Le nombre exact
+    // de tentatives n'est donc pas vérifié : il tient à la vitesse du disque, pas au code.
+    const retried = seen.slice(2);
+    expect(seen.slice(0, 2)).toEqual([0, 0]);
+    expect(retried.length).toBeGreaterThanOrEqual(1);
+    expect(retried.length).toBeLessThanOrEqual(DEFAULT_CONFLICT_RETRY.delaysMs.length);
+    expect(retried).toEqual([...retried.slice(0, -1).map(() => 0), 1]);
     expect(await rowsOf(action)).toBe(2);
     const found = await prisma.auditLog.findMany({ where: { action }, select: { metadata: true } });
     expect(found.map(({ metadata }) => metadata).sort()).toEqual([{ found: 0 }, { found: 1 }]);
