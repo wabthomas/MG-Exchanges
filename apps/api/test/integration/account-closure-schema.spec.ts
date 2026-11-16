@@ -699,12 +699,20 @@ describe('Clôture d’un compte — règles portées par la base de données', 
           await asApp(async (observer) => {
             await first.query('BEGIN');
             await second.query('BEGIN');
+            // Rien de ce qu'écrit la première ne doit attendre la seconde : passé ce délai, c'est
+            // que le verrou pris sur le compte à chaque ajout est trop fort — et que les deux
+            // transactions s'interbloqueraient.
+            await first.query(`SET LOCAL lock_timeout = '3s'`);
             // Les deux ajouts passent sans s'attendre : le verrou pris sur le compte est partagé.
             await ROWS['user_sessions']!(first, user);
             await ROWS['user_sessions']!(second, user);
 
             // La première modification du compte n'attend pas l'autre transaction…
-            await first.query(`UPDATE users SET locale = 'en' WHERE id = $1`, [user]);
+            expect(
+              await sqlState(() =>
+                first.query(`UPDATE users SET locale = 'en' WHERE id = $1`, [user]),
+              ),
+            ).toBeUndefined();
             // … et la seconde attend seulement que la première soit validée.
             const update = sqlState(() =>
               second.query(`UPDATE users SET locale = 'fr' WHERE id = $1`, [user]),
