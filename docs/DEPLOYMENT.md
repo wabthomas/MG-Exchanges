@@ -729,10 +729,11 @@ les pauses. Il reconnaît la limite générale à la première valeur de `X-Rate
 qu'il reçoit : si elle était réglée sur la même valeur qu'une limite propre à une route, il
 les confondrait.
 
-**Deux inscriptions par exécution.** Le parcours inscrit désormais un second compte, le
-destinataire du transfert. L'inscription est limitée à dix par heure et par adresse : sur
-une pile que l'on garde, il ne s'exécute plus que cinq fois par heure depuis une même
-adresse — au-delà, il échoue sur `POST /auth/register -> 429`.
+**Trois requêtes d'inscription par exécution.** Le parcours inscrit désormais un second
+compte, le destinataire du transfert, en plus du premier et d'une inscription qui doit être
+refusée. Or la route d'inscription admet dix requêtes par heure et par adresse, **refusées ou
+non** : sur une pile que l'on garde, le parcours ne s'exécute plus que trois fois par heure
+depuis une même adresse — à la quatrième, il échoue sur `POST /auth/register -> 429`.
 
 **Le second administrateur.** La double validation en exige un, et aucune route n'en crée.
 Sous GitHub Actions, le script le crée lui-même, par la commande `docker compose … admin:create`

@@ -1,28 +1,32 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-14 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre) et lot 2 (transferts entre titulaires) livrés ; intégration continue active._
+_Dernière mise à jour : 2026-11-16 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés ; intégration continue active._
 
 ## Synthèse
 
-| Phase | Périmètre                               | État                              |
-| ----- | --------------------------------------- | --------------------------------- |
-| 1     | Analyse et fondations                   | **Livrée**                        |
-| 2     | Identité et utilisateurs                | **En cours** — lots 1 à 5 livrés  |
-| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 et 2 livrés |
-| 4     | Échange et paiements                    | Non commencée                     |
-| 5     | Blockchain                              | Non commencée                     |
-| 6     | P2P et séquestre                        | Non commencée                     |
-| 7     | Web, mobile, back-office                | Non commencée                     |
-| 8     | Risque et conformité                    | Non commencée                     |
-| 9     | Tests et déploiement                    | Non commencée                     |
+| Phase | Périmètre                               | État                             |
+| ----- | --------------------------------------- | -------------------------------- |
+| 1     | Analyse et fondations                   | **Livrée**                       |
+| 2     | Identité et utilisateurs                | **En cours** — lots 1 à 5 livrés |
+| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 à 3 livrés |
+| 4     | Échange et paiements                    | Non commencée                    |
+| 5     | Blockchain                              | Non commencée                    |
+| 6     | P2P et séquestre                        | Non commencée                    |
+| 7     | Web, mobile, back-office                | Non commencée                    |
+| 8     | Risque et conformité                    | Non commencée                    |
+| 9     | Tests et déploiement                    | Non commencée                    |
 
-**Aucun fonds n'entre dans la plateforme ni n'en sort, et rien n'est simulé.** Le registre
-comptable est en place (phase 3, lot 1), ainsi qu'une première opération : le **transfert
-entre deux titulaires** (lot 2). Il ne déplace que des fonds déjà présents dans un
-portefeuille — or **aucune route n'en apporte** : ni dépôt, ni retrait, ni échange
-n'existent, et tous les soldes valent zéro. Toutes les fonctionnalités réglementées sont
-désactivées par défaut — l'inscription, la vérification d'identité et les transferts
-compris — et le resteront jusqu'à décision explicite d'un administrateur.
+**Ni dépôt, ni retrait, ni échange n'existent, et rien n'est simulé.** Le registre comptable
+est en place (phase 3, lot 1), avec deux opérations : le **transfert entre deux titulaires**
+(lot 2), qui ne déplace que des fonds déjà présents dans un portefeuille, et, depuis le
+lot 3, l'**ajustement d'un portefeuille par votre équipe** — un crédit ou un débit demandé
+par une personne, approuvé par une seconde. C'est aujourd'hui la seule route de l'API par
+laquelle des fonds s'inscrivent dans un portefeuille : **elle constate ce que deux membres de
+votre équipe déclarent, et rien ne rapproche ce constat de fonds réellement détenus**. Tant
+qu'aucun ajustement n'est approuvé, tous les soldes valent zéro. Toutes les fonctionnalités
+réglementées sont désactivées par défaut — l'inscription, la vérification d'identité, les
+transferts et les ajustements compris — et le resteront jusqu'à décision explicite d'un
+administrateur.
 
 **Il n'y a pas encore de site web** : l'application web, les applications mobiles et le
 back-office relèvent de la phase 7. Ce qui est visible aujourd'hui est l'API (documentation
@@ -59,10 +63,10 @@ nouveau ? » n'est pas tranchée par le code : elle se décide à chaque publica
 **Grand livre.** Tout mouvement de fonds s'écrira dans un registre en partie double que la
 base de données vérifie elle-même : écritures équilibrées et définitives, soldes jamais
 négatifs. **Ce registre est vide** : aucun actif n'y est enregistré — la liste des monnaies
-à tenir, et le nombre de décimales de chacune, vous reviennent (décision 12) —, et la seule
-opération qui y écrit, le transfert, n'a encore rien à déplacer. Un titulaire peut déjà lire
-ses portefeuilles : il n'en a aucun tant qu'aucun actif n'est enregistré, puis ils sont à
-zéro.
+à tenir, et le nombre de décimales de chacune, vous reviennent (décision 12) —, et aucune
+des deux opérations qui y écrivent, le transfert et l'ajustement, n'est ouverte. Un
+titulaire peut déjà lire ses portefeuilles : il n'en a aucun tant qu'aucun actif n'est
+enregistré, puis ils sont à zéro.
 
 **Transferts entre titulaires.** Un titulaire peut envoyer des fonds à un autre, désigné par
 son adresse e-mail : c'est immédiat et définitif. Chaque envoi redemande le mot de passe, ne
@@ -71,8 +75,21 @@ niveau de vérification, que la base de données applique elle-même. **Trois d�
 manquent pour qu'un transfert ait lieu, et toutes trois vous reviennent** : les valeurs des
 plafonds — le code n'en contient aucune (décision 5) —, les monnaies à tenir (décision 12),
 et l'ouverture elle-même, qui dépend du statut réglementaire (décision 11). **Et il n'y a
-rien à transférer** tant que les dépôts n'existent pas. Cinq choix de produit ont été faits
-sans vous pour que le lot soit complet : ils sont à confirmer (décision 14).
+rien à transférer** tant qu'aucun portefeuille n'a été crédité — par un ajustement de votre
+équipe aujourd'hui, par un dépôt plus tard. Cinq choix de produit ont été faits sans vous
+pour que le lot soit complet : ils sont à confirmer (décision 14).
+
+**Opérations du personnel.** Votre équipe peut créditer ou débiter le portefeuille d'un
+titulaire — **à deux** : l'un demande, un autre approuve, en redonnant son mot de passe et
+son second facteur ; la base de données refuse elle-même qu'une seule personne fasse l'un et
+l'autre. Elle peut aussi **geler un portefeuille** : plus rien n'en part ni n'y arrive, hors
+ces ajustements — c'est par eux que l'on sort les fonds d'un compte suspendu, d'un
+portefeuille gelé ou d'un compte à clôturer. Les ajustements sont livrés **fermés**. **Aucun
+montant maximal ne les borne, et rien ne vérifie que les fonds crédités existent** : ce qui
+fonde un ajustement — quelle pièce, quel rapprochement, quelles personnes — relève d'une
+procédure qui vous revient. Il faut désormais **deux administrateurs** pour qu'un ajustement
+aboutisse. Huit choix ont été faits sans vous pour que le lot soit complet : ils sont à
+confirmer (décision 15).
 
 ## Phase 2 — identité et utilisateurs
 
@@ -260,10 +277,10 @@ Décision : ADR 0025.
 
 **À savoir :**
 
-- **à la livraison de ce lot, aucune route de l'API ne passait d'écriture.** Depuis le
-  lot 2, une seule le fait : le transfert entre titulaires. Les règles du registre ont été
-  éprouvées par les tests, qui écrivent chacun dans une base qui leur est propre — pas par
-  un usage ;
+- **à la livraison de ce lot, aucune route de l'API ne passait d'écriture.** Deux le font
+  depuis : le transfert entre titulaires (lot 2) et l'approbation d'un ajustement (lot 3).
+  Les règles du registre ont été éprouvées par les tests, qui écrivent chacun dans une base
+  qui leur est propre — pas par un usage ;
 - **aucun actif n'est enregistré**, et en enregistrer un est **définitif** : un nombre de
   décimales erroné ne se corrige pas, il oblige à enregistrer l'actif sous un autre code.
   Enregistrer un actif n'ouvre aucune opération : chaque titulaire voit seulement apparaître
@@ -339,10 +356,12 @@ Décision : ADR 0026.
 **À savoir :**
 
 - **rien ne peut être transféré aujourd'hui.** La fonctionnalité est fermée, aucun plafond
-  n'est fixé, aucun actif n'est enregistré — et aucune route ne crédite un portefeuille. Les
-  tests alimentent les portefeuilles en écrivant directement dans le grand livre. Le
-  parcours rejoué à travers le proxy, lui, ne mène aucun transfert à son terme : il vérifie
-  que chaque refus est le bon, et que rien n'a bougé ;
+  n'est fixé, aucun actif n'est enregistré. À la livraison de ce lot, aucune route ne
+  créditait un portefeuille, et le parcours rejoué à travers le proxy ne menait aucun
+  transfert à son terme : il vérifiait que chaque refus est le bon. Depuis le lot 3, un
+  portefeuille se crédite par un ajustement de votre équipe, et ce parcours mène un transfert
+  à son terme. La plupart des tests, eux, alimentent toujours les portefeuilles en écrivant
+  directement dans le grand livre ;
 - **un transfert est définitif** : ni annulation, ni délai de rétractation, ni liste de
   bénéficiaires. Des fonds envoyés à une mauvaise adresse — si elle a un compte — ne
   reviennent que si le destinataire les renvoie ;
@@ -375,24 +394,121 @@ plafond. Constaté sur la base de l'aperçu, qui contenait 215 comptes : la migr
 appliquée pendant que la version du lot 1 tournait ; celle-ci a ensuite passé son parcours
 complet (143 contrôles) sans une erreur, puis la version du lot 2 le sien (177 contrôles).
 
+### Lot 3 — livré : opérations du personnel
+
+Ce que votre équipe peut faire sur un portefeuille : le **créditer ou le débiter, à deux** ;
+le **geler** ; et, par ces deux moyens, **sortir les fonds d'un compte à fermer**. C'est le
+lot proposé à la fin du précédent, sans écart de périmètre. Il vient maintenant pour deux
+raisons : rien ne permettait de vider un compte suspendu — or un compte qui détient des fonds
+ne se clôt pas — ; et, faute de dépôts, rien ne permettait d'éprouver un transfert avec un
+vrai solde ailleurs que dans les tests.
+
+Créditer un portefeuille, c'est inscrire des fonds au registre : l'acte le plus sensible du
+back-office. Il est donc livré **fermé**, il exige **deux personnes**, et cette exigence est
+imposée par la base de données elle-même, pas seulement par le code de l'API.
+
+| Sujet                     | Réalisation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Ajustement                | crédit ou débit du portefeuille d'un titulaire, dans un actif, avec une justification ; **une demande, puis l'approbation d'une seconde personne** — rien ne bouge avant ; l'approbation passe une seule écriture du grand livre, le portefeuille contre le compte de conservation de la plateforme, validée avec la décision, sa trace au journal d'audit et l'avis au titulaire — ou pas du tout                                                                                                                       |
+| Issue d'une demande       | approuvée ; refusée par un second, avec un motif ; retirée par son auteur ; échue après 72 heures sans décision ; une demande décidée ne se rouvre pas, et un ajustement approuvé ne s'annule pas : il se corrige par un ajustement inverse, lui aussi à deux                                                                                                                                                                                                                                                            |
+| Quatre yeux               | nul ne prend part à l'ajustement de son propre portefeuille ; l'approbation et le refus viennent d'un autre que l'auteur de la demande ; une seule demande identique — même portefeuille, même sens, même montant — peut être en attente : une demande renvoyée par erreur ne s'approuve pas deux fois                                                                                                                                                                                                                   |
+| Preuve de l'approbateur   | son mot de passe et son second facteur lui sont redemandés à l'approbation, et vérifiés avant tout examen de la demande : une session ouverte ne suffit pas à créditer                                                                                                                                                                                                                                                                                                                                                   |
+| Montants                  | strictement positifs, à la précision de l'actif — rien n'est arrondi ; un débit ne dépasse jamais le solde, à la demande comme à l'approbation ; **aucun montant maximal**                                                                                                                                                                                                                                                                                                                                               |
+| Gel d'un portefeuille     | celui d'un titulaire dans un actif, avec une justification : **plus aucune écriture n'y passe**, ni envoi ni réception, hors les ajustements ; le solde demeure, les autres portefeuilles ne sont pas touchés ; un gel se lève, avec une justification, et reste consultable une fois levé                                                                                                                                                                                                                               |
+| Ce que voit le titulaire  | son portefeuille marqué gelé, et ses transferts refusés pour ce motif — jamais la raison ; un e-mail à chaque crédit et à chaque débit, dans sa langue ; les crédits, débits, gels et levées dans l'historique de son compte ; qui lui envoie des fonds reçoit le refus ordinaire du destinataire, sans apprendre le gel                                                                                                                                                                                                 |
+| Sortie des fonds          | un débit sous double validation passe sur un compte suspendu et sur un portefeuille gelé ; des fonds retiennent la clôture, un portefeuille gelé aussi : on débite, on lève le gel, on clôt — la plateforme rend les fonds hors de l'API                                                                                                                                                                                                                                                                                 |
+| Qui peut quoi             | six permissions nouvelles : consulter, demander, approuver un ajustement ; consulter, poser, lever un gel ; `super_admin` les détient toutes ; `compliance` consulte et pose les gels, sans pouvoir en lever un ni prendre part à un ajustement ; `support`, aucune                                                                                                                                                                                                                                                      |
+| Garanties de la base      | PostgreSQL vérifie lui-même que le demandeur et l'approbateur sont actifs et habilités au moment d'écrire, qu'ils sont deux et qu'aucun n'est le titulaire, que la demande n'est pas échue — à sa propre horloge —, qu'un ajustement approuvé a son écriture, exactement la sienne, et qu'une écriture d'ajustement a son ajustement ; il refuse toute ligne sur un portefeuille gelé, quelle que soit l'opération, et la clôture d'un compte au portefeuille gelé ; ni demande ni gel ne se réécrivent ni ne s'effacent |
+| Opérations simultanées    | un gel attend l'écriture en cours sur le portefeuille, et toute écriture qui le suit le voit : aucun mouvement n'est validé après lui ; de deux approbations simultanées d'une demande, une seule passe ; de deux gels d'un même portefeuille, un seul est posé                                                                                                                                                                                                                                                          |
+| Ouverture                 | les ajustements sont une fonctionnalité **fermée par défaut** : demander et approuver l'exigent ; consulter, refuser et retirer restent possibles, pour clore ce qui attendait ; geler et lever ne dépendent d'aucune ouverture ; tout reste accessible pendant la maintenance                                                                                                                                                                                                                                           |
+| Traces, copie des données | chaque demande, chaque décision, chaque tentative refusée et chaque consultation est au journal d'audit, qui garde les justifications ; la copie des données d'un titulaire, au format 5, dit quel portefeuille est gelé et contient les mouvements d'ajustement — sans aucune justification ; les demandes échues sont closes à chaque lecture, à chaque demande, à chaque décision et par la tâche horaire                                                                                                             |
+
+Détail : [`docs/API.md`](docs/API.md), [`docs/DATABASE.md`](docs/DATABASE.md),
+[`docs/SECURITY.md`](docs/SECURITY.md), [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+Décision : ADR 0027.
+
+**À savoir :**
+
+- **un crédit vaut ce que valent les deux personnes qui l'ont décidé.** Rien ne le rapproche
+  de fonds réellement détenus, et aucun montant maximal ne le borne : deux personnes
+  habilitées qui s'entendent — ou deux comptes d'administration compromis — créditent
+  n'importe quel portefeuille du montant qu'elles veulent. Chaque ajustement est tracé,
+  ineffaçable, et signalé au titulaire — après coup : rien ne l'empêche. La procédure qui
+  fonde un ajustement est à écrire avant toute ouverture (décision 15) ;
+- **la base de données ne ferme pas la liste des types d'écriture.** Elle refuse une écriture
+  d'ajustement sans son ajustement approuvé par deux personnes ; elle ne refuse pas une
+  écriture équilibrée d'un **autre** type qui créditerait un portefeuille. La double
+  validation est donc la seule route **de l'API** qui apporte des fonds, et elle tient même
+  si le code des ajustements est fautif ; elle ne protège pas de qui écrirait dans la base
+  avec les identifiants de l'API. Constaté pendant ce lot, documenté, et proposé comme
+  prochain lot (voir « Problèmes identifiés ») ;
+- **il faut deux administrateurs**, chacun avec la validation en deux étapes : seul
+  `super_admin` prend part à un ajustement, et il n'existe pas de rôle « finance ». Avec un
+  seul administrateur, aucun ajustement n'aboutit ;
+- **lever un gel est l'acte d'une seule personne** — aujourd'hui un `super_admin`. La
+  conformité gèle, elle ne lève pas. À revoir avant l'ouverture, si une levée doit elle aussi
+  se décider à deux ;
+- **un gel n'est pas discret.** Le titulaire voit son portefeuille gelé et ses transferts
+  refusés pour ce motif ; il n'en lit pas la raison. Pour une mesure qui ne doit pas alerter
+  la personne visée, ce n'est pas l'outil. Et le support ne consulte pas les gels : il ne
+  peut pas dire à un titulaire pourquoi ses transferts sont refusés ;
+- **un gel porte sur un portefeuille, pas sur un compte.** Le compte reste utilisable, et ses
+  autres portefeuilles aussi. Pour tout arrêter, la suspension du compte existe déjà ;
+- **les justifications sont des textes libres, conservés sans limite de durée** — celle d'une
+  demande, d'un refus, d'un gel, d'une levée. Ce qu'on y écrit d'une personne y reste, même
+  après la clôture de son compte. Elles ne sont jamais montrées au titulaire, ni dans la
+  copie de ses données : à faire confirmer avec le reste (décision 6) ;
+- **après un gel, ne pas revenir à la version précédente de l'API.** Elle ignore les gels :
+  un transfert depuis ou vers un portefeuille gelé y est bien refusé — par la base —, mais
+  par une erreur serveur (`500`) au lieu du refus prévu. Constaté sur la base de l'aperçu ;
+  rien ne bouge. Lever les gels avant un retour en arrière, ou l'éviter ;
+- **huit choix ont été faits sans vous** (décision 15) ; chacun se change sans reprendre le
+  reste ;
+- **le parcours de vérification de la CI crédite un portefeuille**, ouvre les ajustements et
+  les laisse ouverts : il reste réservé à une pile de test, jamais à une plateforme en
+  service. Il lui faut désormais un second administrateur.
+
+**Ce qui change pour un client écrit contre le lot 2** : rien n'est retiré. Chaque
+portefeuille porte `frozen` ; la copie des données passe au format 5 ; l'historique du compte
+connaît quatre types d'événements de plus ; un transfert peut être refusé par `WALLET_FROZEN`
+(403), et une clôture (409) parce qu'un portefeuille est gelé ; un mouvement de portefeuille
+peut être de type `adjustment.credit` ou `adjustment.debit` ; l'état de la plateforme annonce
+`manualAdjustments` ; le catalogue des permissions en compte vingt-trois, et `compliance` en
+détient sept. Liste complète : [`CHANGELOG.md`](CHANGELOG.md).
+
+**Mise à jour d'une base existante.** La migration n'ajoute que deux tables, leurs règles et
+six permissions : elle s'applique sans arrêter l'API, n'ouvre rien, ne gèle rien et ne
+crédite rien. Constaté sur la base de l'aperçu, qui contenait 219 comptes : la migration a
+été appliquée, en moins de deux secondes, pendant que la version du lot 2 tournait ; celle-ci
+a ensuite passé son parcours complet (177 contrôles) sans une erreur, puis la version du
+lot 3 le sien (251 contrôles), avec deux administrateurs créés pour l'occasion. Une réserve,
+décrite ci-dessus : une fois un portefeuille gelé, la version précédente ne sait plus
+répondre proprement à un transfert qui le touche.
+
 ### Suite proposée de la phase 3
 
 À confirmer par vous — rien n'en est commencé :
 
-- **Lot 3 — les opérations du personnel.** Crédit et débit manuels d'un portefeuille, sous
-  double validation ; gel d'un portefeuille ; sortie des fonds d'un compte à fermer. C'est
-  aussi ce qui permettrait d'**éprouver les transferts avec de vrais soldes**, sur une
-  plateforme de test, avant que les dépôts n'existent.
+- **Lot 4 — fermer, dans la base, l'entrée des fonds.** Aujourd'hui, la base exige d'une
+  écriture d'ajustement qu'elle ait son ajustement approuvé, mais elle accepte une écriture
+  équilibrée d'un autre type (voir « Problèmes identifiés »). Le lot ferait de toute ligne
+  passée sur le compte de conservation de la plateforme la ligne d'une opération que la base
+  connaît — la double validation deviendrait le seul chemin, et non plus seulement la seule
+  route de l'API. Il demande de revoir la façon dont les tests alimentent les portefeuilles.
+  Court, et à faire avant qu'une autre opération n'écrive sur ce compte.
 - **Ensuite — les fonds réservés**, avec la première opération qui en a l'usage (un retrait
-  en attente de validation, par exemple), puis le **rapprochement** avec les fonds
-  réellement détenus.
+  en attente de validation, par exemple), puis le **rapprochement** avec les fonds réellement
+  détenus.
+- **Selon vos réponses à la décision 15** : un montant maximal par ajustement, la double
+  validation de la levée d'un gel, un rôle « finance » distinct de `super_admin`. Aucun n'est
+  commencé ; chacun est court.
 
 Dépôts et retraits réels relèvent des phases 4 (paiements) et 5 (blockchain) : ils supposent
 un prestataire, et l'autorisation correspondante (décision 11).
 
 ## Résultats de tests
 
-Exécution du 2026-11-14 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
+Exécution du 2026-11-16 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
 
 | Vérification                     | Résultat                         |
 | -------------------------------- | -------------------------------- |
@@ -402,16 +518,16 @@ Exécution du 2026-11-14 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **1 979 tests réussis, 0 échec** |
+| `pnpm test`                      | **2 135 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 96    | —                                               |
-| `@mgx/contracts`          | 60    | —                                               |
-| API — unitaires           | 599   | —                                               |
-| API — intégration         | 551   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 570   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| `@mgx/contracts`          | 70    | —                                               |
+| API — unitaires           | 605   | —                                               |
+| API — intégration         | 657   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 604   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
 Ce que ces tests établissent, notamment :
 
@@ -612,8 +728,9 @@ Ce que ces tests établissent, notamment :
   une fois, sans en inventer ; le back-office exige un compte du personnel, la validation en
   deux étapes et la permission — et lire le grand livre n'autorise pas à y enregistrer un
   actif ; chaque consultation est au journal d'audit ; consulter ne change rien au
-  registre, et **un test établit qu'aucune route du grand livre ni des portefeuilles n'y
-  passe d'écriture** — la seule opération qui en passe est le transfert ;
+  registre, et **un test établit qu'aucune route de consultation du grand livre ni des
+  portefeuilles n'y passe d'écriture** — une écriture ne passe que par une opération, sous
+  ses propres routes : le transfert et, depuis le lot 3, l'ajustement du personnel ;
 - **grand livre, clôture et copie des données** : un compte qui détient des fonds ne se clôt
   ni par son titulaire ni par le personnel ; vidé, il se clôt, ses écritures restent, et la
   trace de sa clôture garde ses identifiants dix ans ; un compte sans écriture n'impose
@@ -665,10 +782,66 @@ Ce que ces tests établissent, notamment :
 - **transferts, clôture et copie des données** : des fonds retiennent la clôture, et une
   fois envoyés le compte se clôt ; l'autre partie garde ses transferts, sans l'adresse du
   compte clôturé ; la copie contient les transferts envoyés et reçus, et dit lorsqu'elle en
-  omet au-delà de 2 000.
+  omet au-delà de 2 000 ;
+- **opérations du personnel, règles de la base** : des tests s'adressent directement à
+  PostgreSQL avec le rôle de l'API — et, pour ce que nul ne doit pouvoir faire, avec le rôle
+  propriétaire. La base refuse alors : une demande d'ajustement déposée sans la permission de
+  demander — fût-ce avec celle d'approuver —, pour son propre portefeuille, pour un compte
+  clôturé, inconnu ou dont l'inscription n'est pas achevée, d'un montant nul, sans raison ;
+  une demande qui naît décidée, ou une seconde demande identique en attente ; une approbation
+  ou un refus venant de l'auteur de la demande, du titulaire, ou de qui peut seulement
+  demander ; une approbation après l'échéance ; toute retouche des termes d'une demande ou
+  d'un gel — identifiant compris — et leur suppression, même par le propriétaire ; à la
+  validation de la transaction, une approbation dont l'écriture n'est pas exactement celle de
+  la demande — autre montant, autre sens, autre actif, portefeuille d'un autre, autre compte
+  du même titulaire, contrepartie autre que le compte de conservation, ligne en plus —, et
+  une écriture d'ajustement sans ajustement approuvé ; un gel posé sans la permission, sur
+  son propre portefeuille, ou en double ; une levée par la conformité ; toute ligne sur un
+  portefeuille gelé, hors ajustement ; la clôture d'un compte au portefeuille gelé, même par
+  le propriétaire. L'heure d'une demande, d'une décision, d'un gel et d'une levée est celle
+  de l'horloge de la base à l'instant de l'écriture — ni celle que fournit l'application, ni
+  celle de l'ouverture de la transaction ; l'échéance est à 72 heures exactement. Les types
+  d'écriture qui passent un gel sont, dans la base, ceux du code ;
+- **opérations du personnel, services** : une demande ne déplace rien ; l'approbation passe
+  l'écriture, enregistre la décision et prépare l'avis au titulaire ; refusée, elle n'écrit
+  rien de cela, la demande reste en attente et la tentative est tracée ; la preuve de
+  l'approbateur — mot de passe, puis second facteur — est vérifiée avant tout examen ; ni
+  l'auteur de la demande ni le titulaire ne l'approuvent ni ne la refusent ; un débit que le
+  portefeuille ne couvre plus est refusé ; l'auteur suspendu depuis, la demande ne s'approuve
+  plus ; un compte clôturé ne reçoit rien — y compris s'il se clôt à l'instant où la demande,
+  ou le gel, s'écrit ; une demande échoit après 72 heures, close par ce qui la rencontre en
+  premier : une lecture, une liste, une demande identique, une décision, ou la tâche
+  horaire ; le titulaire reçoit un message dans sa langue, daté de la décision, sans la
+  justification ni le nom d'un membre du personnel — et aucun pour un refus, un retrait ou
+  une échéance, ni après la clôture de son compte ; un portefeuille gelé garde son solde et
+  se montre gelé dans la liste des portefeuilles, la page des mouvements et la copie des
+  données ; rien n'en part — le refus précède tout autre examen — et rien n'y arrive — pour
+  l'émetteur, c'est le refus unique du destinataire ; un compte suspendu et un portefeuille
+  gelé s'ajustent : c'est par là que leurs fonds sortent ; des fonds ou un gel retiennent la
+  clôture, qui cite les deux ;
+- **gels, décisions et écritures simultanés** : le gel attend l'écriture en cours sur le
+  portefeuille, et la suivante est refusée ; une écriture attend le gel en cours, puis est
+  refusée ; un gel annulé ne gèle rien, et l'écriture qui l'attendait passe ; le gel attend
+  le transfert en cours de l'émetteur ; le premier crédit d'un portefeuille jamais utilisé
+  attend le gel ; un gel posé pendant une rafale de transferts : aucun n'aboutit après lui ;
+  de deux gels du même portefeuille, de deux levées, de deux décisions sur une même demande,
+  une seule s'applique ; de deux approbations, le portefeuille est crédité une fois ;
+- **opérations du personnel, routes** : tant que les ajustements sont fermés, nul n'en
+  demande ni n'en approuve — pas même un administrateur —, et les gels se posent ; refermés,
+  ce qui est en attente se refuse et se retire encore ; chacune des neuf routes exige une
+  session, un compte du personnel, la validation en deux étapes et **sa** permission —
+  demander n'autorise pas à approuver, ni l'inverse ; la conformité gèle et consulte les
+  gels, sans en lever ni toucher à un ajustement ; chaque refus d'accès est au journal
+  d'audit, avec la permission qui manquait ; chaque corps de requête et chaque identifiant
+  est vérifié avant tout ; un montant plus précis que l'actif n'est pas arrondi ; **avec de
+  vrais soldes** : un portefeuille crédité par un ajustement transfère ; gelé, rien n'en part
+  ni n'y arrive ; un débit sous double validation en sort pourtant le solde ; le gel levé,
+  tout repart, et le compte vidé se clôt ; pendant la maintenance, les titulaires attendent,
+  et le personnel ajuste, gèle et lève encore ; la copie des données dit quel portefeuille
+  est gelé, l'historique ce que la plateforme y a fait — jamais pourquoi.
 
-**Efficacité des tests vérifiée par mutation.** 1 569 défauts ont été introduits volontairement,
-un par un, puis retirés ; chacun doit faire échouer au moins un test.
+**Efficacité des tests vérifiée par mutation.** 1 928 défauts ont été introduits
+volontairement, un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
   configuration du proxy), tous détectés.
@@ -868,6 +1041,67 @@ un par un, puis retirés ; chacun doit faire échouer au moins un test.
   test, pas si c'est toujours par une vérification. L'outil conserve désormais toutes les
   sorties ; celles-là seront examinées au prochain rejeu.
 
+- Phase 3, lot 3 : 359 défauts — 151 dans les règles SQL des ajustements et des gels, 208
+  dans le code (règles du domaine, services des ajustements et des gels, lecture et écriture
+  en base, routes, avis au titulaire, grand livre, transferts, portefeuilles, historique,
+  copie des données, clôture, contrats). **À la première exécution, sur le code publié
+  (commit `2922759`), 24 n'étaient pas détectés** :
+  - **vingt-deux révélaient un manque dans les tests**, comblé depuis — le code, lui,
+    applique chacune de ces règles. Dans la base (9) : une demande en attente, ou échue, qui
+    désigne une écriture ; une demande déposée par qui peut seulement approuver, et une
+    décision prise par qui peut seulement demander — aucun rôle livré ne sépare ces deux
+    permissions, et les tests ne les séparaient pas davantage ; l'identifiant d'une demande,
+    ou d'un gel, réécrit au moment de la décider, ou de le lever ; l'heure d'une demande, ou
+    d'un gel, lue à l'ouverture de la transaction au lieu de l'instant de l'écriture ; la
+    ligne du titulaire passée sur un autre de ses comptes que ses fonds disponibles — il
+    n'existe pas encore d'autre type de compte : le test en crée un, le temps d'une
+    transaction annulée. Dans les services (9) : une demande échue n'était close, dans les
+    tests, que par une lecture — or elle doit l'être aussi par une liste, par une demande
+    identique et par une décision : sans cela, la base laisse refuser une demande échue, qui
+    s'afficherait « refusée » ; un compte clôturé à l'instant même où la demande, ou le gel,
+    s'écrit — la base refuse, mais la réponse qui en est tirée n'était pas éprouvée (quatre
+    défauts) ; l'avis au titulaire envoyé pour un ajustement qui n'est pas approuvé ; la date
+    de cet avis, celle de la demande au lieu de celle de la décision. Sur les routes (4) :
+    l'identifiant mal formé d'une demande à lire, à approuver ou à retirer ; la route qui
+    gèle exigeant une autre permission que la sienne — la base refusait de toute façon, par
+    la même réponse. Huit tests ont été ajoutés, d'autres complétés (commit `69a8ca5`) ;
+  - deux sont sans effet, et **ont été écartés** : retirer ou non au rôle de l'API le droit
+    de vider chacune des deux tables ne change rien, ce droit ne lui étant jamais accordé.
+    Ils ne sont pas comptés.
+
+  **Un vingt-cinquième passait pour détecté sans l'être pour la bonne raison** : il rendait
+  la migration inapplicable, et les 47 tests du fichier échouaient sans qu'aucune règle soit
+  éprouvée. Relevé en examinant les défauts qui font échouer une grande part d'un fichier.
+  Réécrit pour que la migration s'applique — chaque rôle y reçoit alors toutes les
+  permissions —, il fait échouer six tests, chacun sur la règle visée (voir « Problèmes
+  identifiés »). Quatre autres défauts font échouer la plupart des tests d'un fichier ;
+  examinés un à un, chacun échoue bien sur une vérification qui vise la règle.
+
+  Deux défauts ont été ajoutés avec ces corrections — l'heure d'une décision, et celle d'une
+  levée, lues à l'ouverture de la transaction —, ce qui ramène le compte à 359. Les
+  vingt-deux défauts, celui qui a été réécrit et les deux ajoutés ont été relancés un à un
+  contre les tests complétés : **tous sont détectés, chacun par un test qui vise la règle**.
+  La sortie complète des tests a été conservée dès la première exécution : **aucun des 359
+  n'est détecté par un test resté bloqué jusqu'à son délai**.
+
+- Un défaut des transferts n'a plus d'effet depuis ce lot, et a été retiré — le même cas
+  qu'aux deux lots précédents. Placé dans la migration des transferts, il privait
+  `super_admin` des deux permissions des plafonds ; la migration des opérations du personnel,
+  appliquée ensuite, lui attribue de nouveau tout le catalogue. Deux bases ont été
+  installées, l'une avec ce défaut, l'autre sans, puis comparées : même structure, mêmes
+  rôles, mêmes permissions — alors qu'arrêtées à la migration des transferts, les deux
+  permissions manquent à la première. Le même défaut, placé dans la migration des opérations
+  du personnel, est détecté : il compte parmi les 359. Les transferts gardent 337 défauts
+  rejouables.
+- **Lots précédents après ce lot : rejeu en cours, résultat à consigner ici.** Ce lot modifie
+  le grand livre, les transferts, les portefeuilles, la clôture, la copie des données, le
+  catalogue des permissions et plusieurs de leurs tests. Les 1 904 défauts rejouables par
+  script — 31, 107, 226, 249 et 276 pour les lots 1 à 5 de la phase 2, 319 pour le grand
+  livre, 337 pour les transferts, 359 pour ce lot — sont rejoués d'une traite sur le code
+  livré (commit `69a8ca5`) ; ce rejeu dure plus de cinq heures et n'était pas achevé à
+  l'écriture de ces lignes. Les sorties des 889 défauts de la phase 2 y sont conservées, pour
+  l'examen promis au lot précédent.
+
 ## Infrastructure : vérifications hors Docker
 
 L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accès aux dépôts de
@@ -875,17 +1109,17 @@ paquets système**. Chaque fichier d'infrastructure y est donc exécuté hors Do
 vrai logiciel, avant d'être confié à l'intégration continue — qui, elle, l'exécute avec
 Docker (section suivante) :
 
-| Élément                             | Vérifié ici                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Reste à confirmer                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture. Le répertoire des pièces y est créé comme le prescrit le fichier, réservé à l'utilisateur `node`. Depuis le lot 5 : l'outil de publication des conditions d'utilisation y est exécuté sous l'utilisateur `node` — refusé avec le rôle de l'API, refusé avec un numéro qui n'est pas le suivant, puis publication avec le rôle propriétaire.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Construction par Docker (images de base, couches, cache) ; instruction `VOLUME`                                                                                                                                                                                                                                                                                |
-| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Exécution par le point d'entrée de l'image officielle                                                                                                                                                                                                                                                                                                          |
-| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose. Les deux variables de la vérification d'identité sont fournies à l'API comme le fichier les déduit, et les pièces écrites dans un répertoire vide monté à l'emplacement du volume.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) ; le volume `kyc-documents` et l'expression `${KYC_ENCRYPTION_KEY:+…}`, que seul Compose interprète (cette forme ne figure pas dans le texte de la spécification ; sa prise en charge a été vérifiée dans le code source de Compose, pas par une exécution) |
-| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API. Route d'envoi des pièces : fichiers de 600 Ko, de 5 Mio exactement, de 5 Mio + 1 octet (refusé par l'API) et de 7 Mo (refusé par Nginx) ; quatre envois lents simultanés, le cinquième refusé. Depuis le lot 4 : aucune réponse de l'API n'est copiée sur le disque du proxy — le téléchargement d'une pièce de 5 Mio n'y laisse ni fichier ni avertissement, et la même exécution **sans** la directive ajoutée échoue. Depuis le lot 5, route de publication des conditions : un texte de 185 Ko relayé, 1,06 Mo refusé par l'API, 1,3 Mo refusé par Nginx sans rien transmettre.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Exécution dans l'image `nginx:1.30-alpine`                                                                                                                                                                                                                                                                                                                     |
-| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. Depuis le lot 3 : vérification d'identité complète (déclaration, pièces, dépôt, examen, téléchargement d'une pièce de 5 Mio identique à l'octet près, acceptation, profil vérifié), puis contrôle du stockage par `check-kyc-storage.sh` sous l'utilisateur `node` — deux fichiers chiffrés, illisibles par un autre utilisateur. Depuis le lot 4 : copie des données (mot de passe redemandé, numéro de la pièce absent), clôture (confirmation exigée), connexion refusée ensuite, avis reçu à l'ancienne adresse, compte retrouvé par le back-office, dossier conservé. Depuis le lot 5 : inscription impossible tant qu'aucune version des conditions n'est publiée ; publication d'un texte de 185 Ko par le back-office, relu à l'octet près à travers le proxy ; inscription liée à la version en vigueur ; nouvelle version à accepter — compte arrêté, version dépassée refusée, acceptation, reprise ; acceptations dans la copie des données. Depuis le lot 1 de la phase 3 : enregistrement d'un actif — refusé à un titulaire, accepté une fois —, portefeuille à zéro et sans mouvement, aucun compte ouvert au grand livre, balance équilibrée, copie des données au nouveau format. Depuis le lot 2 de la phase 3 : ouverture des transferts ; rien ne part sans plafonds ; plafonds fixés au back-office — refusés à un titulaire, dans le désordre, ou plus précis que l'actif —, relus par le titulaire ; demandes refusées sans clé d'idempotence, sans le bon mot de passe, au-delà du plafond, au-delà du solde ; aucun transfert, aucun compte ouvert au grand livre ; refus visibles dans l'historique ; copie des données au format 4. 184 contrôles dans le parcours. Puis `infrastructure/ci/publish-terms-cli.sh` est exécuté tel quel, l'outil de publication étant lancé sur place, depuis l'arborescence de l'image de migration, au lieu de l'être par `docker compose run` : numéro inexact refusé, version suivante publiée, texte servi par Nginx comparé au fichier. | Exécution dans la pile Docker                                                                                                                                                                                                                                                                                                                                  |
-| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` sont exécutées ici avant chaque livraison ; l'étape qui lit les journaux du conteneur Nginx l'est par son équivalent, sur le journal d'erreurs de Nginx. **Le workflow lui-même s'exécute sur GitHub depuis le 2026-11-13.** Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | **Toute exécution par GitHub** (voir ci-dessous)                                                                                                                                                                                                                                                                                                               |
-| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations sont créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). **Le moteur natif les applique dans la CI** (tests, conteneur de migration de la pile Compose, contrôle de dérive).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Exécution par la CI                                                                                                                                                                                                                                                                                                                                            |
-| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles ; la CI les télécharge et les exécute.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | —                                                                                                                                                                                                                                                                                                                                                              |
-| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                                                                                                                                                                                                                                              |
+| Élément                             | Vérifié ici                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Reste à confirmer                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `api.Dockerfile`                    | Étapes rejouées une à une dans une arborescence vierge appartenant à `root`, à partir du seul contexte de build. L'artefact obtenu et l'outil d'administration ont été exécutés sous l'utilisateur `node`, sans droit d'écriture. Le répertoire des pièces y est créé comme le prescrit le fichier, réservé à l'utilisateur `node`. Depuis le lot 5 : l'outil de publication des conditions d'utilisation y est exécuté sous l'utilisateur `node` — refusé avec le rôle de l'API, refusé avec un numéro qui n'est pas le suivant, puis publication avec le rôle propriétaire.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Construction par Docker (images de base, couches, cache) ; instruction `VOLUME`                                                                                                                                                                                                                                                                                |
+| Script d'initialisation PostgreSQL  | Exécuté tel quel sur une instance PostgreSQL 18.6 vierge (client `psql` 16.2) : rôles, bases, privilèges, connexions par mot de passe.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Exécution par le point d'entrée de l'image officielle                                                                                                                                                                                                                                                                                                          |
+| `docker-compose.yml`                | Séquence rejouée dans un espace réseau isolé, avec les mêmes noms d'hôtes, ports, commandes, variables et sondes : initialisation, migrations, API, Nginx. Fichier conforme au schéma officiel de la spécification Compose. Les deux variables de la vérification d'identité sont fournies à l'API comme le fichier les déduit, et les pièces écrites dans un répertoire vide monté à l'emplacement du volume.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Orchestration par Docker Compose (ordre de démarrage, volumes, options de sécurité des conteneurs) ; le volume `kyc-documents` et l'expression `${KYC_ENCRYPTION_KEY:+…}`, que seul Compose interprète (cette forme ne figure pas dans le texte de la spécification ; sa prise en charge a été vérifiée dans le code source de Compose, pas par une exécution) |
+| `nginx.conf`                        | Exécuté sans modification par Nginx 1.30.6 compilé depuis les sources : relais, sondes, limitation de débit, erreurs au format de l'API, journaux corrélés avec ceux de l'API. Route d'envoi des pièces : fichiers de 600 Ko, de 5 Mio exactement, de 5 Mio + 1 octet (refusé par l'API) et de 7 Mo (refusé par Nginx) ; quatre envois lents simultanés, le cinquième refusé. Depuis le lot 4 : aucune réponse de l'API n'est copiée sur le disque du proxy — le téléchargement d'une pièce de 5 Mio n'y laisse ni fichier ni avertissement, et la même exécution **sans** la directive ajoutée échoue. Depuis le lot 5, route de publication des conditions : un texte de 185 Ko relayé, 1,06 Mo refusé par l'API, 1,3 Mo refusé par Nginx sans rien transmettre.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Exécution dans l'image `nginx:1.30-alpine`                                                                                                                                                                                                                                                                                                                     |
+| Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. Depuis le lot 3 : vérification d'identité complète (déclaration, pièces, dépôt, examen, téléchargement d'une pièce de 5 Mio identique à l'octet près, acceptation, profil vérifié), puis contrôle du stockage par `check-kyc-storage.sh` sous l'utilisateur `node` — deux fichiers chiffrés, illisibles par un autre utilisateur. Depuis le lot 4 : copie des données (mot de passe redemandé, numéro de la pièce absent), clôture (confirmation exigée), connexion refusée ensuite, avis reçu à l'ancienne adresse, compte retrouvé par le back-office, dossier conservé. Depuis le lot 5 : inscription impossible tant qu'aucune version des conditions n'est publiée ; publication d'un texte de 185 Ko par le back-office, relu à l'octet près à travers le proxy ; inscription liée à la version en vigueur ; nouvelle version à accepter — compte arrêté, version dépassée refusée, acceptation, reprise ; acceptations dans la copie des données. Depuis le lot 1 de la phase 3 : enregistrement d'un actif — refusé à un titulaire, accepté une fois —, portefeuille à zéro et sans mouvement, aucun compte ouvert au grand livre, balance équilibrée, copie des données au nouveau format. Depuis le lot 2 de la phase 3 : ouverture des transferts ; rien ne part sans plafonds ; plafonds fixés au back-office — refusés à un titulaire, dans le désordre, ou plus précis que l'actif —, relus par le titulaire ; demandes refusées sans clé d'idempotence, sans le bon mot de passe, au-delà du plafond, au-delà du solde ; aucun transfert, aucun compte ouvert au grand livre ; refus visibles dans l'historique ; copie des données au format 4. Depuis le lot 3 de la phase 3 : ajustements fermés, puis ouverts ; crédit demandé par l'administrateur — qui ne peut pas l'approuver lui-même —, approuvé par un second administrateur avec son mot de passe et son second facteur ; e-mail au titulaire, sans la justification ; un second compte inscrit pour recevoir ; **un transfert mené à son terme**, renvoyé sous la même clé sans être fait deux fois ; portefeuille gelé — rien n'en part, le compte ne se clôt pas — ; débit sous double validation, les rôles inversés ; gel levé ; copie des données au format 5. Le second administrateur est créé par le parcours lui-même, par la commande `docker compose` du flux — exécutée ici par une commande `docker` factice, qui lance l'outil sur place. 259 contrôles dans le parcours ; 226 sans second administrateur, hors GitHub Actions — la double validation, le transfert abouti et le débit sont alors sautés. Puis `infrastructure/ci/publish-terms-cli.sh` est exécuté tel quel, l'outil de publication étant lancé sur place, depuis l'arborescence de l'image de migration, au lieu de l'être par `docker compose run` : numéro inexact refusé, version suivante publiée, texte servi par Nginx comparé au fichier. | Exécution dans la pile Docker                                                                                                                                                                                                                                                                                                                                  |
+| Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` sont exécutées ici avant chaque livraison ; l'étape qui lit les journaux du conteneur Nginx l'est par son équivalent, sur le journal d'erreurs de Nginx. **Le workflow lui-même s'exécute sur GitHub depuis le 2026-11-13.** Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **Toute exécution par GitHub** (voir ci-dessous)                                                                                                                                                                                                                                                                                                               |
+| Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations sont créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). **Le moteur natif les applique dans la CI** (tests, conteneur de migration de la pile Compose, contrôle de dérive).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Exécution par la CI                                                                                                                                                                                                                                                                                                                                            |
+| Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles ; la CI les télécharge et les exécute.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                                                                                                                                                                                                                                              |
+| Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | —                                                                                                                                                                                                                                                                                                                                                              |
 
 ## Intégration continue : active
 
@@ -924,6 +1158,23 @@ vrai Nginx, il compte 184 contrôles, et 87 de ses requêtes — contre 74 — s
 la limite générale de 120 par minute. Elle suffit encore ; le prochain lot qui allongera ce
 parcours devra le scinder, ou relever cette limite pour la pile de test.
 
+**Lot 3 de la phase 3.** Trois exécutions, au vert toutes les trois, sans correction. La
+première (commit `5ded567`) : la migration des opérations du personnel appliquée par le
+moteur natif de Prisma, les 2 127 tests d'alors, et le parcours à travers le conteneur Nginx
+avec sa partie « opérations du personnel » — le second administrateur y est créé, pour la
+première fois, par une vraie commande `docker compose`. La deuxième (commit `2922759`) : le
+parcours rendu strict. Sous GitHub Actions, il échoue désormais s'il n'a pas de second
+administrateur ; **son succès établit donc que la double validation, le transfert mené à son
+terme et le débit ont eu lieu dans la pile Docker.** La troisième (commit `69a8ca5`) :
+les 2 135 tests, avec ceux qu'a demandés le contrôle par mutation. Le parcours n'a été ni
+scindé, ni la limite relevée, comme l'envisageait le paragraphe précédent : il se règle sur
+ce que l'API annonce, et attend la fenêtre suivante lorsque la limite approche. Rejoué ici à
+travers le vrai Nginx, il compte 259 contrôles ; 122 puis 119 de ses requêtes sont comptées
+par la limite générale de 120 par minute, avec une pause de 43 secondes. Sur GitHub, ses
+compteurs ne se lisent pas d'ici ; son étape y a duré 61 ou 62 secondes à chacune des trois
+exécutions, contre 10 au lot précédent — ce qui s'accorde avec une pause du même ordre, sans
+l'établir.
+
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
 exécuté ici, hors Docker (`infrastructure/ci/publish-terms-cli.sh`) ; il reste à l'appeler
@@ -945,6 +1196,79 @@ rien, et ne teste ni TLS, ni sauvegarde, ni montée en charge (phase 9) ; elle n
 Node.js 24.
 
 ## Problèmes identifiés
+
+### Pendant le lot 3 de la phase 3
+
+Les cinq premiers ont été relevés avant la publication du lot, ou le jour même ; le sixième,
+par le contrôle des tests qui l'a suivie. Le premier touche le produit, et reste ouvert ; le
+deuxième, son déploiement ; les trois suivants, le parcours de vérification ; le dernier, les
+tests eux-mêmes.
+
+1. **La base de données ne ferme pas la liste des types d'écriture.** Ce lot fait vérifier
+   par PostgreSQL qu'une écriture d'ajustement a son ajustement, approuvé par deux personnes
+   habilitées. Mais le grand livre ne vérifie d'une écriture que l'arithmétique — entière,
+   équilibrée, sans solde négatif —, pas la légitimité : une écriture équilibrée d'un
+   **autre** type, écrite dans la base avec les identifiants de l'API, crédite un
+   portefeuille depuis le compte de conservation, après ce lot comme avant. Constaté en
+   préparant un essai sur la base de l'aperçu : pour y disposer d'un solde, un portefeuille a
+   été crédité ainsi, par une écriture d'un type inventé, et la base l'a acceptée — c'est
+   d'ailleurs de cette façon que la plupart des tests alimentent leurs portefeuilles. **La
+   décision d'architecture, écrite avant cet essai, affirmait le contraire** ; elle a été
+   corrigée avant la publication du lot, avec trois autres documents. Ce que la règle
+   garantit : un défaut du code des ajustements — approbation par l'auteur, hors délai, d'un
+   autre montant, passée deux fois — est arrêté par la base. Ce qu'elle ne garantit pas :
+   qu'aucun autre code, ni personne disposant des identifiants de l'API, ne crédite un
+   portefeuille. Aucune route de l'API ne le permet ; fermer ce chemin dans la base est
+   proposé pour le lot suivant.
+2. **Après un gel, la version précédente de l'API répond par une erreur serveur.** Essai fait
+   sur la base de l'aperçu, la migration appliquée et la version du lot 2 encore en service :
+   un transfert depuis un portefeuille gelé, ou vers lui, est refusé par la base — rien ne
+   bouge —, mais cette version, qui ignore les gels, répond `500` ; la clôture, elle, reste
+   refusée par un `409`. Le gel levé, tout refonctionne. Ce n'est pas un défaut de la version
+   livrée, mais une contrainte de déploiement : ne geler qu'une fois toutes les instances à
+   jour, et lever les gels avant un retour en arrière.
+   [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) le dit.
+3. **Le parcours de la CI a épuisé sa marge sur la limite de débit.** L'état du lot 2
+   l'annonçait : 87 de ses requêtes, sur 120 admises par minute, étaient comptées par la
+   limite générale. Avec la section de ce lot, il en envoie autant que la limite en admet
+   — 119 et 122 comptées lors de deux exécutions rejouées ici. Plutôt que de relever la
+   limite pour la pile de test, ou de scinder le parcours, il **se règle sur elle** : il lit
+   ce que chaque réponse annonce et, lorsqu'il ne lui reste que cinq requêtes, attend la
+   fenêtre suivante — une pause, de 43 secondes lors de ces deux exécutions. La limite n'est
+   ni relevée, ni contournée. Une réserve : le parcours reconnaît la limite générale à la
+   première valeur annoncée ; réglée sur la même valeur qu'une limite propre à une route, il
+   les confondrait.
+4. **Le parcours pouvait réussir sans avoir éprouvé la double validation.** Faute de second
+   administrateur, il la sautait — en l'écrivant dans sa sortie. Or les journaux d'une
+   exécution de la CI ne se lisent pas d'ici : une exécution réussie ne disait donc pas si la
+   double validation avait eu lieu. Sous GitHub Actions, où le parcours crée lui-même le
+   second administrateur, il **échoue** désormais s'il n'en a pas. L'exécution qui a suivi
+   est passée : la double validation, le transfert mené à son terme et le débit y ont donc eu
+   lieu. Ailleurs, rien ne change : sans second administrateur, il saute ces passages et le
+   dit.
+5. **Le parcours inscrit deux comptes, et ne se rejoue plus que trois fois par heure sur une
+   pile conservée.** Il lui faut un destinataire pour son transfert ; or la route
+   d'inscription admet dix requêtes par heure et par adresse, refusées ou non, et le parcours
+   lui en envoie désormais trois — deux inscriptions, et une troisième qui doit être refusée.
+   Relevé sur l'aperçu, où une exécution de trop a échoué à l'inscription du second compte
+   (`429`). Sans effet dans la CI, dont la pile est neuve à chaque exécution. **La
+   documentation publiée avec le lot annonçait cinq exécutions par heure** : elle ne comptait
+   que les deux inscriptions réussies. L'erreur a été relevée en relisant cet état, vérifiée
+   sur l'aperçu — une requête refusée consomme bien une unité — et corrigée dans
+   [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) et [`CHANGELOG.md`](CHANGELOG.md).
+6. **Vingt-deux règles n'étaient éprouvées par aucun test, et un contrôle ne contrôlait
+   rien.** Le contrôle par mutation — un défaut introduit, un test doit échouer — a montré
+   vingt-deux défauts que les tests publiés avec le lot laissaient passer. **Aucun n'était
+   dans le code livré**, qui applique chacune de ces règles ; mais rien n'aurait signalé leur
+   disparition. Parmi elles : une demande échue, que la base laisse refuser, se serait
+   affichée « refusée » si le service avait cessé de la clore d'abord ; la séparation entre
+   demander et approuver n'était éprouvée, dans la base, qu'avec des rôles qui détiennent les
+   deux permissions ou aucune ; la route qui gèle aurait pu exiger une autre permission sans
+   qu'un test le voie, la base refusant par la même réponse. Huit tests ont été ajoutés,
+   d'autres complétés, sans toucher au code livré. Par ailleurs, un des défauts du contrôle
+   rendait la migration inapplicable : tous les tests du fichier échouaient, et il passait
+   pour détecté sans qu'aucune règle soit éprouvée. Il a été réécrit. Détail dans « Résultats
+   de tests ».
 
 ### Pendant le lot 2 de la phase 3
 
@@ -1409,10 +1733,10 @@ Clôture, effacement, copie des données :
 
 Grand livre :
 
-- **Une seule opération existe, et elle n'a rien à déplacer.** Seul le transfert entre
-  titulaires écrit dans le registre, et aucune route ne crédite un portefeuille : le
-  registre a été éprouvé par ses tests — écritures simultanées comprises —, jamais par un
-  usage, ni sous charge.
+- **Deux opérations existent, toutes deux fermées.** Le transfert entre titulaires et
+  l'ajustement par le personnel écrivent dans le registre : il a été éprouvé par ses tests —
+  écritures simultanées comprises — et par le parcours de la CI, jamais par un usage, ni sous
+  charge.
 - **Aucun actif n'est enregistré**, et la liste à tenir n'est pas arrêtée (décision 12).
 - **Actifs : un enregistrement est immédiat, définitif, et l'affaire d'une seule
   personne.** Ni double validation, ni correction, ni retrait : un actif enregistré avec un
@@ -1434,12 +1758,14 @@ Grand livre :
   compte passent une à une ; or tout dépôt et tout retrait toucheront le compte de
   conservation de leur actif. À mesurer sous charge avant l'ouverture, et à répartir si
   nécessaire.
-- **Un compte qui détient des fonds ne se clôt pas, et le personnel n'a aucun moyen de les
-  en sortir.** Le titulaire peut les envoyer à un autre compte, si les transferts lui sont
-  ouverts ; sans effet tant qu'aucun compte n'en détient. La procédure de sortie devra
-  exister avant l'ouverture des dépôts.
-- **Le back-office lit, il ne corrige pas** : ni écriture manuelle, ni gel d'un
-  portefeuille. Il n'a pas d'écran (phase 7).
+- **Un compte qui détient des fonds ne se clôt pas.** Le titulaire les envoie à un autre
+  compte, si les transferts lui sont ouverts ; sinon le personnel les en sort par un débit
+  sous double validation — la plateforme les rend alors hors de l'API, et **rien ne vérifie
+  qu'elle l'a fait**. La procédure de sortie reste à écrire avant l'ouverture des dépôts.
+- **Le back-office ne corrige le registre que par un ajustement** : le crédit ou le débit
+  d'un portefeuille contre le compte de conservation, à deux. Il ne peut ni annuler une
+  écriture, ni en passer une entre deux comptes de la plateforme, ni toucher aux frais
+  perçus. Il n'a pas d'écran (phase 7).
 - **Pas de fonds réservés** : une opération a lieu entièrement, ou pas du tout. Ils
   viendront avec la première opération en plusieurs temps.
 - **Les écritures ne s'effacent jamais**, y compris après la clôture d'un compte et au-delà
@@ -1448,9 +1774,9 @@ Grand livre :
 
 Transferts entre titulaires :
 
-- **Rien n'a encore été transféré hors des tests.** Aucune route ne crédite un
-  portefeuille ; aucun plafond n'est fixé ; la fonctionnalité est fermée. Ni usage réel, ni
-  mesure sous charge.
+- **Rien n'a encore été transféré hors des tests et du parcours de la CI.** Aucun plafond
+  n'est fixé, la fonctionnalité est fermée, aucun portefeuille n'est crédité. Ni usage réel,
+  ni mesure sous charge.
 - **Aucune valeur de plafond n'est arrêtée** (décision 5), et un changement de plafonds est
   l'affaire d'une seule personne, sans double validation ; il prend effet aussitôt.
 - **Un transfert est définitif** : ni annulation, ni délai de rétractation, ni bénéficiaires
@@ -1458,8 +1784,8 @@ Transferts entre titulaires :
   ni corriger un transfert.
 - **Suspendre un destinataire n'arrête pas le transfert déjà en cours vers lui** : il
   aboutit, et les fonds restent sur le compte suspendu, qui ne peut plus rien envoyer. Les
-  transferts suivants sont refusés. Sortir ces fonds relève des opérations du personnel,
-  qui n'existent pas encore (lot 3 proposé).
+  transferts suivants sont refusés. Ces fonds en sortent par un débit sous double
+  validation (lot 3).
 - **Le second facteur n'est exigé que s'il est activé** — il reste facultatif pour un
   titulaire. Sans lui, le mot de passe suffit à envoyer des fonds, dans la limite des
   plafonds.
@@ -1484,6 +1810,40 @@ Transferts entre titulaires :
   ne doit y mettre qu'une valeur aléatoire.
 - **Les transferts d'un même émetteur passent un à un.** Sans conséquence pour un
   particulier ; à mesurer si un compte devait un jour en émettre beaucoup (un marchand).
+
+Opérations du personnel :
+
+- **Aucun ajustement n'a été passé hors des tests et du parcours de la CI.** La
+  fonctionnalité est fermée. Ni usage réel, ni mesure sous charge.
+- **Pas de rapprochement, pas de montant maximal, pas de pièce jointe.** Un crédit constate
+  ce que deux personnes déclarent ; sa justification est un texte, qui doit désigner la
+  pièce. La procédure qui fonde un ajustement n'est pas écrite (décision 15).
+- **La base ne ferme pas la liste des types d'écriture** : une écriture équilibrée d'un autre
+  type que ceux des ajustements, écrite dans la base avec les identifiants de l'API, crédite
+  un portefeuille sans double validation. Aucune route ne le permet ; à fermer au lot suivant
+  (voir « Problèmes identifiés »).
+- **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
+  les lui désigne, et c'est elle qui vérifie la preuve de l'approbateur. Qui écrirait dans la
+  base avec les identifiants de l'API pourrait fabriquer une demande et son approbation au
+  nom de deux administrateurs existants — en laissant une demande ineffaçable qu'ils n'ont
+  pas faite. Même limite que pour les changements de rôle.
+- **Seul `super_admin` prend part à un ajustement et lève un gel** ; il n'existe pas de rôle
+  « finance ». Il faut deux administrateurs, chacun avec la validation en deux étapes.
+  L'approbateur redonne son mot de passe et son second facteur ; l'auteur de la demande, non.
+- **Lever un gel est l'acte d'une seule personne**, sans double validation.
+- **Un gel se voit, vaut pour un seul actif, et arrête aussi ce qui arrive** : ni gel
+  discret, ni gel de tout un compte en une fois, ni gel des seules sorties. Le support ne
+  consulte pas les gels.
+- **Un gel et sa levée n'envoient aucun message.** Un ajustement en envoie un, **qui n'est
+  pas garanti** : sans serveur d'envoi, il ne part pas, et l'ajustement a lieu quand même.
+- **Une demande en attente ne retient pas la clôture du compte** : clôturé, il ne reçoit plus
+  rien, et la demande ne peut plus qu'être refusée, retirée, ou échoir.
+- **Les justifications sont conservées sans limite de durée**, y compris après la clôture du
+  compte ; le titulaire ne les lit jamais (décision 6).
+- **Après un gel, pas de retour à la version précédente de l'API** sans avoir levé les gels :
+  elle répondrait par une erreur serveur à tout transfert qui touche un portefeuille gelé.
+- **Pas d'écran** (phase 7) : demander, approuver, geler et lever se font par les routes de
+  l'API.
 
 Socle :
 
@@ -1537,7 +1897,9 @@ réalisées.
    délai de trente jours avant effacement, la durée de conservation du journal d'audit, les
    formalités auprès de l'autorité de contrôle, et la liste des pièces acceptées. Depuis le
    grand livre : les écritures comptables ne s'effacent jamais, et un compte clôturé qui en
-   a eu garde ses identifiants dix ans.
+   a eu garde ses identifiants dix ans. Depuis les opérations du personnel : les
+   justifications des ajustements et des gels — des textes libres, qui peuvent nommer une
+   personne — sont conservées sans limite de durée.
 7. **Examen des dossiers** : qui examine, avec quelle consigne écrite (quand accepter, quand
    refuser), et comment les fichiers reçus sont ouverts sans risque (analyse antivirus ou
    poste isolé).
@@ -1553,7 +1915,7 @@ réalisées.
     les pièces d'identité y sont désormais soumises.
 11. **Statut réglementaire visé en RDC** et calendrier des autorisations : il conditionne
     l'ordre d'ouverture des fonctionnalités — à commencer par le transfert entre
-    titulaires, livré fermé.
+    titulaires et les ajustements, livrés fermés.
 12. **Actifs à tenir** : quelles monnaies la plateforme tient-elle au lancement, et avec
     combien de décimales chacune ? L'enregistrement est définitif. À titre d'exemple : 2
     pour le franc congolais et le dollar, 8 pour le bitcoin ; pour un jeton, le nombre
@@ -1580,3 +1942,24 @@ réalisées.
     S'y ajoutent trois points que le code ne tranche pas : un transfert est **sans
     frais** ; il est **définitif**, sans délai de rétractation ; aucun **libellé** ne
     l'accompagne.
+
+15. **Ajustements et gels : une procédure à écrire, et huit choix à confirmer.** Avant toute
+    ouverture, à arrêter avec votre conseil : **ce qui fonde un ajustement** — quelle pièce,
+    quel rapprochement avec la banque ou l'opérateur, à partir de quel montant il faut
+    davantage — et **qui**, chez vous, demande, approuve, gèle et lève. Puis les huit choix
+    faits sans vous ; chacun se change sans reprendre le reste (ADR 0027) :
+    - la contrepartie d'un ajustement est toujours le **compte de conservation** : il
+      constate des fonds reçus ou rendus hors de l'API — ni geste commercial, ni écriture
+      contre les frais perçus ;
+    - **seul `super_admin`** prend part à un ajustement et lève un gel ; la conformité gèle ;
+      aucun rôle « finance » n'a été créé ;
+    - l'**approbateur** redonne son mot de passe et son second facteur ; l'auteur de la
+      demande, non ;
+    - **aucun montant maximal** ne borne un ajustement, et aucun niveau de vérification n'est
+      exigé du titulaire crédité ;
+    - le titulaire est **prévenu par e-mail d'un ajustement, pas d'un gel** ; il ne lit
+      jamais une justification ;
+    - un gel **se voit**, vaut pour **un actif**, arrête **aussi ce qui arrive** et retient
+      la clôture ; le lever est l'acte d'**une seule personne** ;
+    - une demande **échoit après 72 heures**, comme une demande de changement de rôle ;
+    - les ajustements sont **fermés par défaut** ; les gels, non : on gèle à tout moment.

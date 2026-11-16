@@ -84,8 +84,9 @@ portefeuille gelé ou d'un compte à clôturer. Les ajustements sont **fermés p
   double validation, il lui faut un second administrateur (`SECOND_ADMIN_EMAIL`,
   `SECOND_ADMIN_PASSWORD`) ; sous GitHub Actions, il le crée lui-même, et échoue s'il n'en
   a pas — ailleurs, il saute la double validation et le dit. Il inscrit désormais
-  **deux comptes par exécution** — le second reçoit le transfert : sur une pile conservée,
-  l'inscription étant limitée à dix par heure et par adresse, il ne se rejoue que cinq fois
+  **deux comptes par exécution** — le second reçoit le transfert —, soit trois requêtes
+  d'inscription avec celle qui doit être refusée : sur une pile conservée, la route en
+  admettant dix par heure et par adresse, refusées ou non, il ne se rejoue que trois fois
   par heure.
 
 ### Non réalisé
