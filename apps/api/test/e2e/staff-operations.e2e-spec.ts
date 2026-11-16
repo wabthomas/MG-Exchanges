@@ -397,6 +397,30 @@ describe('Opérations du personnel — bout en bout', () => {
           }).toEqual({ route, code: 'FORBIDDEN' });
         }
       }
+      // Chaque refus vient du contrôle d'accès de la route, qui l'inscrit au journal avec la
+      // permission manquante : la base, qui vérifie les mêmes, n'a pas eu à refuser. L'agent du
+      // support détient « users.read » : aucune de ces routes ne s'en contente.
+      const required = [
+        'adjustments.read',
+        'adjustments.request',
+        'adjustments.read',
+        'adjustments.approve',
+        'adjustments.approve',
+        'adjustments.request',
+        'wallet_freezes.read',
+        'wallet_freezes.create',
+        'wallet_freezes.lift',
+      ];
+      expect(
+        (await auditBy(support.id, 'authorization.denied'))
+          .slice(-routes.length)
+          .map(({ resourceId, metadata }) => ({ resourceId, metadata })),
+      ).toEqual(
+        routes.map(([method, path], index) => ({
+          resourceId: `${method.toUpperCase()} /api/v1${path}`,
+          metadata: { missingPermissions: [required[index]] },
+        })),
+      );
       expect(await written()).toEqual(before);
       expect(
         (await prisma.ledgerAdjustment.findUniqueOrThrow({ where: { id: pending.id } })).status,
@@ -587,9 +611,22 @@ describe('Opérations du personnel — bout en bout', () => {
         ['refuser sans motif', `/admin/ledger/adjustments/${id}/reject`, {}, ['note']],
         ['refuser d’un mot', `/admin/ledger/adjustments/${id}/reject`, { note: 'non' }, ['note']],
         [
-          'un identifiant mal formé',
+          'refuser un identifiant mal formé',
           `/admin/ledger/adjustments/pas-un-identifiant/reject`,
           { note: NOTE },
+          [''],
+        ],
+        // Avant même la preuve de l'approbateur : rien n'est examiné, aucun code n'est consommé.
+        [
+          'approuver un identifiant mal formé',
+          `/admin/ledger/adjustments/pas-un-identifiant/approve`,
+          { currentPassword: second.password, code: '123456' },
+          [''],
+        ],
+        [
+          'retirer un identifiant mal formé',
+          `/admin/ledger/adjustments/pas-un-identifiant/cancel`,
+          undefined,
           [''],
         ],
         [
@@ -632,6 +669,7 @@ describe('Opérations du personnel — bout en bout', () => {
         });
       }
       for (const query of [
+        '/admin/ledger/adjustments/pas-un-identifiant',
         '/admin/ledger/adjustments?status=pending',
         '/admin/ledger/adjustments?userId=alice',
         '/admin/ledger/adjustments?limit=0',

@@ -14,6 +14,7 @@ import { AccountMaintenanceService } from '../../src/modules/identity/applicatio
 import { ActivityService } from '../../src/modules/identity/application/activity.service.js';
 import type { StaffActor } from '../../src/modules/identity/application/admin-users.service.js';
 import { PasswordHasher } from '../../src/modules/identity/application/password-hasher.js';
+import { UserRepository } from '../../src/modules/identity/application/user.repository.js';
 import { LedgerAccountData } from '../../src/modules/ledger/application/ledger-account-data.js';
 import { LedgerReader } from '../../src/modules/ledger/application/ledger-reader.js';
 import { LedgerService } from '../../src/modules/ledger/application/ledger.service.js';
@@ -478,6 +479,29 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
       // Décidée, elle ne s'oppose plus à une demande identique.
       await adjustments.cancel(first.id, actorOf(root));
       expect((await request(holder, 'CREDIT', '25.00')).status).toBe('PENDING');
+    });
+
+    it('un compte clôturé à l’instant où la demande s’écrit : la base la refuse, et c’est dit', async () => {
+      const holder = await member();
+      const before = await written();
+      // Le compte est actif quand le service le lit, clôturé quand la demande s'écrit : la
+      // clôture est glissée entre les deux, juste avant l'écriture.
+      const closing = jest.spyOn(adjustments, 'closeOverdue').mockImplementationOnce(async () => {
+        await testApp.app
+          .get(AccountClosureService)
+          .closeOwn(authOf(holder), { currentPassword: PASSWORD, confirm: true }, clientOf());
+        return 0;
+      });
+      try {
+        expect(await refusalOf(() => request(holder, 'CREDIT', '5.00'))).toEqual(CLOSED_ACCOUNT);
+        expect(closing).toHaveBeenCalledTimes(1);
+      } finally {
+        closing.mockRestore();
+      }
+      expect((await prisma.user.findUniqueOrThrow({ where: { id: holder.id } })).status).toBe(
+        'CLOSED',
+      );
+      expect(await written()).toEqual(before);
     });
 
     it('la base refuse la demande de qui n’en a pas le droit, même si l’appelant l’a laissée passer', async () => {
@@ -1032,6 +1056,47 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
       expect(await balanceOf(holder)).toBe(1_100n);
     });
 
+    it('une demande échue est close par ce qui la rencontre en premier : une liste, une demande identique, une décision', async () => {
+      const holder = await member();
+      /** Une demande de crédit dont l'échéance est passée depuis une heure — et que rien n'a relue. */
+      const overdue = async (amount: string): Promise<string> => {
+        const { id } = await request(holder, 'CREDIT', amount);
+        await asOwner((owner) => ageAdjustment(owner, id, '73 hours'));
+        return id;
+      };
+
+      // Une liste : elle n'y figure pas « en attente ».
+      const listed = await overdue('10.00');
+      const pending = await adjustments.list(
+        { status: 'PENDING', userId: holder.id, limit: 20 },
+        actorOf(second),
+      );
+      expect(pending.adjustments).toEqual([]);
+      expect(await statusOf(listed)).toBe('EXPIRED');
+
+      // Une demande identique : l'ancienne, échue, ne lui fait pas obstacle.
+      const replaced = await overdue('11.00');
+      const again = await request(holder, 'CREDIT', '11.00');
+      expect(again.status).toBe('PENDING');
+      expect(await statusOf(replaced)).toBe('EXPIRED');
+
+      // Une décision — approuver, refuser, retirer : la demande est échue, et le reste.
+      const decisions: [string, (id: string) => Promise<unknown>][] = [
+        ['approuver', (id) => approve(id)],
+        ['refuser', (id) => adjustments.reject(id, { note: NOTE }, actorOf(second))],
+        ['retirer', (id) => adjustments.cancel(id, actorOf(root))],
+      ];
+      for (const [label, decide] of decisions) {
+        const id = await overdue('12.00');
+        expect({ label, refusal: await refusalOf(() => decide(id)) }).toEqual({
+          label,
+          refusal: NO_LONGER_PENDING('expired'),
+        });
+        expect({ label, status: await statusOf(id) }).toEqual({ label, status: 'EXPIRED' });
+      }
+      expect(await balanceOf(holder)).toBe(0n);
+    });
+
     it('la maintenance périodique clôt les demandes échues, et elles seules', async () => {
       const holder = await member();
       await adjustments.closeOverdue();
@@ -1196,6 +1261,19 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
       expect([received(root).length, received(second).length]).toEqual(staffBefore);
     });
 
+    it('le message porte l’heure de la décision, non celle de la demande', async () => {
+      const holder = await member();
+      const { id } = await request(holder, 'CREDIT', '5.00');
+      // Demandé il y a vingt-six heures, approuvé à l'instant.
+      await asOwner((owner) => ageAdjustment(owner, id, '26 hours'));
+      const approved = await approve(id);
+      const message = await nextMessageOf(testApp, holder.email, 'wallet_adjusted');
+      const shown = (iso: string): string => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+      expect(shown(approved.requestedAt)).not.toBe(shown(approved.decidedAt!));
+      expect(message.text).toContain(`Date : ${shown(approved.decidedAt!)}`);
+      expect(message.text).not.toContain(shown(approved.requestedAt));
+    });
+
     it('une demande refusée, retirée ou échue ne prévient personne', async () => {
       const holder = await member('10.00');
       const rejected = await request(holder, 'CREDIT', '1.00');
@@ -1227,8 +1305,19 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
         metadata: {},
         occurredAt: new Date().toISOString(),
       });
-      await dispatcher.handle(envelope({ adjustmentId: UNKNOWN_ID }));
-      await dispatcher.handle(envelope({ adjustmentId: pending.id }));
+      const rejected = await request(holder, 'CREDIT', '2.00');
+      await adjustments.reject(rejected.id, { note: NOTE }, actorOf(second));
+      const cancelled = await request(holder, 'CREDIT', '3.00');
+      await adjustments.cancel(cancelled.id, actorOf(root));
+      const expired = await request(holder, 'CREDIT', '4.00');
+      await asOwner((owner) => ageAdjustment(owner, expired.id, '73 hours'));
+      await adjustments.closeOverdue();
+      expect(await statusOf(expired.id)).toBe('EXPIRED');
+
+      // Inconnu, en attente, refusé, retiré, échu : rien n'a été passé, rien n'est annoncé.
+      for (const id of [UNKNOWN_ID, pending.id, rejected.id, cancelled.id, expired.id]) {
+        await dispatcher.handle(envelope({ adjustmentId: id }));
+      }
       expect(received(holder)).toEqual([]);
       await expect(dispatcher.handle(envelope({}))).rejects.toThrow();
       await expect(dispatcher.handle(envelope({ adjustmentId: 'not-an-id' }))).rejects.toThrow();
@@ -1426,6 +1515,32 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
       // Un compte suspendu garde ses portefeuilles : ils se gèlent.
       const suspended = await member('5.00', { status: 'SUSPENDED' });
       expect((await freeze(suspended)).status).toBe('ACTIVE');
+    });
+
+    it('un compte clôturé à l’instant où le gel s’écrit : la base le refuse, et c’est dit', async () => {
+      const holder = await member();
+      const users = testApp.app.get(UserRepository);
+      const read = users.findById.bind(users);
+      // Le compte est actif quand le service le lit, clôturé quand le gel s'écrit : la clôture
+      // est glissée juste après cette lecture.
+      let closed = false;
+      const reading = jest.spyOn(users, 'findById').mockImplementation(async (db, userId) => {
+        const found = await read(db, userId);
+        if (userId === holder.id && !closed) {
+          closed = true;
+          await testApp.app
+            .get(AccountClosureService)
+            .closeOwn(authOf(holder), { currentPassword: PASSWORD, confirm: true }, clientOf());
+        }
+        return found;
+      });
+      try {
+        expect(await refusalOf(() => freeze(holder))).toEqual(CLOSED_ACCOUNT);
+      } finally {
+        reading.mockRestore();
+      }
+      expect(closed).toBe(true);
+      expect(await prisma.walletFreeze.count({ where: { userId: holder.id } })).toBe(0);
     });
 
     it('un portefeuille ne se gèle pas deux fois ; la base refuse le gel de qui n’en a pas le droit', async () => {

@@ -369,14 +369,20 @@ describe('Opérations du personnel — règles portées par la base de données'
           }).toEqual({ status, outcome: expect.stringMatching(CREATED_PENDING) });
         }
         // En attente, mais déjà pourvue d'une décision ou d'une écriture : la forme le refuse.
-        for (const columns of [
-          { decided_by: second },
-          { decision_note: 'Note' },
-          { decided_at: new Date() },
-        ]) {
-          expect(await refusal(db, () => requested(db, holder, columns))).toMatch(
-            CHECK('ledger_adjustments_decision_check'),
-          );
+        const earlier = await deposit(db, holder.account, 100);
+        for (const [label, columns] of [
+          ['auteur', { decided_by: second }],
+          ['note', { decision_note: 'Note' }],
+          ['heure', { decided_at: new Date() }],
+          ['écriture', { entry_id: earlier }],
+        ] as const) {
+          expect({
+            label,
+            outcome: await refusal(db, () => requested(db, holder, columns)),
+          }).toEqual({
+            label,
+            outcome: expect.stringMatching(CHECK('ledger_adjustments_decision_check')),
+          });
         }
       });
     });
@@ -526,6 +532,7 @@ describe('Opérations du personnel — règles portées par la base de données'
 
         // En attente : ni ses termes ne se retouchent, ni elle ne se réécrit sans décision.
         const terms: [string, Record<string, unknown>][] = [
+          ['identifiant', { id: UNKNOWN_ID }],
           ['titulaire', { user_id: other.user }],
           ['actif', { asset_code: 'CDF' }],
           ['sens', { direction: 'DEBIT' }],
@@ -723,6 +730,13 @@ describe('Opérations du personnel — règles portées par la base de données'
             updateAdjustment(db, id, { status: 'EXPIRED', decided_by: second }),
           ),
         ).toMatch(CHECK('ledger_adjustments_decision_check'));
+        // Et une échéance ne désigne aucune écriture.
+        const earlier = await deposit(db, holder.account, 100);
+        expect(
+          await refusal(db, () =>
+            updateAdjustment(db, id, { status: 'EXPIRED', entry_id: earlier }),
+          ),
+        ).toMatch(CHECK('ledger_adjustments_decision_check'));
         // Échue, elle ne s'approuve plus — même par qui en a le droit, avec la bonne écriture.
         expect(await refusal(db, () => writeApproval(db, id, second, entryOf(holder)))).toMatch(
           EXPIRED,
@@ -815,6 +829,108 @@ describe('Opérations du personnel — règles portées par la base de données'
         expect(
           await refusal(owner, () => writeApproval(owner, id, admin, entryOf(holder))),
         ).toMatch(CHECK('ledger_adjustments_four_eyes_check'));
+      });
+    });
+
+    it('demander n’habilite pas à décider, ni décider à demander', async () => {
+      await asOwner(async (db) => {
+        const requester = await insertUser(db);
+        const colleague = await insertUser(db);
+        const approver = await insertUser(db);
+        const holder = await holderWith(db);
+        // Deux rôles qui ne détiennent chacun qu'une des deux permissions — aucun rôle livré
+        // n'est dans ce cas — le temps d'une transaction annulée.
+        await db.query('BEGIN');
+        try {
+          const grant = async (
+            key: string,
+            permission: string,
+            members: readonly string[],
+          ): Promise<void> => {
+            const { rows } = await db.query<{ id: string }>(
+              `INSERT INTO roles (key, name, description)
+               VALUES ($1, $1, 'Holds a single permission.') RETURNING id`,
+              [key],
+            );
+            const role = rows[0]!.id;
+            await db.query(
+              `INSERT INTO role_permissions (role_id, permission_key) VALUES ($1, $2)`,
+              [role, permission],
+            );
+            for (const member of members) {
+              await db.query(`INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)`, [
+                member,
+                role,
+              ]);
+            }
+          };
+          await grant('adjustment_requester', 'adjustments.request', [requester, colleague]);
+          await grant('adjustment_approver', 'adjustments.approve', [approver]);
+          const outcome = async (work: () => Promise<unknown>): Promise<string | undefined> => {
+            await db.query('SAVEPOINT attempted');
+            const result = await failure(work);
+            await db.query('ROLLBACK TO SAVEPOINT attempted');
+            return result;
+          };
+
+          // Qui ne peut qu'approuver ne dépose pas de demande.
+          expect(await outcome(() => requested(db, holder, { requested_by: approver }))).toMatch(
+            NOT_ENTITLED_TO_REQUEST,
+          );
+          const id = await requested(db, holder, { requested_by: requester });
+          const rejection = (decider: string): Promise<void> =>
+            updateAdjustment(db, id, {
+              status: 'REJECTED',
+              decided_by: decider,
+              decision_note: 'Refusée',
+            });
+          // Qui ne peut que demander ne décide pas — ni approbation, ni refus —, fût-il un
+          // autre que l'auteur.
+          expect(await outcome(() => writeApproval(db, id, colleague, entryOf(holder)))).toMatch(
+            NOT_ENTITLED_TO_DECIDE,
+          );
+          expect(await outcome(() => rejection(colleague))).toMatch(NOT_ENTITLED_TO_DECIDE);
+          // Chacun dans son rôle : la demande de l'un est approuvée, ou refusée, par l'autre.
+          expect(
+            await outcome(async () => {
+              await writeApproval(db, id, approver, entryOf(holder));
+              await db.query('SET CONSTRAINTS ALL IMMEDIATE');
+            }),
+          ).toBeUndefined();
+          expect(await outcome(() => rejection(approver))).toBeUndefined();
+        } finally {
+          await db.query('ROLLBACK');
+        }
+      });
+    });
+
+    it('l’heure de la demande et celle de la décision sont lues à l’instant, non à l’ouverture de la transaction', async () => {
+      await asApp(async (db) => {
+        const holder = await holderWith(db);
+        // Une transaction qui dure : cinquante millisecondes avant la demande, autant avant la
+        // décision. Ni l'une ni l'autre n'est datée de son ouverture : l'échéance court depuis
+        // l'instant du dépôt, et se vérifie à l'instant de la décision.
+        await db.query('BEGIN');
+        try {
+          await db.query('SELECT pg_sleep(0.05)');
+          const id = await requested(db, holder);
+          await db.query('SELECT pg_sleep(0.05)');
+          await updateAdjustment(db, id, {
+            status: 'REJECTED',
+            decided_by: second,
+            decision_note: 'Refusée',
+          });
+          const { rows } = await db.query<{ requested_late: boolean; decided_late: boolean }>(
+            `SELECT requested_at >= transaction_timestamp() + INTERVAL '50 milliseconds'
+                      AS requested_late,
+                    decided_at >= requested_at + INTERVAL '50 milliseconds' AS decided_late
+             FROM ledger_adjustments WHERE id = $1`,
+            [id],
+          );
+          expect(rows).toEqual([{ requested_late: true, decided_late: true }]);
+        } finally {
+          await db.query('ROLLBACK');
+        }
       });
     });
 
@@ -1043,6 +1159,38 @@ describe('Opérations du personnel — règles portées par la base de données'
         expect((await adjustmentRow(db, id)).status).toBe('PENDING');
         expect((await adjustmentRow(db, debit)).status).toBe('PENDING');
         expect(await accountState(db, holder.account)).toEqual({ balance: '600', postings: '2' });
+      });
+    });
+
+    it('la ligne du titulaire passe sur ses fonds disponibles, non sur un autre de ses comptes', async () => {
+      await asOwner(async (db) => {
+        const holder = await holderWith(db);
+        // Le plan de comptes ne connaît encore qu'un type de compte de titulaire. Un second, le
+        // temps d'une transaction annulée : la vérification de fin de transaction y est
+        // demandée sans attendre (SET CONSTRAINTS).
+        await db.query('BEGIN');
+        try {
+          await db.query(
+            `INSERT INTO ledger_account_types (key, owner, normal_side, description)
+             VALUES ('user_reserved', 'USER', 'CREDIT', 'Funds set aside.')`,
+          );
+          const reserved = await openLedgerAccount(db, 'user_reserved', 'USD', holder.user);
+          const id = await requested(db, holder);
+          const approvedOn = async (account: string): Promise<string | undefined> => {
+            await db.query('SAVEPOINT checked');
+            const outcome = await failure(async () => {
+              await writeApproval(db, id, second, { ...entryOf(holder), holderAccount: account });
+              await db.query('SET CONSTRAINTS ALL IMMEDIATE');
+            });
+            await db.query('ROLLBACK TO SAVEPOINT checked');
+            return outcome;
+          };
+          expect(await approvedOn(reserved)).toMatch(NOT_ITS_ENTRY);
+          // Témoin : la même vérification immédiate admet l'écriture sur ses fonds disponibles.
+          expect(await approvedOn(holder.account)).toBeUndefined();
+        } finally {
+          await db.query('ROLLBACK');
+        }
       });
     });
 
@@ -1403,12 +1551,36 @@ describe('Opérations du personnel — règles portées par la base de données'
       });
     });
 
+    it('l’heure du gel et celle de sa levée sont lues à l’instant, non à l’ouverture de la transaction', async () => {
+      await asApp(async (db) => {
+        const holder = await insertUser(db);
+        await db.query('BEGIN');
+        try {
+          await db.query('SELECT pg_sleep(0.05)');
+          const id = await frozen(db, holder);
+          await db.query('SELECT pg_sleep(0.05)');
+          await liftFreezeInSql(db, id, second);
+          const { rows } = await db.query<{ frozen_late: boolean; lifted_late: boolean }>(
+            `SELECT frozen_at >= transaction_timestamp() + INTERVAL '50 milliseconds'
+                      AS frozen_late,
+                    lifted_at >= frozen_at + INTERVAL '50 milliseconds' AS lifted_late
+             FROM wallet_freezes WHERE id = $1`,
+            [id],
+          );
+          expect(rows).toEqual([{ frozen_late: true, lifted_late: true }]);
+        } finally {
+          await db.query('ROLLBACK');
+        }
+      });
+    });
+
     it('les termes d’un gel ne changent jamais ; levé, il ne change plus ; il ne s’efface pas', async () => {
       const id = await asApp(async (db) => {
         const holder = await insertUser(db);
         const other = await insertUser(db);
         const created = await frozen(db, holder);
         const terms: [string, Record<string, unknown>][] = [
+          ['identifiant', { id: UNKNOWN_ID }],
           ['titulaire', { user_id: other }],
           ['actif', { asset_code: 'CDF' }],
           ['raison', { reason: 'Une autre raison, écrite après coup' }],
@@ -1635,6 +1807,10 @@ describe('Opérations du personnel — règles portées par la base de données'
             // L'écriture n'est pas validée : le gel attend.
             const freezing = freezeOf(freezer, holder.user);
             await untilBlocked(observer);
+            // L'instant où l'écriture va être validée, à la microseconde : le gel attend déjà.
+            const validated = await writer.query<{ at: string }>(
+              `SELECT clock_timestamp()::text AS at`,
+            );
             await writer.query('COMMIT');
             const freezeId = await freezing;
 
@@ -1642,16 +1818,18 @@ describe('Opérations du personnel — règles portées par la base de données'
               balance: '40',
               postings: '2',
             });
-            // Le gel est daté d'après l'écriture qu'il a attendue.
-            const { rows } = await observer.query<{ after: boolean }>(
-              `SELECT f.frozen_at >= e.posted_at AS after
+            // Le gel est daté d'après l'écriture qu'il a attendue : de l'instant où il a obtenu
+            // ses verrous, non de celui où il a été demandé.
+            const { rows } = await observer.query<{ after: boolean; after_validation: boolean }>(
+              `SELECT f.frozen_at >= e.posted_at AS after,
+                      f.frozen_at > $3::timestamptz AS after_validation
                FROM wallet_freezes f, ledger_entries e
                WHERE f.id = $1 AND e.id = (
                  SELECT entry_id FROM ledger_postings WHERE account_id = $2
                  ORDER BY account_sequence DESC LIMIT 1)`,
-              [freezeId, holder.account],
+              [freezeId, holder.account, validated.rows[0]!.at],
             );
-            expect(rows).toEqual([{ after: true }]);
+            expect(rows).toEqual([{ after: true, after_validation: true }]);
             expect(await refusal(observer, () => debitOf(observer, holder, 10))).toMatch(
               WALLET_FROZEN(),
             );
