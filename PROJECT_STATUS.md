@@ -1,6 +1,6 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-16 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés ; intégration continue active._
+_Dernière mise à jour : 2026-11-17 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés ; intégration continue active._
 
 ## Synthèse
 
@@ -364,7 +364,8 @@ Décision : ADR 0026.
   directement dans le grand livre ;
 - **un transfert est définitif** : ni annulation, ni délai de rétractation, ni liste de
   bénéficiaires. Des fonds envoyés à une mauvaise adresse — si elle a un compte — ne
-  reviennent que si le destinataire les renvoie ;
+  reviennent que si le destinataire les renvoie ou, depuis le lot 3, si votre équipe les lui
+  débite et les recrédite à l'émetteur, par deux ajustements sous double validation ;
 - **le mot de passe suffit lorsque le compte n'a pas activé la validation en deux étapes**,
   qui reste facultative pour un titulaire. Qui connaît le mot de passe d'un tel compte peut
   en envoyer les fonds, dans la limite des plafonds. Exiger le second facteur pour
@@ -489,6 +490,11 @@ répondre proprement à un transfert qui le touche.
 
 À confirmer par vous — rien n'en est commencé :
 
+- **En tête du prochain lot — deux retouches du socle**, relevées par le contrôle des tests
+  de ce lot (« Problèmes identifiés », points 9 et 10) : répondre `503`, avec le délai avant
+  de réessayer, lorsque la base est saturée, au lieu de `500` ; faire passer par les journaux
+  structurés les erreurs des files de tâches de fond. Courtes l'une et l'autre ; la première
+  change une réponse de l'API.
 - **Lot 4 — fermer, dans la base, l'entrée des fonds.** Aujourd'hui, la base exige d'une
   écriture d'ajustement qu'elle ait son ajustement approuvé, mais elle accepte une écriture
   équilibrée d'un autre type (voir « Problèmes identifiés »). Le lot ferait de toute ligne
@@ -528,6 +534,15 @@ Exécution du 2026-11-16 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | API — unitaires           | 605   | —                                               |
 | API — intégration         | 657   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 | API — bout en bout (HTTP) | 604   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+
+Les 1 261 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
+d'une transaction est retardée de 25 ms. Cette répétition « disque lent » a été ajoutée après
+le lot 3 de la phase 3 : le PostgreSQL de l'environnement de développement valide sans
+attendre le disque, à la différence de celui de la CI et d'une installation réelle, et un
+test qui dépendait de cette durée a échoué une fois dans la CI. À 100 ms, bien au-delà de ce
+que demande un disque en bon état, tous passent sauf un, qui lance 72 transferts à la fois :
+la base ne suit plus, et l'API répondrait alors `500` (voir « Problèmes identifiés »,
+points 8 et 9).
 
 Ce que ces tests établissent, notamment :
 
@@ -1036,10 +1051,11 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   passé pour une détection ordinaire. Après cette passe, les cinq parcours de ce genre que
   comptent les tests ont été bornés, et dix défauts qui faussent le passage d'une page à la
   suivante, relancés : chacun fait échouer une vérification, en moins de deux secondes (voir
-  « Problèmes identifiés »). **Ce point n'a pas été examiné pour les 889 défauts de la
-  phase 2**, dont les sorties n'étaient pas conservées : on sait que chacun fait échouer un
-  test, pas si c'est toujours par une vérification. L'outil conserve désormais toutes les
-  sorties ; celles-là seront examinées au prochain rejeu.
+  « Problèmes identifiés »). Ce point n'avait pas été examiné alors pour les 889 défauts de
+  la phase 2, dont les sorties n'étaient pas conservées : on savait que chacun fait échouer
+  un test, pas si c'est toujours par une vérification. Il l'a été au rejeu suivant, après le
+  lot 3, l'outil conservant désormais toutes les sorties : **quatre défauts de la phase 2
+  étaient dans ce cas** (ci-dessous).
 
 - Phase 3, lot 3 : 359 défauts — 151 dans les règles SQL des ajustements et des gels, 208
   dans le code (règles du domaine, services des ajustements et des gels, lecture et écriture
@@ -1093,14 +1109,40 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   permissions manquent à la première. Le même défaut, placé dans la migration des opérations
   du personnel, est détecté : il compte parmi les 359. Les transferts gardent 337 défauts
   rejouables.
-- **Lots précédents après ce lot : rejeu en cours, résultat à consigner ici.** Ce lot modifie
-  le grand livre, les transferts, les portefeuilles, la clôture, la copie des données, le
-  catalogue des permissions et plusieurs de leurs tests. Les 1 904 défauts rejouables par
-  script — 31, 107, 226, 249 et 276 pour les lots 1 à 5 de la phase 2, 319 pour le grand
-  livre, 337 pour les transferts, 359 pour ce lot — sont rejoués d'une traite sur le code
-  livré (commit `69a8ca5`) ; ce rejeu dure plus de cinq heures et n'était pas achevé à
-  l'écriture de ces lignes. Les sorties des 889 défauts de la phase 2 y sont conservées, pour
-  l'examen promis au lot précédent.
+- Lots précédents après ce lot, qui modifie le grand livre, les transferts, les
+  portefeuilles, la clôture, la copie des données, le catalogue des permissions et plusieurs
+  de leurs tests. Les 1 904 défauts rejouables par script — 31, 107, 226, 249 et 276 pour les
+  lots 1 à 5 de la phase 2, 319 pour le grand livre, 337 pour les transferts, 359 pour ce lot
+  — ont été rejoués d'une traite sur le code livré (commit `69a8ca5`), en quatre heures trois
+  quarts : **tous sont détectés**, sans qu'aucune exécution ait dû être interrompue.
+
+  Douze d'entre eux font échouer d'un coup tous les tests d'un fichier — les mêmes qu'au lot
+  précédent : quatre des transferts, trois du grand livre, cinq de l'outil qui publie les
+  conditions d'utilisation. Les sept premiers ont été rejoués à part, contre les seuls tests
+  qui visent la règle : chacun y est détecté. Pour l'outil de publication, les scénarios
+  s'enchaînent : le premier échoue seul, pour la raison visée, et entraîne les suivants.
+  Vingt-cinq autres font échouer la moitié au moins des tests d'un fichier ; la première
+  erreur de chacun a été lue : toutes sont l'effet du défaut lui-même, aucun ne met les tests
+  en échec sans éprouver de règle, comme celui qu'il a fallu réécrire plus haut. L'un d'eux
+  était pourtant trop grossier, et a été réécrit lui aussi : pour éprouver que les contrôles
+  d'un dossier sont refaits au jour du dépôt, il les refaisait « au 1er janvier 1970 » ; tout
+  dossier était alors refusé, et 29 tests échouaient faute de pouvoir rien déposer. Il ignore
+  maintenant le résultat de ces contrôles, et seuls échouent les deux tests qui laissent
+  passer le temps entre l'enregistrement d'un dossier et son dépôt.
+
+  **Quatre défauts de la phase 2 faisaient échouer leurs tests par le délai accordé à chaque
+  test, et non par une vérification** — c'est l'examen promis au lot précédent, fait sur les
+  sorties des 889 défauts de la phase 2, conservées pour la première fois. Trois touchent la
+  lecture du corps d'une requête : un corps trop grand rendu au lieu d'être refusé, aucun
+  délai de réception, la connexion gardée après un refus. Le serveur ne répondait plus, ou ne
+  fermait pas la connexion ; le test bornait bien son attente, mais à huit secondes, quand un
+  test unitaire en a cinq — sa propre vérification ne pouvait jamais parler. Le quatrième
+  touche la clôture d'un compte : un verrou trop fort faisait attendre sans fin une
+  modification qui ne doit pas attendre, jusqu'aux trente secondes du test. Pour trois des
+  quatre, c'était la seule détection. Les deux attentes sont maintenant bornées à trois
+  secondes (commit `a77b3af`) ; les onze défauts de la lecture du corps et celui du verrou,
+  relancés, font chacun échouer une vérification. **Plus aucun des 1 904 défauts n'est
+  détecté par un test resté bloqué** (voir « Problèmes identifiés »).
 
 ## Infrastructure : vérifications hors Docker
 
@@ -1118,6 +1160,7 @@ Docker (section suivante) :
 | Parcours d'identité de la CI        | Le script `infrastructure/ci/smoke-identity.sh` a été exécuté à travers ce Nginx : administrateur créé en ligne de commande, back-office refusé sans second facteur, activation du second facteur, ouverture de l'inscription, inscription, vérification, connexion, profil, historique, connexion en deux temps, recherche d'un compte et fermeture de ses sessions depuis le back-office. Depuis le lot 3 : vérification d'identité complète (déclaration, pièces, dépôt, examen, téléchargement d'une pièce de 5 Mio identique à l'octet près, acceptation, profil vérifié), puis contrôle du stockage par `check-kyc-storage.sh` sous l'utilisateur `node` — deux fichiers chiffrés, illisibles par un autre utilisateur. Depuis le lot 4 : copie des données (mot de passe redemandé, numéro de la pièce absent), clôture (confirmation exigée), connexion refusée ensuite, avis reçu à l'ancienne adresse, compte retrouvé par le back-office, dossier conservé. Depuis le lot 5 : inscription impossible tant qu'aucune version des conditions n'est publiée ; publication d'un texte de 185 Ko par le back-office, relu à l'octet près à travers le proxy ; inscription liée à la version en vigueur ; nouvelle version à accepter — compte arrêté, version dépassée refusée, acceptation, reprise ; acceptations dans la copie des données. Depuis le lot 1 de la phase 3 : enregistrement d'un actif — refusé à un titulaire, accepté une fois —, portefeuille à zéro et sans mouvement, aucun compte ouvert au grand livre, balance équilibrée, copie des données au nouveau format. Depuis le lot 2 de la phase 3 : ouverture des transferts ; rien ne part sans plafonds ; plafonds fixés au back-office — refusés à un titulaire, dans le désordre, ou plus précis que l'actif —, relus par le titulaire ; demandes refusées sans clé d'idempotence, sans le bon mot de passe, au-delà du plafond, au-delà du solde ; aucun transfert, aucun compte ouvert au grand livre ; refus visibles dans l'historique ; copie des données au format 4. Depuis le lot 3 de la phase 3 : ajustements fermés, puis ouverts ; crédit demandé par l'administrateur — qui ne peut pas l'approuver lui-même —, approuvé par un second administrateur avec son mot de passe et son second facteur ; e-mail au titulaire, sans la justification ; un second compte inscrit pour recevoir ; **un transfert mené à son terme**, renvoyé sous la même clé sans être fait deux fois ; portefeuille gelé — rien n'en part, le compte ne se clôt pas — ; débit sous double validation, les rôles inversés ; gel levé ; copie des données au format 5. Le second administrateur est créé par le parcours lui-même, par la commande `docker compose` du flux — exécutée ici par une commande `docker` factice, qui lance l'outil sur place. 259 contrôles dans le parcours ; 226 sans second administrateur, hors GitHub Actions — la double validation, le transfert abouti et le débit sont alors sautés. Puis `infrastructure/ci/publish-terms-cli.sh` est exécuté tel quel, l'outil de publication étant lancé sur place, depuis l'arborescence de l'image de migration, au lieu de l'être par `docker compose run` : numéro inexact refusé, version suivante publiée, texte servi par Nginx comparé au fichier. | Exécution dans la pile Docker                                                                                                                                                                                                                                                                                                                                  |
 | Workflow de CI                      | Les commandes du job `verify` et les étapes de test du job `docker` sont exécutées ici avant chaque livraison ; l'étape qui lit les journaux du conteneur Nginx l'est par son équivalent, sur le journal d'erreurs de Nginx. **Le workflow lui-même s'exécute sur GitHub depuis le 2026-11-13.** Les actions sont épinglées sur des empreintes vérifiées.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | **Toute exécution par GitHub** (voir ci-dessous)                                                                                                                                                                                                                                                                                                               |
 | Moteur de migration natif de Prisma | Téléchargement bloqué ici : les migrations sont créées et appliquées avec la **version WebAssembly officielle du même moteur** (même révision). **Le moteur natif les applique dans la CI** (tests, conteneur de migration de la pile Compose, contrôle de dérive).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Exécution par la CI                                                                                                                                                                                                                                                                                                                                            |
+| PostgreSQL de développement         | Version 18.6, **réglée pour la vitesse : une transaction y est validée sans attendre le disque** (`fsync` et `synchronous_commit` désactivés). Une course qui dépend de la durée d'une validation ne peut donc pas y apparaître d'elle-même. Depuis le lot 3 de la phase 3, une répétition « disque lent » retarde chaque validation à la demande : les 1 261 tests d'intégration et de bout en bout passent ainsi retardés de 25 ms ; à 100 ms, un seul échoue, la base ne suivant plus (« Problèmes identifiés », point 9).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | La CI exécute les mêmes tests sur un PostgreSQL 18.7 qui attend le disque : c'est elle qui a montré la seule course de ce genre (« Problèmes identifiés »).                                                                                                                                                                                                    |
 | Images Docker                       | Les étiquettes `postgres:18-bookworm`, `redis:8-alpine`, `nginx:1.30-alpine` et `node:24-bookworm-slim` existent dans le registre des images officielles ; la CI les télécharge et les exécute.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | —                                                                                                                                                                                                                                                                                                                                                              |
 | Node.js 22 et 26                    | Non vérifiés. Seul Node.js 24.22.2 l'a été.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | —                                                                                                                                                                                                                                                                                                                                                              |
 
@@ -1158,22 +1201,36 @@ vrai Nginx, il compte 184 contrôles, et 87 de ses requêtes — contre 74 — s
 la limite générale de 120 par minute. Elle suffit encore ; le prochain lot qui allongera ce
 parcours devra le scinder, ou relever cette limite pour la pile de test.
 
-**Lot 3 de la phase 3.** Trois exécutions, au vert toutes les trois, sans correction. La
-première (commit `5ded567`) : la migration des opérations du personnel appliquée par le
-moteur natif de Prisma, les 2 127 tests d'alors, et le parcours à travers le conteneur Nginx
-avec sa partie « opérations du personnel » — le second administrateur y est créé, pour la
-première fois, par une vraie commande `docker compose`. La deuxième (commit `2922759`) : le
-parcours rendu strict. Sous GitHub Actions, il échoue désormais s'il n'a pas de second
-administrateur ; **son succès établit donc que la double validation, le transfert mené à son
-terme et le débit ont eu lieu dans la pile Docker.** La troisième (commit `69a8ca5`) :
-les 2 135 tests, avec ceux qu'a demandés le contrôle par mutation. Le parcours n'a été ni
-scindé, ni la limite relevée, comme l'envisageait le paragraphe précédent : il se règle sur
-ce que l'API annonce, et attend la fenêtre suivante lorsque la limite approche. Rejoué ici à
-travers le vrai Nginx, il compte 259 contrôles ; 122 puis 119 de ses requêtes sont comptées
-par la limite générale de 120 par minute, avec une pause de 43 secondes. Sur GitHub, ses
-compteurs ne se lisent pas d'ici ; son étape y a duré 61 ou 62 secondes à chacune des trois
-exécutions, contre 10 au lot précédent — ce qui s'accorde avec une pause du même ordre, sans
-l'établir.
+**Lot 3 de la phase 3.** Six exécutions avant celle qui accompagne ces lignes : cinq au vert,
+**une en échec**. La première (commit `5ded567`) : la migration des opérations du personnel
+appliquée par le moteur natif de Prisma, les 2 127 tests d'alors, et le parcours à travers le
+conteneur Nginx avec sa partie « opérations du personnel » — le second administrateur y est
+créé, pour la première fois, par une vraie commande `docker compose`. La deuxième (commit
+`2922759`) : le parcours rendu strict. Sous GitHub Actions, il échoue désormais s'il n'a pas
+de second administrateur ; **son succès établit donc que la double validation, le transfert
+mené à son terme et le débit ont eu lieu dans la pile Docker.** La troisième (commit
+`69a8ca5`) : les 2 135 tests, avec ceux qu'a demandés le contrôle par mutation. La
+quatrième : la publication de cet état.
+
+**L'exécution en échec** est la cinquième (commit `a77b3af`, qui ne modifiait que deux
+fichiers de tests). Un test d'intégration sur 657 a échoué ; les tests de bout en bout, qui
+viennent ensuite, n'ont alors pas été lancés. Ce test, écrit au lot 1 de la phase 3, n'était
+pas touché par le commit, et il était passé aux dix exécutions précédentes : il exigeait un
+nombre exact de nouvelles tentatives d'une transaction, alors que ce nombre dépend du temps
+que met le disque à valider. Corrigé, il passe à l'exécution suivante (commit `e66b759`),
+avec les 2 134 autres. Détail dans « Problèmes identifiés ».
+
+**Les journaux de la CI ont été lus pour la première fois à cette occasion**, par un lien
+temporaire que fournit l'API de GitHub — jusque-là, on ne connaissait d'une exécution que le
+succès ou l'échec de ses étapes. C'est par eux que l'échec a été compris. Ils établissent
+aussi ce que cet état ne pouvait que supposer du parcours : dans la pile Docker, il
+envoie 162 requêtes, dont 123 comptées par la limite générale de 120 par minute, fait **une
+pause de 49 secondes**, et s'achève en écrivant qu'il a éprouvé la double validation et un
+transfert mené à son terme — relevé dans les deux dernières exécutions. Le parcours n'a été
+ni scindé, ni la limite relevée, comme l'envisageait le paragraphe précédent : il se règle
+sur ce que l'API annonce, et attend la fenêtre suivante lorsque la limite approche. Rejoué
+ici à travers le vrai Nginx, il compte 259 contrôles ; 122 puis 119 de ses requêtes y sont
+comptées par la limite, avec une pause de 43 secondes.
 
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
@@ -1199,10 +1256,13 @@ Node.js 24.
 
 ### Pendant le lot 3 de la phase 3
 
-Les cinq premiers ont été relevés avant la publication du lot, ou le jour même ; le sixième,
-par le contrôle des tests qui l'a suivie. Le premier touche le produit, et reste ouvert ; le
-deuxième, son déploiement ; les trois suivants, le parcours de vérification ; le dernier, les
-tests eux-mêmes.
+Les cinq premiers ont été relevés avant la publication du lot, ou le jour même ; les cinq
+autres, par le contrôle des tests qui l'a suivie. Le premier touche le produit, et reste
+ouvert ; le deuxième, son déploiement ; les trois suivants, le parcours de vérification ; les
+sixième, septième et huitième, les tests eux-mêmes — aucun de ces trois-là n'a demandé de
+modifier le code livré. Les deux derniers touchent de nouveau le produit : non ce lot, mais
+le socle sur lequel il repose, tel qu'il est depuis la phase 1. Ils restent ouverts ; une
+correction est proposée.
 
 1. **La base de données ne ferme pas la liste des types d'écriture.** Ce lot fait vérifier
    par PostgreSQL qu'une écriture d'ajustement a son ajustement, approuvé par deux personnes
@@ -1240,12 +1300,12 @@ tests eux-mêmes.
    les confondrait.
 4. **Le parcours pouvait réussir sans avoir éprouvé la double validation.** Faute de second
    administrateur, il la sautait — en l'écrivant dans sa sortie. Or les journaux d'une
-   exécution de la CI ne se lisent pas d'ici : une exécution réussie ne disait donc pas si la
-   double validation avait eu lieu. Sous GitHub Actions, où le parcours crée lui-même le
-   second administrateur, il **échoue** désormais s'il n'en a pas. L'exécution qui a suivi
-   est passée : la double validation, le transfert mené à son terme et le débit y ont donc eu
-   lieu. Ailleurs, rien ne change : sans second administrateur, il saute ces passages et le
-   dit.
+   exécution de la CI ne se lisaient pas encore d'ici : une exécution réussie ne disait donc
+   pas si la double validation avait eu lieu. Sous GitHub Actions, où le parcours crée
+   lui-même le second administrateur, il **échoue** désormais s'il n'en a pas. L'exécution
+   qui a suivi est passée : la double validation, le transfert mené à son terme et le débit y
+   ont donc eu lieu — ce que les journaux, lus depuis (point 8), confirment. Ailleurs, rien
+   ne change : sans second administrateur, il saute ces passages et le dit.
 5. **Le parcours inscrit deux comptes, et ne se rejoue plus que trois fois par heure sur une
    pile conservée.** Il lui faut un destinataire pour son transfert ; or la route
    d'inscription admet dix requêtes par heure et par adresse, refusées ou non, et le parcours
@@ -1269,6 +1329,84 @@ tests eux-mêmes.
    rendait la migration inapplicable : tous les tests du fichier échouaient, et il passait
    pour détecté sans qu'aucune règle soit éprouvée. Il a été réécrit. Détail dans « Résultats
    de tests ».
+7. **Quatre défauts volontaires de la phase 2 n'étaient détectés que par un test resté
+   bloqué.** L'état du lot 2 l'avait promis : les sorties complètes des 889 défauts de la
+   phase 2, conservées pour la première fois, ont été examinées. Quatre faisaient échouer
+   leurs tests par le délai accordé à chaque test — cinq secondes pour un test unitaire,
+   trente pour les autres — et non par une vérification ; pour trois d'entre eux, c'était la
+   seule détection. Chaque fois, le défaut faisait attendre le test : un serveur qui ne
+   répond plus, ou ne ferme pas la connexion ; une écriture qui attend un verrou que rien ne
+   rendra. Le premier test bornait bien son attente, mais à huit secondes, au-delà des cinq
+   dont il disposait : sa vérification ne pouvait jamais parler. Le second ne la bornait pas.
+   Un test arrêté par son délai échoue, mais tard, sans dire pourquoi — et il aurait échoué
+   de la même façon pour un défaut sans rapport. Tous deux échouent maintenant en trois
+   secondes, sur une vérification qui dit ce qui a manqué. Le rejeu n'en montre aucun autre :
+   sur les 1 904 défauts, ces quatre-là seulement arrêtaient encore un test par son délai,
+   les deux relevés au lot précédent étant corrigés. Les attentes que les tests bornent
+   eux-mêmes ont aussi été relevées une à une : aucune ne dépasse plus le délai de son test.
+8. **La CI a échoué une fois, sur un test qui dépendait de la vitesse du disque.** Le commit
+   qui corrigeait le point précédent ne touchait que deux fichiers de tests ; son exécution a
+   pourtant échoué — sur un troisième, écrit au lot 1 de la phase 3 et passé aux dix
+   exécutions précédentes. Deux transactions s'y croisent ; PostgreSQL annule l'une, que
+   l'API relance après une courte pause. Le test exigeait qu'une seule nouvelle tentative
+   suffise. Or il en faut deux lorsque la validation de la première transaction tarde à
+   devenir visible — elle attend le disque : relancée trop tôt, l'autre relit l'état d'avant,
+   et PostgreSQL l'annule de nouveau. Les deux transactions aboutissent alors comme prévu, et
+   c'est bien pour cela que les tentatives s'espacent : **le code est juste, le test en
+   exigeait trop**. Il vérifie désormais ce qui est garanti — que la transaction annulée est
+   relancée, trois fois au plus, et que seule sa dernière tentative voit l'écriture de
+   l'autre.
+
+   **Rien ne pouvait le montrer ici** : le PostgreSQL de l'environnement de développement est
+   réglé pour la vitesse et valide sans attendre le disque ; celui de la CI, comme celui
+   d'une installation réelle, l'attend. L'échec a été reproduit en retardant ici chaque
+   validation : à 25 ms, l'ancien test échoue à chaque fois, par la même différence que dans
+   la CI ; le nouveau passe de 0 à 100 ms. **Les 1 261 tests d'intégration et de bout en bout
+   ont ensuite été rejoués, retardés de 25 ms : tous passent**, dans le délai ordinaire de
+   chaque test. Aucun autre ne dépend donc de cette durée, à ce retard du moins. À 100 ms —
+   le délai de chaque test étant alors relevé, pour que la lenteur seule n'en arrête aucun —,
+   un seul échoue, pour une autre raison (point suivant). La répétition « disque lent »,
+   à 25 ms, rejoint les vérifications faites avant chaque livraison. Les opérations livrées
+   qui relancent une transaction — écritures du grand livre, transferts, ajustements — ne
+   sont pas exposées à cette course : elles n'emploient pas le mode de transaction en cause,
+   que seul ce test demande, pour provoquer un conflit. Chez elles, une transaction attend
+   l'autre, si longue que soit sa validation.
+
+   L'échec a été compris en lisant, pour la première fois, les journaux d'une exécution de la
+   CI (voir « Intégration continue »).
+
+9. **Quand la base ne suit plus, l'API répond `500` là où `503` serait exact.** La même
+   répétition a été poussée à 100 ms par validation, bien au-delà de ce que demande un disque
+   en bon état : sur les 1 261 tests, un seul échoue. Il lance 72 transferts à la fois entre
+   six portefeuilles, sur dix connexions à la base. Les transferts d'un même portefeuille
+   passent un à un, chacun retenu par sa validation ; ceux qui, au bout de deux secondes,
+   attendent encore une connexion libre sont abandonnés par Prisma — 24 ou 25 sur 72 selon
+   les passes, tous pour ce motif, sans un seul interblocage. Rejoué seul, le test passe à 25
+   et à 50 ms, échoue à partir de 75 ms. Ni lui ni les verrous ne sont en cause : à ce
+   retard, la rafale dépasse ce que dix connexions écoulent en deux secondes.
+
+   **Ce que cela montre touche le socle.** Cet abandon n'est pas reconnu par le traitement
+   des erreurs de l'API. Vérifié à part, en occupant l'unique connexion d'un pool : une
+   seconde transaction est abandonnée au bout de deux secondes, une requête simple au bout de
+   cinq, et la fonction qui traduit les erreurs donne, pour l'une comme pour l'autre,
+   `500 INTERNAL_ERROR` — la réponse d'un défaut du programme. Or le service est alors
+   saturé, non défaillant : `503`, avec le délai avant de réessayer, serait la réponse
+   exacte, et la supervision y lirait une surcharge plutôt qu'une panne. La transaction
+   abandonnée n'a rien écrit : la requête peut être renvoyée, avec la même clé d'idempotence
+   s'il s'agit d'un transfert. **Non corrigé dans ce lot** : c'est une règle nouvelle du
+   socle, qui change une réponse de l'API ; elle est proposée en tête du prochain lot
+   (« Suite proposée de la phase 3 »).
+
+10. **Une erreur d'une file de tâches de fond échappe aux journaux structurés.** Relevé dans
+    la sortie des tests : celui du relais de la boîte d'envoi passe, mais affiche de temps à
+    autre une erreur de BullMQ — il retire le planificateur et vide la file alors qu'une
+    exécution s'achève, et la tâche ne retrouve plus sa clé. Sans conséquence ici ; le
+    message figurait déjà dans des sorties du lot 2, sans avoir été relevé. Ce qu'il montre
+    en revanche : aucun des trois traitements de fond de l'API n'écoute les erreurs de son
+    exécutant, et BullMQ les écrit alors lui-même sur la sortie d'erreur, sans format ni
+    identifiant. Une connexion à Redis perdue ou un verrou de tâche expiré ne paraîtraient
+    donc pas dans les journaux structurés — ce qui n'a pas été éprouvé hors des tests. **Non
+    corrigé dans ce lot** ; proposé avec le point précédent.
 
 ### Pendant le lot 2 de la phase 3
 
@@ -1321,8 +1459,9 @@ autres, ses tests, l'outil qui les éprouve et sa documentation.
    cinq parcours de ce genre — deux datent de la phase 2 — s'arrêtent maintenant après un
    nombre de pages qui ne peut pas être atteint sans défaut, et l'échec vient de la
    vérification qui suit : avec les deux défauts, en moins d'une seconde, et sans entraîner
-   d'autre test. **Reste à examiner, au prochain rejeu, les sorties des 889 défauts de la
-   phase 2**, qui n'avaient pas été conservées.
+   d'autre test. Les sorties des 889 défauts de la phase 2, qui n'avaient pas été conservées,
+   ont été examinées au rejeu suivant : quatre cas de plus (« Pendant le lot 3 de la
+   phase 3 », point 7).
 
 ### Pendant le lot 1 de la phase 3
 
@@ -1780,8 +1919,9 @@ Transferts entre titulaires :
 - **Aucune valeur de plafond n'est arrêtée** (décision 5), et un changement de plafonds est
   l'affaire d'une seule personne, sans double validation ; il prend effet aussitôt.
 - **Un transfert est définitif** : ni annulation, ni délai de rétractation, ni bénéficiaires
-  enregistrés, ni confirmation d'un nouveau destinataire. Le personnel ne peut ni annuler,
-  ni corriger un transfert.
+  enregistrés, ni confirmation d'un nouveau destinataire. Le personnel ne peut ni annuler, ni
+  modifier un transfert ; depuis le lot 3, il peut seulement en compenser l'effet par deux
+  ajustements — un débit chez l'un, un crédit chez l'autre —, chacun sous double validation.
 - **Suspendre un destinataire n'arrête pas le transfert déjà en cours vers lui** : il
   aboutit, et les fonds restent sur le compte suspendu, qui ne peut plus rien envoyer. Les
   transferts suivants sont refusés. Ces fonds en sortent par un débit sous double
@@ -1851,9 +1991,20 @@ Socle :
   OpenTelemetry, métriques et tableaux de bord Grafana ne sont pas commencés.
 - **Sauvegardes, restauration, alertes** : non commencées (phase 9).
 - **WebSockets** : non commencés (aucun cas d'usage avant les notifications en temps réel).
-- **Transactions** : seules les écritures du grand livre et les transferts sont repris
-  automatiquement lorsqu'une transaction est annulée pour conflit (trois nouvelles
-  tentatives). Partout ailleurs, la requête répond `409` et c'est au client de la renvoyer.
+- **Transactions** : une transaction annulée pour conflit n'est reprise automatiquement que
+  pour les écritures du grand livre, les transferts et l'approbation d'un ajustement (trois
+  nouvelles tentatives, étalées sur un quart de seconde au plus). Partout ailleurs, la
+  requête répond `409` et c'est au client de la renvoyer.
+- **Base saturée** : une transaction qui attend plus de deux secondes une connexion libre à
+  la base est abandonnée — une requête simple, au bout de cinq —, et l'API répond
+  `500 INTERNAL_ERROR`, comme pour un défaut du programme. La transaction abandonnée n'a rien
+  écrit, et la requête peut être renvoyée ; mais `503`, avec le délai avant de réessayer,
+  serait la réponse exacte. Relevé sous 72 transferts simultanés, chaque validation retardée
+  de 100 ms ; correction proposée en tête du prochain lot (voir « Problèmes identifiés »).
+- **Erreurs des files de tâches de fond** : une erreur de l'exécutant d'une file — connexion
+  à Redis perdue, verrou de tâche expiré — est écrite sur la sortie d'erreur, hors des
+  journaux structurés : aucun des trois traitements de fond ne l'écoute. Correction proposée
+  avec la précédente.
 - **Boîte d'envoi** : remise « au moins une fois » (les consommateurs doivent être
   idempotents) ; nouvelle tentative par événement et non par consommateur ; pas encore
   d'outil pour rejouer un événement abandonné. Les événements publiés sont supprimés après

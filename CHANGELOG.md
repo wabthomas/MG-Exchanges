@@ -89,6 +89,21 @@ portefeuille gelé ou d'un compte à clôturer. Les ajustements sont **fermés p
   admettant dix par heure et par adresse, refusées ou non, il ne se rejoue que trois fois
   par heure.
 
+### Corrigé — outillage de test
+
+- Deux tests ne pouvaient pas signaler un blocage. L'un (lecture du corps d'une requête)
+  bornait son attente à huit secondes, au-delà des cinq accordées à un test unitaire ;
+  l'autre (verrous pris à la clôture d'un compte) ne la bornait pas. Devant un serveur qui ne
+  répond plus, ou une écriture qui attend un verrou, ils n'échouaient que par le délai du
+  test, sans rien en dire. Ils échouent désormais en trois secondes, sur une vérification.
+- Un test des nouvelles tentatives d'une transaction exigeait qu'une seule suffise. Il en
+  faut parfois deux, selon le temps que met le disque à valider la transaction concurrente :
+  le test a échoué une fois dans la CI, et ne le pouvait pas sur un PostgreSQL réglé pour ne
+  pas attendre le disque. Il vérifie désormais ce qui est garanti : une à trois nouvelles
+  tentatives, dont seule la dernière voit l'écriture de l'autre transaction.
+
+Aucun code de l'API n'est modifié par ces corrections.
+
 ### Non réalisé
 
 - **Rapprochement** d'un ajustement avec des fonds réellement détenus ; plafond par

@@ -178,6 +178,32 @@ export TEST_REDIS_URL="redis://:<REDIS_PASSWORD>@localhost:6379/15"
 pnpm test
 ```
 
+**Un test où deux transactions se croisent échoue dans la CI, jamais chez vous ?** Regardez
+comment votre PostgreSQL valide une transaction. Une instance réglée pour la vitesse
+(`fsync = off`, `synchronous_commit = off`) valide sans attendre le disque ; celle de la CI
+l'attend, et ce qui dépend de cette durée n'apparaît que là. Pour le reproduire, retardez
+chaque validation de l'instance jetable — ici de 25 ms —, rejouez le test, puis rétablissez
+les réglages :
+
+```sql
+ALTER SYSTEM SET fsync = on;
+ALTER SYSTEM SET synchronous_commit = on;
+ALTER SYSTEM SET commit_siblings = 0;
+ALTER SYSTEM SET commit_delay = 25000; -- en microsecondes ; 100000 au plus
+SELECT pg_reload_conf();
+-- … puis, le test rejoué :
+ALTER SYSTEM RESET fsync;
+ALTER SYSTEM RESET synchronous_commit;
+ALTER SYSTEM RESET commit_siblings;
+ALTER SYSTEM RESET commit_delay;
+SELECT pg_reload_conf();
+```
+
+Tous les tests d'intégration et de bout en bout passent à 25 ms. Inutile de retarder
+davantage : à partir de 75 ms, un test du grand livre échoue pour une autre raison — il
+lance 72 transferts à la fois, et tous n'obtiennent plus une connexion à la base dans les
+deux secondes que Prisma leur accorde (`PROJECT_STATUS.md`, « Problèmes identifiés »).
+
 ## Documentation
 
 - [PROJECT_STATUS.md](PROJECT_STATUS.md) — avancement réel, résultats de tests, limites, suite
