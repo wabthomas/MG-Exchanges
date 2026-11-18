@@ -3,6 +3,59 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Socle : base saturée, erreurs des files de tâches de fond
+
+**Deux retouches du socle** (ADR 0028), relevées en contrôlant les tests du lot 3 de la
+phase 3 : une base saturée répond `503`, avec le délai avant de réessayer, au lieu de `500` ;
+ce que les files de tâches de fond signalent passe par les journaux structurés. Ni migration,
+ni dépendance nouvelle, ni route nouvelle.
+
+### Modifié — à prendre en compte par un client
+
+- **Base saturée : `503 SERVICE_UNAVAILABLE` et `Retry-After: 5`**, au lieu de
+  `500 INTERNAL_ERROR`, lorsque toutes les connexions de l'API à la base sont occupées et
+  qu'aucune ne se libère à temps — deux secondes pour une transaction, cinq pour toute autre
+  requête. L'opération refusée n'avait pas commencé ; la requête se renvoie telle quelle
+  après ce délai, sous la même `Idempotency-Key` si la route en demande une. Toute route qui
+  lit ou écrit en base peut répondre ainsi. Une transaction trop longue, une base injoignable
+  ou une connexion rompue restent des erreurs `500`.
+- Document OpenAPI : la convention est écrite en tête ; la description des réponses `503`
+  renvoie à `Retry-After`.
+
+### Ajouté
+
+- **Journaux des files de tâches de fond** (`QueueErrorLog`) : ce que BullMQ signale hors de
+  toute requête — connexion à Redis perdue, verrou d'une tâche expiré — est écrit au niveau
+  `error` sous `Background queue error`, avec la file (`queue`) et la provenance (`source` :
+  `queue` ou `worker`). Jusque-là, BullMQ l'écrivait lui-même sur la sortie d'erreur, sans
+  format : 120 erreurs brutes pour 12 secondes sans Redis, contre six lignes désormais.
+- **Passages en échec du relais et de la purge** : une ligne `Background job failed`, avec la
+  file. Un passage du relais échoué — base injoignable, par exemple — ne laissait aucune
+  ligne.
+- **Une ligne par période** : une même erreur venue du même objet s'écrit une fois, puis une
+  fois toutes les trente secondes tant qu'elle dure, avec `repeated` — le nombre
+  d'occurrences passées sous silence. L'échec du traitement d'un événement
+  (`Domain event handling failed`) s'écrit toujours à chaque fois.
+- Une saturation est journalisée (`Request failed`, niveau `error`) avec le code
+  `SERVICE_UNAVAILABLE`, qui la distingue d'une panne.
+- Tests : la saturation est provoquée avec un vrai pool de connexions — les erreurs sont
+  celles que Prisma et `pg` lèvent réellement — ; un test parcourt l'application et échoue si
+  une file ou un exécutant n'est pas écouté.
+- ADR 0028. `DEPLOYMENT.md`, « Saturation et pannes » : ce que l'API répond et écrit, relevé
+  en arrêtant Redis puis la base sous l'API compilée.
+
+### Constaté, non corrigé
+
+Relevé par ces essais de panne ; antérieur à ces retouches (`PROJECT_STATUS.md`, « Problèmes
+identifiés ») :
+
+- **L'API ne s'arrête pas d'elle-même tant que Redis est injoignable**, ni dans les secondes
+  qui suivent son retour d'une longue coupure : seul `SIGKILL` y met fin. Aucune donnée n'est
+  en jeu.
+- **Un Redis revenu vide n'a plus les tâches planifiées** : plus rien n'est relayé ni purgé
+  jusqu'au redémarrage de l'API, alors que `GET /health/ready` répond `200` et qu'aucune
+  ligne d'erreur n'est écrite.
+
 ## [Non publié] — Phase 3, lot 3 : opérations du personnel
 
 **Crédit et débit manuels d'un portefeuille, sous double validation ; gel d'un

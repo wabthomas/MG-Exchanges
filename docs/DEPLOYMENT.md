@@ -53,7 +53,10 @@ fichier présent dans l'image ou le dépôt.
 
 **Redis et BullMQ.** Les files exigent la politique `maxmemory-policy noeviction` et une
 persistance (AOF). Si le même Redis sert plus tard de cache avec éviction, fournir une
-instance distincte via `QUEUE_REDIS_URL`.
+instance distincte via `QUEUE_REDIS_URL`. La persistance n'est pas un confort : les tâches
+planifiées sont inscrites dans Redis au démarrage de l'API, et **un Redis revenu vide ne les
+a plus** — ni relais, ni purge jusqu'au redémarrage de l'API, sans qu'aucune sonde le dise
+(voir « Saturation et pannes »).
 
 ## Images
 
@@ -77,7 +80,10 @@ docker build -f infrastructure/docker/api.Dockerfile --target migrator -t mgx-ap
 3. Démarrer la nouvelle version de l'API (`DATABASE_URL`, rôle applicatif).
 4. Attendre `GET /health/ready` = 200 avant d'y diriger du trafic.
 5. Retirer l'ancienne version : à la réception de `SIGTERM`, l'API ferme proprement son
-   serveur HTTP, ses files et ses connexions PostgreSQL et Redis (vérifié sur l'artefact de production).
+   serveur HTTP, ses files et ses connexions PostgreSQL et Redis (vérifié sur l'artefact de
+   production). **Sauf si Redis est injoignable à cet instant, ou revient à peine d'une
+   longue coupure** : l'API ne s'arrête alors pas d'elle-même — voir « Saturation et
+   pannes ».
 
 Les migrations doivent donc rester compatibles avec la version précédente du code le temps
 de la bascule (schéma « étendre, migrer, contracter »).
@@ -152,9 +158,11 @@ données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
 déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
 échéance** — durées dans `DATABASE.md` ; puis **vérification du grand livre**, voir « Grand
-livre », et clôture des demandes d'ajustement échues). Un échec est journalisé
-(`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
-l'exécution suivante réessaie.
+livre », et clôture des demandes d'ajustement échues). Un échec est journalisé — l'étape
+(`Account maintenance step failed`), puis le passage (`Background job failed`) — et visible
+dans la file `account-maintenance` ; l'exécution suivante réessaie. Un passage du relais en
+échec, base injoignable par exemple, laisse la même ligne `Background job failed` : le
+suivant a lieu une seconde plus tard.
 
 ## Clôture des comptes et effacement
 
@@ -684,6 +692,93 @@ configuration TLS en phase 9.
 | ------------------- | ---------------------------------- | ----------------- |
 | `GET /health/live`  | redémarrer l'instance si KO        | rien              |
 | `GET /health/ready` | retirer l'instance du trafic si KO | PostgreSQL, Redis |
+
+## Saturation et pannes : ce que l'API répond, ce qu'elle écrit
+
+La saturation est établie par les tests, sur un PostgreSQL réel. Les pannes ont été
+provoquées sur l'API compilée, lancée seule contre un PostgreSQL et un Redis réels, en
+arrêtant l'un puis l'autre.
+
+**Base saturée — `503`, pas `500`.** L'API tient `DATABASE_POOL_MAX` connexions (10 par
+défaut). Lorsque toutes sont occupées et qu'aucune ne se libère à temps — deux secondes pour
+une transaction, `DATABASE_CONNECTION_TIMEOUT_MS` (cinq secondes) pour toute autre
+requête —, la requête répond `503 SERVICE_UNAVAILABLE` avec `Retry-After: 5`. L'opération
+refusée n'avait pas commencé : elle n'a rien écrit. Chaque refus laisse une ligne
+`Request failed` de niveau `error`, champ `code` à `SERVICE_UNAVAILABLE`, l'erreur d'origine
+dans `err`. Ce n'est pas une panne, mais une charge que la base n'écoule plus : chercher
+d'abord les transactions longues, puis rapporter la taille du pool et le nombre d'instances
+au `max_connections` de PostgreSQL. Une base **injoignable** reste une panne : `500` pour les
+requêtes, `503` pour `GET /health/ready`. Devant une base qui accepte la connexion et ne
+répond plus, les deux se mêlent : `500` pour la requête qui ouvrait une connexion, `503`
+pour celles qui attendaient leur tour.
+
+**Files de tâches de fond — tout passe par le journal structuré.** Ce que BullMQ signale
+hors de toute requête est écrit au niveau `error`, contexte `QueueErrorLog` :
+
+| Message                        | Champs                                         | Quand                                                                                 |
+| ------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `Background queue error`       | `queue`, `source` (`queue` ou `worker`), `err` | connexion à Redis perdue, verrou d'une tâche expiré                                   |
+| `Background job failed`        | `queue`, `err`                                 | un passage du relais (`outbox-relay`) ou de la purge (`account-maintenance`) a échoué |
+| `Domain event handling failed` | `eventId`, `eventType`, `attemptsMade`, `err`  | le traitement d'un événement a échoué (inchangé, contexte `DomainEventsProcessor`)    |
+
+Les deux premières ne se répètent pas à chaque occurrence : **une même erreur, venue du même
+objet, s'écrit une fois, puis une fois toutes les trente secondes tant qu'elle dure**, avec
+le champ `repeated` — le nombre d'occurrences passées sous silence depuis la ligne
+précédente. Une erreur qui cesse ne laisse pas de ligne de fin : la durée d'un épisode se lit
+à trente secondes près. `Domain event handling failed` s'écrit à chaque fois.
+
+| Panne provoquée              | Avant                                                               | Désormais                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Redis arrêté 12 secondes     | 120 erreurs brutes sur la sortie d'erreur (960 lignes), hors format | 6 lignes structurées — trois files, trois exécutants —, sortie d'erreur vide                                     |
+| Redis arrêté 40 secondes     | 150 erreurs brutes (1 200 lignes)                                   | 12 lignes : 6 à la perte, 6 après 37 secondes, qui en annoncent 129 autres par `repeated` ; sortie d'erreur vide |
+| base supprimée huit secondes | rien : huit passages du relais en échec, visibles dans Redis seul   | une ligne `Background job failed` (file `outbox-relay`) ; sortie d'erreur vide                                   |
+
+**Pendant une coupure de Redis.** La limitation de débit ne laisse rien passer sans compter
+(`SECURITY.md`) : une requête ordinaire répond `500`, après une attente d'une à neuf
+secondes selon l'instant — le temps de ses tentatives de reconnexion.
+`GET /health/ready` répond `503` en deux secondes, `GET /health/live` `200`. Rien n'est
+relayé ; les événements attendent dans la boîte d'envoi, en base.
+
+**Au retour de Redis, deux cas — et la sonde ne les distingue pas.** Ces essais ont relevé
+deux comportements antérieurs à ces retouches, **non corrigés** (`PROJECT_STATUS.md`,
+« Limites connues ») ; celui-ci est le premier.
+
+- **Redis revient avec ses données** (AOF) : les traitements de fond reprennent d'eux-mêmes.
+  Un événement écrit au retour, après 12 secondes de coupure, est parti moins de vingt
+  secondes plus tard.
+- **Redis revient vide** — persistance absente, volume perdu, bascule vers une instance
+  neuve : **plus rien n'est relayé ni purgé jusqu'au redémarrage de l'API**. Les tâches
+  planifiées ne sont inscrites qu'à son démarrage, et elles ont disparu avec les données.
+  Dans cet état, `GET /health/ready` répond `200`, les requêtes aboutissent, et aucune ligne
+  d'erreur n'est écrite : un événement écrit au retour attendait encore une minute plus
+  tard. Les messages — codes de vérification compris — ne partent plus.
+
+Après toute coupure de Redis, vérifier donc que le relais tourne — cette requête doit
+rendre zéro — et, sinon, **redémarrer l'API** :
+
+```sql
+SELECT count(*) FROM outbox_events
+WHERE status = 'PENDING' AND available_at < now() - interval '1 minute';
+```
+
+**Arrêt pendant une coupure de Redis : l'API ne s'arrête pas d'elle-même.** Second
+comportement relevé, non corrigé lui non plus :
+
+- `SIGTERM` reçu cinq secondes après la perte de Redis : vingt secondes plus tard le
+  processus tourne encore, `GET /health/live` répond `200` et `GET /health/ready` `503` ;
+- `SIGTERM` reçu huit secondes après le retour de Redis d'une coupure de 40 secondes : même
+  attente, `GET /health/ready` répondant cette fois `200` — observée jusqu'à 135 secondes,
+  avant d'y mettre fin ;
+- après une coupure de 12 secondes, ou 30 secondes après le retour d'une coupure de 40,
+  l'arrêt prend moins d'une seconde.
+
+La fermeture des exécutants BullMQ, première étape de l'arrêt, attend une connexion qui ne
+revient pas ; le serveur HTTP, fermé après elle, continue de servir. **Seul `SIGKILL` termine
+alors le processus** : régler le délai d'arrêt de l'orchestrateur en conséquence (dix
+secondes par défaut sous Docker), et retirer l'instance du trafic avant de l'arrêter. Aucune
+donnée n'est en jeu — une transaction interrompue est annulée par PostgreSQL, un événement
+non relayé reste dans la boîte d'envoi, une tâche interrompue est reprise — ; les requêtes en
+cours à cet instant sont coupées, non menées à leur terme.
 
 ## Intégration continue
 

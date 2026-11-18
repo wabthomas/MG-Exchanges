@@ -12,10 +12,10 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0005](0005-prisma-postgresql.md)                                 | Prisma 7, PostgreSQL 18, rôles séparés, SQL complémentaire                          | Acceptée                              |
 | [0006](0006-validation-zod-contrats.md)                           | Validation par schémas Zod partagés                                                 | Acceptée                              |
 | [0007](0007-representation-des-montants.md)                       | Représentation des montants                                                         | Acceptée                              |
-| [0008](0008-erreurs-rfc-9457.md)                                  | Erreurs normalisées RFC 9457 et codes stables                                       | Acceptée                              |
-| [0009](0009-boite-d-envoi-transactionnelle.md)                    | Boîte d'envoi transactionnelle sur BullMQ                                           | Acceptée                              |
+| [0008](0008-erreurs-rfc-9457.md)                                  | Erreurs normalisées RFC 9457 et codes stables                                       | Acceptée — complétée par 0028         |
+| [0009](0009-boite-d-envoi-transactionnelle.md)                    | Boîte d'envoi transactionnelle sur BullMQ                                           | Acceptée — complétée par 0028         |
 | [0010](0010-limitation-de-debit-redis.md)                         | Limitation de débit maison sur Redis                                                | Acceptée                              |
-| [0011](0011-socle-http-configuration-journaux.md)                 | En-têtes natifs, configuration typée, Pino                                          | Acceptée                              |
+| [0011](0011-socle-http-configuration-journaux.md)                 | En-têtes natifs, configuration typée, Pino                                          | Acceptée — complétée par 0028         |
 | [0012](0012-fonctionnalites-fermees-par-defaut.md)                | Fonctionnalités réglementées fermées par défaut                                     | Acceptée                              |
 | [0013](0013-sessions-jetons-opaques.md)                           | Sessions par jetons opaques, vérifiées en base                                      | Acceptée                              |
 | [0014](0014-mots-de-passe-argon2id.md)                            | Mots de passe : Argon2id natif, règles NIST                                         | Acceptée                              |
@@ -32,3 +32,4 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0025](0025-grand-livre-en-partie-double.md)                      | Grand livre en partie double : écritures immuables, règles portées par la base      | Acceptée — complétée par 0026 et 0027 |
 | [0026](0026-transferts-entre-titulaires.md)                       | Transferts entre titulaires : immédiats, idempotents, plafonnés par niveau          | Acceptée — complétée par 0027         |
 | [0027](0027-operations-du-personnel-ajustements-et-gels.md)       | Opérations du personnel : ajustements sous double validation, gel d'un portefeuille | Acceptée                              |
+| [0028](0028-base-saturee-et-erreurs-des-files.md)                 | Base saturée et erreurs des files : `503` avec délai, journaux structurés           | Acceptée                              |

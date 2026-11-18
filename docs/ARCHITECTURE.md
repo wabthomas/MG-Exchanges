@@ -173,6 +173,15 @@ Un envoi irrecevable est donc refusé sans avoir été lu.
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
+Il n'est inscrit qu'au démarrage de l'API : un Redis qui perd ses données le perd aussi
+(`DEPLOYMENT.md`, « Saturation et pannes »).
+
+Ce que les files et leurs exécutants signalent hors de toute requête — connexion à Redis
+perdue, verrou d'une tâche expiré, passage en échec — passe par `QueueErrorLog`
+(`infrastructure/queue`), donc par les journaux structurés : les files y sont écoutées
+d'office, chaque exécutant par son traitement (`@OnWorkerEvent`), et un test parcourt
+l'application pour vérifier qu'aucun ne manque. Une même erreur répétée s'écrit une fois par
+période de trente secondes, avec le nombre de répétitions (ADR 0028).
 
 ### Deux horloges, un seul port
 
@@ -241,6 +250,9 @@ conflit de sérialisation), `UnitOfWork.run(work, { retry })` la **relance enti�
 nombre borné de fois, après une courte pause tirée au hasard ; `work` doit donc pouvoir être
 rejoué, et ne rien faire hors de la transaction. Sans cette option, ou une fois les
 tentatives épuisées, la requête répond `409 CONFLICT` — jamais une erreur serveur.
+Une transaction qui n'a pas obtenu de connexion à temps n'est **pas** relancée : la base est
+saturée, et insister l'aggraverait. Elle n'a pas commencé ; la requête répond `503`, avec le
+délai avant de réessayer (`isDatabaseSaturated`, ADR 0028).
 
 **Un seul chemin pour l'argent.** Aucun module n'écrit un solde : il passe une écriture par
 `LedgerService` — `post` dans sa propre transaction, `postWithin(tx, …)` dans celle de
