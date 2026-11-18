@@ -1,5 +1,6 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Global, Module } from '@nestjs/common';
+import { DiscoveryModule } from '@nestjs/core';
 
 import { AppConfig } from '../../config/app-config.js';
 import { parseRedisUrl } from '../redis/redis-url.js';
@@ -8,16 +9,21 @@ import {
   DOMAIN_EVENTS_QUEUE,
   OUTBOX_RELAY_QUEUE,
 } from './queue.constants.js';
+import { QueueErrorLog } from './queue-error-log.js';
 
 /**
  * Files de traitement asynchrone (BullMQ sur Redis).
  *
  * Par défaut, un traitement en échec est retenté 5 fois avec un délai exponentiel ; les
  * traitements terminés sont purgés, les échecs définitifs conservés 7 jours pour analyse.
+ *
+ * Ce que les files et leurs exécutants signalent hors de toute requête passe par les journaux
+ * structurés (`QueueErrorLog`).
  */
 @Global()
 @Module({
   imports: [
+    DiscoveryModule,
     BullModule.forRootAsync({
       inject: [AppConfig],
       useFactory: (config: AppConfig) => ({
@@ -38,6 +44,7 @@ import {
       { name: ACCOUNT_MAINTENANCE_QUEUE },
     ),
   ],
-  exports: [BullModule],
+  providers: [QueueErrorLog],
+  exports: [BullModule, QueueErrorLog],
 })
 export class QueueModule {}

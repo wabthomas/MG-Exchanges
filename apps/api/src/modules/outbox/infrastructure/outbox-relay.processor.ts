@@ -1,9 +1,10 @@
-import { InjectQueue, Processor, WorkerHost } from '@nestjs/bullmq';
+import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq';
 import type { OnApplicationBootstrap } from '@nestjs/common';
-import type { Queue } from 'bullmq';
+import type { Job, Queue } from 'bullmq';
 
 import { AppConfig } from '../../../config/app-config.js';
 import { OUTBOX_RELAY_QUEUE } from '../../../infrastructure/queue/queue.constants.js';
+import { QueueErrorLog } from '../../../infrastructure/queue/queue-error-log.js';
 import { OutboxRelayService } from '../application/outbox-relay.service.js';
 
 const SCHEDULER_ID = 'outbox-relay';
@@ -20,6 +21,7 @@ export class OutboxRelayProcessor extends WorkerHost implements OnApplicationBoo
     @InjectQueue(OUTBOX_RELAY_QUEUE) private readonly queue: Queue,
     private readonly relay: OutboxRelayService,
     private readonly config: AppConfig,
+    private readonly queueErrors: QueueErrorLog,
   ) {
     super();
   }
@@ -42,5 +44,19 @@ export class OutboxRelayProcessor extends WorkerHost implements OnApplicationBoo
         return;
       }
     }
+  }
+
+  /**
+   * Un passage en échec — base injoignable ou saturée — n'est pas relancé : le suivant a lieu
+   * à l'échéance. Sans cette ligne, il ne laisserait de trace que dans Redis.
+   */
+  @OnWorkerEvent('failed')
+  onFailed(_job: Job | undefined, error: Error): void {
+    this.queueErrors.runFailed(OUTBOX_RELAY_QUEUE, error);
+  }
+
+  @OnWorkerEvent('error')
+  onWorkerError(error: Error): void {
+    this.queueErrors.workerError(OUTBOX_RELAY_QUEUE, error);
   }
 }
