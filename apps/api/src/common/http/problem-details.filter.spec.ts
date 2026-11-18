@@ -29,6 +29,22 @@ function databaseError(sqlState: string, message: string): Prisma.PrismaClientKn
   });
 }
 
+/** Erreur de Prisma à propos d'une transaction elle-même (`P2028`), et non d'une instruction. */
+function transactionApiError(message: string): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(`Transaction API error: ${message}`, {
+    code: 'P2028',
+    clientVersion: 'test',
+  });
+}
+
+/** Les deux formes d'une base saturée : Prisma renonce le premier, ou le pool de connexions. */
+const saturated = (): Error[] => [
+  transactionApiError('Unable to start a transaction in the given time.'),
+  new Error('timeout exceeded when trying to connect'),
+];
+
+const OVERLOADED = 'The service is temporarily overloaded. Please retry in a few seconds.';
+
 describe('toProblem', () => {
   it('traduit une erreur applicative selon le catalogue public', () => {
     const errors = [{ path: 'amount', message: 'Must be a canonical decimal string.' }];
@@ -160,6 +176,28 @@ describe('toProblem', () => {
     // Le code ne se lit que dans l'erreur d'origine : un message qui le cite ne suffit pas.
     expect(toProblem(new Error('MGX05'))).toMatchObject({ status: 500, code: 'INTERNAL_ERROR' });
     expect(toProblem({ code: 'MGX05' })).toMatchObject({ status: 500, code: 'INTERNAL_ERROR' });
+  });
+
+  it('base saturée : le service est indisponible un instant, il n’est pas en panne', () => {
+    for (const error of saturated()) {
+      expect(toProblem(error)).toEqual({
+        status: 503,
+        code: 'SERVICE_UNAVAILABLE',
+        detail: OVERLOADED,
+        // Le délai des autres refus pour saturation.
+        retryAfterSeconds: 5,
+      });
+    }
+    // Une transaction qui avait commencé, une base injoignable : des erreurs serveur.
+    for (const error of [
+      transactionApiError(
+        'A query cannot be executed on an expired transaction. The timeout for this ' +
+          'transaction was 5000 ms, however 5012 ms passed since the start of the transaction.',
+      ),
+      new Error('Connection terminated due to connection timeout'),
+    ]) {
+      expect(toProblem(error)).toEqual({ status: 500, code: 'INTERNAL_ERROR', detail: GENERIC });
+    }
   });
 
   it('masque toute erreur serveur ou inattendue derrière un message générique', () => {
@@ -302,6 +340,34 @@ describe('ProblemDetailsFilter', () => {
         detail: 'The request conflicted with another one. Please try again.',
         requestId: REQUEST_ID,
       });
+    }
+  });
+
+  it('base saturée : 503, le délai avant de réessayer, et une erreur au journal', () => {
+    for (const failure of saturated()) {
+      const { filter, host, logged, sent } = setup();
+      filter.catch(failure, host);
+
+      expect(sent.status).toBe(503);
+      expect(sent.type).toBe('application/problem+json');
+      expect(sent.headers).toEqual({ 'Retry-After': 5 });
+      expect(sent.body).toMatchObject({
+        status: 503,
+        title: 'Service Unavailable',
+        code: 'SERVICE_UNAVAILABLE',
+        detail: OVERLOADED,
+        requestId: REQUEST_ID,
+      });
+      // Rien de ce que disent Prisma ou le pool ne sort.
+      expect(JSON.stringify(sent.body)).not.toMatch(/transaction|timeout|connect/i);
+      // Le journal garde la cause, et le code qui distingue une saturation d'une panne.
+      expect(logged).toEqual([
+        {
+          level: 'error',
+          fields: { err: failure, requestId: REQUEST_ID, code: 'SERVICE_UNAVAILABLE' },
+          message: 'Request failed',
+        },
+      ]);
     }
   });
 

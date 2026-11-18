@@ -6,7 +6,10 @@ import { type Asset, defineAsset, Money } from '@mgx/shared';
 import type pg from 'pg';
 
 import { AppError } from '../../src/common/errors/app-error.js';
-import { sqlStateOf } from '../../src/infrastructure/database/database-errors.js';
+import {
+  isDatabaseSaturated,
+  sqlStateOf,
+} from '../../src/infrastructure/database/database-errors.js';
 import { type DbClient, PrismaService } from '../../src/infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../src/infrastructure/database/unit-of-work.js';
 import { AuditService } from '../../src/modules/audit/application/audit.service.js';
@@ -54,6 +57,7 @@ import {
   registerAssetInSql,
   tamperWithLedger,
 } from '../support/ledger-sql.js';
+import { occupyConnections } from '../support/saturation.js';
 import { createTestApp, type TestApp, testClock } from '../support/test-app.js';
 import { sqlState, untilBlocked, withConnection } from '../support/test-database.js';
 
@@ -770,6 +774,42 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
       expect(await size()).toEqual(before);
       expect(await balanceOf(alice)).toBe('5000');
       expect(await balanceOf(bob)).toBe('5000');
+      expect(
+        await prisma.ledgerEntry.count({ where: { idempotencyKey: draft.idempotencyKey } }),
+      ).toBe(1);
+    });
+
+    it('refusée faute de connexion à la base, elle n’a rien laissé : renvoyée sous la même clé, elle passe — une fois', async () => {
+      const alice = await holderWith('100.00');
+      const bob = await createUser();
+      const draft = transferDraft(alice, bob, usd('40.00'), 'transfer:refused-then-resent');
+      const before = await size();
+
+      // Les dix connexions du pool sont prises : la transaction de l'écriture ne peut pas
+      // commencer, et Prisma y renonce au bout de deux secondes.
+      const release = await occupyConnections(prisma, 10);
+      let refusal: unknown;
+      try {
+        refusal = await ledger.post(draft).then(
+          () => null,
+          (reason: unknown) => reason,
+        );
+      } finally {
+        await release();
+      }
+      expect(isDatabaseSaturated(refusal)).toBe(true);
+
+      // Rien n'a été écrit…
+      expect(await size()).toEqual(before);
+      expect(await balanceOf(alice)).toBe('10000');
+      expect(await balanceOf(bob)).toBeNull();
+      // … et la clé n'a pas servi : renvoyée, l'écriture est passée pour la première fois.
+      const posted = await ledger.post(draft);
+      expect(posted.replayed).toBe(false);
+      expect(await balanceOf(alice)).toBe('6000');
+      expect(await balanceOf(bob)).toBe('4000');
+      // Renvoyée encore, elle n'est pas passée deux fois.
+      expect(await ledger.post(draft)).toEqual({ ...posted, replayed: true });
       expect(
         await prisma.ledgerEntry.count({ where: { idempotencyKey: draft.idempotencyKey } }),
       ).toBe(1);

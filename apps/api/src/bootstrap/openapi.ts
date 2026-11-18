@@ -22,6 +22,9 @@ const DESCRIPTION = [
     'send the same value when retrying the same request, and the operation is carried out once.',
   '- The back office never moves funds in one step: a manual adjustment is requested by one ' +
     'member of staff and approved by another, and a request is approved once.',
+  '- Any route may answer `503` (`SERVICE_UNAVAILABLE`) with a `Retry-After` header when the ' +
+    'platform is momentarily overloaded: the request was not completed and can be sent again ' +
+    'after that delay — with the same `Idempotency-Key` where one is required.',
 ].join('\n');
 
 export function buildOpenApiDocument(

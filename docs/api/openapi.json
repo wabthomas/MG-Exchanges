@@ -588,7 +588,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -775,7 +775,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -1616,7 +1616,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -3206,7 +3206,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -4569,7 +4569,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -9733,7 +9733,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11200,7 +11200,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11300,7 +11300,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -11837,7 +11837,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -12306,7 +12306,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -12775,7 +12775,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13697,7 +13697,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -13829,7 +13829,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -14558,7 +14558,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -15310,7 +15310,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -16041,7 +16041,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -16165,7 +16165,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -16389,7 +16389,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -18480,7 +18480,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -18673,7 +18673,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -18852,7 +18852,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -19044,7 +19044,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.",
             "content": {
               "application/problem+json": {
                 "schema": {
@@ -21260,7 +21260,7 @@
             }
           },
           "503": {
-            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`).\n\nThe Health Check is not successful",
+            "description": "Temporarily unavailable (`MAINTENANCE`, `SERVICE_UNAVAILABLE`); when the platform is overloaded, see the `Retry-After` header.\n\nThe Health Check is not successful",
             "content": {
               "application/json": {
                 "schema": {
@@ -21387,7 +21387,7 @@
   },
   "info": {
     "title": "MG-Exchange API",
-    "description": "MG-Exchange platform API.\n\n**Conventions**\n- Versioned routes: `/api/v1/...`.\n- Monetary amounts are decimal **strings** (`\"12.34\"`), never JSON numbers.\n- Timestamps are ISO 8601 in UTC.\n- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.\n- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.\n- Every response carries an `X-Request-Id` header for support and log correlation.\n- Every route by which an account holder moves funds requires an `Idempotency-Key` header: send the same value when retrying the same request, and the operation is carried out once.\n- The back office never moves funds in one step: a manual adjustment is requested by one member of staff and approved by another, and a request is approved once.",
+    "description": "MG-Exchange platform API.\n\n**Conventions**\n- Versioned routes: `/api/v1/...`.\n- Monetary amounts are decimal **strings** (`\"12.34\"`), never JSON numbers.\n- Timestamps are ISO 8601 in UTC.\n- Errors use `application/problem+json` (RFC 9457) with a stable `code` and the `requestId`.\n- Every route requires `Authorization: Bearer <accessToken>` unless stated otherwise.\n- Every response carries an `X-Request-Id` header for support and log correlation.\n- Every route by which an account holder moves funds requires an `Idempotency-Key` header: send the same value when retrying the same request, and the operation is carried out once.\n- The back office never moves funds in one step: a manual adjustment is requested by one member of staff and approved by another, and a request is approved once.\n- Any route may answer `503` (`SERVICE_UNAVAILABLE`) with a `Retry-After` header when the platform is momentarily overloaded: the request was not completed and can be sent again after that delay — with the same `Idempotency-Key` where one is required.",
     "version": "0.1.0",
     "contact": {}
   },

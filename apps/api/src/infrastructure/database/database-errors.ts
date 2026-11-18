@@ -79,3 +79,34 @@ export function isTransactionConflict(error: unknown): boolean {
   const sqlState = sqlStateOf(error);
   return sqlState === '40001' || sqlState === '40P01';
 }
+
+/** Ce que dit Prisma (`P2028`) d'une transaction qui n'a pas pu commencer à temps. */
+const TRANSACTION_START_TIMEOUT = 'Unable to start a transaction in the given time';
+
+/** Ce que dit le pool `pg` lorsqu'aucune connexion ne s'est libérée à temps : une erreur nue. */
+const POOL_WAIT_TIMEOUT = 'timeout exceeded when trying to connect';
+
+/**
+ * Vrai si l'opération n'a pas obtenu de connexion à la base dans le délai imparti : toutes
+ * celles du pool étaient occupées. Deux formes, selon qui renonce le premier :
+ *  - Prisma, pour une transaction — deux secondes d'attente au plus (`P2028`) ;
+ *  - le pool `pg`, pour toute requête — `DATABASE_CONNECTION_TIMEOUT_MS`.
+ *
+ * L'opération n'a pas commencé : elle n'a rien écrit. Ce n'est pas un défaut du programme
+ * mais une saturation, à laquelle l'API répond `503` (voir `toProblem`).
+ *
+ * Aucune des deux erreurs ne porte de code qui lui soit propre : elles se reconnaissent à leur
+ * message. Un test les provoque avec un vrai pool saturé (`database-saturation.spec.ts`) : il
+ * échoue si une montée de version de Prisma ou de `pg` en change les termes.
+ *
+ * Ne sont **pas** de ce cas : une base qui refuse les connexions, une connexion rompue, une
+ * transaction trop longue — rien ne dit alors que l'opération n'a pas commencé. Devant une
+ * base qui ne répond plus du tout, les requêtes se partagent : celles qui ouvrent une
+ * connexion échouent avec elle (`500`), celles qui attendaient leur tour sont de ce cas.
+ */
+export function isDatabaseSaturated(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    return error.code === 'P2028' && error.message.includes(TRANSACTION_START_TIMEOUT);
+  }
+  return error instanceof Error && error.message === POOL_WAIT_TIMEOUT;
+}

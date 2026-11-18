@@ -4,6 +4,7 @@ import { Prisma } from '../../generated/prisma/client.js';
 import {
   ACCOUNT_CLOSED_SQLSTATE,
   isAccountClosedError,
+  isDatabaseSaturated,
   isLockContention,
   isTransactionConflict,
   isUniqueViolation,
@@ -34,6 +35,17 @@ function databaseError(code: string, sqlState?: string): Prisma.PrismaClientKnow
  */
 function commitError(cause: unknown, name = 'DriverAdapterError'): Error {
   return Object.assign(new Error('Commit refused'), { name, cause });
+}
+
+/** Erreur de Prisma à propos d'une transaction elle-même (`P2028`), et non d'une instruction. */
+function transactionApiError(
+  message: string,
+  code = 'P2028',
+): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError(`Transaction API error: ${message}`, {
+    code,
+    clientVersion: 'test',
+  });
 }
 
 describe('erreurs de base de données', () => {
@@ -137,5 +149,74 @@ describe('erreurs de base de données', () => {
     expect(isLockContention(databaseError('P2034'))).toBe(false);
     expect(isLockContention(new Error('canceling statement due to lock timeout'))).toBe(false);
     expect(isLockContention(null)).toBe(false);
+  });
+
+  it('reconnaît une base saturée : aucune connexion ne s’est libérée à temps', () => {
+    // Prisma renonce le premier, pour une transaction qui n'a pas pu commencer.
+    expect(
+      isDatabaseSaturated(transactionApiError('Unable to start a transaction in the given time.')),
+    ).toBe(true);
+    // Le pool renonce le premier : une erreur nue, que Prisma laisse passer telle quelle…
+    expect(isDatabaseSaturated(new Error('timeout exceeded when trying to connect'))).toBe(true);
+    // … ou en y notant sa version.
+    expect(
+      isDatabaseSaturated(
+        Object.assign(new Error('timeout exceeded when trying to connect'), {
+          clientVersion: '7.10.1',
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('ne prend pour une saturation ni une transaction trop longue, ni une base injoignable', () => {
+    // Autres erreurs `P2028` : la transaction avait commencé — rien ne dit ce qu'elle a fait.
+    for (const message of [
+      'A query cannot be executed on an expired transaction. The timeout for this transaction ' +
+        'was 5000 ms, however 5012 ms passed since the start of the transaction.',
+      'Transaction already closed: A commit cannot be executed on a committed transaction.',
+      'Transaction already closed: A query cannot be executed on a transaction that was rolled back.',
+      'Transaction not found. Transaction ID is invalid.',
+    ]) {
+      expect({ message, saturated: isDatabaseSaturated(transactionApiError(message)) }).toEqual({
+        message,
+        saturated: false,
+      });
+    }
+    // Les mots de Prisma sous un autre code, ou hors d'une erreur de Prisma : ce n'est pas elle.
+    expect(
+      isDatabaseSaturated(
+        transactionApiError('Unable to start a transaction in the given time.', 'P2010'),
+      ),
+    ).toBe(false);
+    expect(isDatabaseSaturated(new Error('Unable to start a transaction in the given time.'))).toBe(
+      false,
+    );
+    // Les mots du pool dans une erreur de Prisma : ce n'est pas celle du pool.
+    expect(
+      isDatabaseSaturated(
+        new Prisma.PrismaClientKnownRequestError('timeout exceeded when trying to connect', {
+          code: 'P2028',
+          clientVersion: 'test',
+        }),
+      ),
+    ).toBe(false);
+    // Base injoignable, connexion rompue, autre service : des pannes, pas une file d'attente.
+    for (const message of [
+      'Connection terminated due to connection timeout',
+      'Connection terminated unexpectedly',
+      'connect ECONNREFUSED 10.0.0.12:5432',
+      'redis: timeout exceeded when trying to connect',
+      'timeout exceeded when trying to connect to the cache',
+    ]) {
+      expect({ message, saturated: isDatabaseSaturated(new Error(message)) }).toEqual({
+        message,
+        saturated: false,
+      });
+    }
+    // Seule une erreur compte : ni un objet qui lui ressemble, ni une chaîne, ni rien.
+    expect(isDatabaseSaturated({ message: 'timeout exceeded when trying to connect' })).toBe(false);
+    expect(isDatabaseSaturated('timeout exceeded when trying to connect')).toBe(false);
+    expect(isDatabaseSaturated(null)).toBe(false);
+    expect(isDatabaseSaturated(undefined)).toBe(false);
   });
 });

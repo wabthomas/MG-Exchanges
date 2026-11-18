@@ -91,7 +91,7 @@ erreurs de validation. Une erreur serveur ne révèle jamais de détail interne.
 | `RATE_LIMITED`              | 429    | trop de requêtes (voir `Retry-After`)                                              |
 | `INTERNAL_ERROR`            | 500    | erreur inattendue                                                                  |
 | `MAINTENANCE`               | 503    | plateforme en maintenance                                                          |
-| `SERVICE_UNAVAILABLE`       | 503    | service momentanément indisponible                                                 |
+| `SERVICE_UNAVAILABLE`       | 503    | service momentanément indisponible ou saturé (voir `Retry-After`)                  |
 
 Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
 
@@ -99,6 +99,17 @@ Le catalogue fait foi dans `packages/contracts/src/errors/error-codes.ts`.
 en croisait une autre — interblocage, conflit de sérialisation —, la requête répond
 `409 CONFLICT` (« The request conflicted with another one. Please try again. ») : **rien n'a
 été écrit en base**, elle est à refaire. Le cas est journalisé côté serveur.
+
+**Base saturée.** Lorsque toutes les connexions de l'API à la base sont occupées par
+d'autres requêtes et qu'aucune ne se libère à temps, la requête répond
+`503 SERVICE_UNAVAILABLE` avec l'en-tête `Retry-After: 5` (« The service is temporarily
+overloaded. Please retry in a few seconds. »), et non `500` : rien n'est en panne.
+**L'opération refusée n'avait pas commencé** — une transaction abandonnée ainsi n'a rien
+écrit — et la requête se renvoie telle quelle après ce délai, sous la même `Idempotency-Key`
+si la route en demande une : l'opération n'est alors exécutée qu'une fois. Toute route qui
+lit ou écrit en base peut répondre ainsi, y compris avant l'examen du jeton d'accès : ce
+`503` ne dit rien de la session, qui reste valide. Le cas est journalisé côté serveur. Une
+base injoignable, elle, reste une erreur `500`.
 
 ### Erreurs produites par le reverse proxy
 
