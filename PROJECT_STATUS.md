@@ -1,6 +1,6 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-17 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés ; intégration continue active._
+_Dernière mise à jour : 2026-11-18 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond) ; intégration continue active._
 
 ## Synthèse
 
@@ -90,6 +90,14 @@ fonde un ajustement — quelle pièce, quel rapprochement, quelles personnes —
 procédure qui vous revient. Il faut désormais **deux administrateurs** pour qu'un ajustement
 aboutisse. Huit choix ont été faits sans vous pour que le lot soit complet : ils sont à
 confirmer (décision 15).
+
+**Surcharge et pannes.** Deux retouches du socle ont suivi le lot 3. Une base saturée fait
+répondre « réessayez dans cinq secondes », et non plus « erreur » ; ce que les tâches de fond
+signalent s'écrit désormais dans les journaux. En provoquant des pannes pour le vérifier,
+deux défauts plus anciens sont apparus, **non corrigés** : si Redis — le service qui tient
+les files de tâches — revient vide d'une coupure, **plus aucun message ne part** jusqu'au
+redémarrage de l'API, et rien ne le signale ; et l'API ne s'arrête pas d'elle-même tant que
+Redis est injoignable. Leur correction est proposée en tête du prochain lot (décision 16).
 
 ## Phase 2 — identité et utilisateurs
 
@@ -486,15 +494,70 @@ lot 3 le sien (251 contrôles), avec deux administrateurs créés pour l'occasio
 décrite ci-dessus : une fois un portefeuille gelé, la version précédente ne sait plus
 répondre proprement à un transfert qui le touche.
 
+### Retouches du socle — livrées : base saturée, erreurs des tâches de fond
+
+Les deux corrections proposées à la fin du lot 3, faites avant le lot suivant. Elles
+n'ajoutent aucune fonctionnalité et ne touchent pas à la base de données — aucune route
+nouvelle, aucune migration — ; une réponse de l'API change.
+
+**Une base saturée répond « réessayez dans cinq secondes », et non plus « erreur ».** Quand
+toutes les connexions de l'API à la base sont occupées, une requête de plus attend — deux
+secondes pour une transaction, cinq pour le reste —, puis elle est abandonnée **sans avoir
+commencé**. L'API répondait alors `500`, comme pour un défaut du programme ; elle répond
+maintenant `503`, avec l'en-tête `Retry-After: 5`. L'opération refusée n'a rien écrit ; la
+requête se renvoie telle quelle, et un transfert renvoyé sous la même clé n'est fait qu'une
+fois. La supervision y lit une surcharge, non une panne. Rejouée, la rafale de 72 transferts
+qui avait révélé le défaut — chaque validation retardée de 100 ms — voit 30 transferts
+refusés faute de connexion : les 30 refus sont reconnus pour ce qu'ils sont.
+
+**Ce que les tâches de fond signalent s'écrit dans les journaux, au bon format.** Une
+connexion à Redis perdue, une tâche qui perd son verrou, un passage du relais ou de la purge
+en échec : chacun laisse désormais une ligne structurée, avec le nom de sa file. Jusque-là,
+la bibliothèque qui tient les files écrivait elle-même, hors format — ou rien n'était écrit
+du tout. Une même erreur ne s'écrit qu'une fois par demi-minute, avec le nombre de ses
+répétitions.
+
+**Éprouvé en provoquant les pannes**, sur l'API compilée, lancée seule contre un PostgreSQL
+et un Redis réels, avant puis après la correction :
+
+| Panne provoquée              | Avant                                                  | Désormais                              |
+| ---------------------------- | ------------------------------------------------------ | -------------------------------------- |
+| Redis arrêté 12 secondes     | 120 erreurs brutes, hors des journaux structurés       | 6 lignes structurées                   |
+| Redis arrêté 40 secondes     | 150 erreurs brutes                                     | 12 lignes, qui en annoncent 129 autres |
+| Base supprimée huit secondes | **aucune ligne** pour huit passages du relais en échec | une ligne                              |
+
+**Le défaut était plus large que le constat.** Celui-ci visait les erreurs des trois
+exécutants de tâches ; l'essai a montré que les trois files en émettent autant, et qu'un
+passage du relais en échec ne laissait de ligne nulle part. Les trois sont corrigés.
+
+**Six choix techniques ont été faits sans vous** (ADR 0028, décision 16) : la saturation se
+reconnaît au message de l'erreur, faute de code — un test la provoque pour de vrai, et
+échouera si une mise à jour en change les termes — ; le délai annoncé est de cinq secondes ;
+ces lignes sont de niveau « erreur » ; l'API ne relance pas elle-même une requête refusée ;
+une ligne par demi-minute et par erreur ; les passages en échec du relais et de la purge sont
+écrits eux aussi, ce que le constat ne demandait pas.
+
+**Ce que ces essais ont trouvé d'autre** — deux comportements antérieurs à ces retouches,
+**non corrigés**, proposés en tête du prochain lot (« Problèmes identifiés ») : si Redis
+revient **vide**, plus aucun message ne part jusqu'au redémarrage de l'API, sans que rien le
+signale ; et l'API ne s'arrête pas d'elle-même tant que Redis est injoignable.
+
+**Ce qui change pour un client** : toute route peut répondre `503` avec `Retry-After` ; il
+attend ce délai, puis renvoie sa requête. Rien d'autre. Détail :
+[`CHANGELOG.md`](CHANGELOG.md) ; pour l'exploitation,
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), « Saturation et pannes ». Décision : ADR 0028.
+
 ### Suite proposée de la phase 3
 
 À confirmer par vous — rien n'en est commencé :
 
-- **En tête du prochain lot — deux retouches du socle**, relevées par le contrôle des tests
-  de ce lot (« Problèmes identifiés », points 9 et 10) : répondre `503`, avec le délai avant
-  de réessayer, lorsque la base est saturée, au lieu de `500` ; faire passer par les journaux
-  structurés les erreurs des files de tâches de fond. Courtes l'une et l'autre ; la première
-  change une réponse de l'API.
+- **En tête du prochain lot — deux autres retouches du socle**, relevées en provoquant des
+  pannes pour vérifier les premières (« Problèmes identifiés ») : **réinscrire les tâches
+  planifiées quand Redis revient**, et faire dire à la sonde qu'elles manquent — un Redis
+  revenu vide laisse aujourd'hui l'API sans relais ni purge, sans que rien le signale — ;
+  **borner l'arrêt de l'API**, qui ne s'arrête pas d'elle-même tant que Redis est
+  injoignable. Courtes l'une et l'autre. La première compte le plus : c'est par le relais que
+  partent les codes de vérification.
 - **Lot 4 — fermer, dans la base, l'entrée des fonds.** Aujourd'hui, la base exige d'une
   écriture d'ajustement qu'elle ait son ajustement approuvé, mais elle accepte une écriture
   équilibrée d'un autre type (voir « Problèmes identifiés »). Le lot ferait de toute ligne
@@ -514,7 +577,7 @@ un prestataire, et l'autorisation correspondante (décision 11).
 
 ## Résultats de tests
 
-Exécution du 2026-11-16 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
+Exécution du 2026-11-18 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
 
 | Vérification                     | Résultat                         |
 | -------------------------------- | -------------------------------- |
@@ -524,25 +587,27 @@ Exécution du 2026-11-16 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **2 135 tests réussis, 0 échec** |
+| `pnpm test`                      | **2 160 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 96    | —                                               |
 | `@mgx/contracts`          | 70    | —                                               |
-| API — unitaires           | 605   | —                                               |
-| API — intégration         | 657   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 604   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — unitaires           | 617   | —                                               |
+| API — intégration         | 669   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 605   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
-Les 1 261 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
+Les 1 274 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
 d'une transaction est retardée de 25 ms. Cette répétition « disque lent » a été ajoutée après
 le lot 3 de la phase 3 : le PostgreSQL de l'environnement de développement valide sans
 attendre le disque, à la différence de celui de la CI et d'une installation réelle, et un
 test qui dépendait de cette durée a échoué une fois dans la CI. À 100 ms, bien au-delà de ce
-que demande un disque en bon état, tous passent sauf un, qui lance 72 transferts à la fois :
-la base ne suit plus, et l'API répondrait alors `500` (voir « Problèmes identifiés »,
-points 8 et 9).
+que demande un disque en bon état — mesure faite sur les 1 261 tests du lot 3, et non refaite
+en entier depuis —, tous passaient sauf un, qui lance 72 transferts à la fois : la base ne
+suit plus. L'API aurait alors répondu `500` ; elle répond désormais `503`, avec le délai
+avant de réessayer (voir « Problèmes identifiés », lot 3, points 8 et 9, et « Retouches du
+socle »).
 
 Ce que ces tests établissent, notamment :
 
@@ -557,6 +622,16 @@ Ce que ces tests établissent, notamment :
 - **traitements asynchrones** : 6 relais concurrents publient 40 événements exactement une
   fois chacun ; un échec est retenté puis abandonné explicitement ; rien n'est publié si la
   transaction est annulée ;
+- **base saturée** : provoquée avec un vrai pool de connexions, elle donne `503` et le délai
+  avant de réessayer ; la transaction refusée n'a rien exécuté ; une écriture du grand livre
+  refusée ne laisse rien, et passe une fois lorsqu'elle est renvoyée sous la même clé ; une
+  requête authentifiée n'est pas prise pour une session invalide, ni une connexion pour un
+  mot de passe erroné ; une transaction trop longue et une base injoignable restent des
+  erreurs ;
+- **tâches de fond** : chaque file et chaque exécutant de l'application est écouté ; ce
+  qu'ils signalent est écrit avec le nom de la file ; un passage du relais qui échoue à
+  chaque échéance n'écrit qu'une ligne ; l'échec du traitement d'un événement en écrit une à
+  chaque fois ;
 - **sécurité HTTP** : aucun détail interne dans une erreur 500, secrets absents des journaux,
   documentation fermée en production, limitation de débit non contournable par `X-Forwarded-For` ;
 - **reverse proxy** : les erreurs que Nginx produit lui-même respectent le contrat d'erreur de
@@ -855,7 +930,7 @@ Ce que ces tests établissent, notamment :
   et le personnel ajuste, gèle et lève encore ; la copie des données dit quel portefeuille
   est gelé, l'historique ce que la plateforme y a fait — jamais pourquoi.
 
-**Efficacité des tests vérifiée par mutation.** 1 928 défauts ont été introduits
+**Efficacité des tests vérifiée par mutation.** 1 979 défauts ont été introduits
 volontairement, un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -1144,6 +1219,16 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   relancés, font chacun échouer une vérification. **Plus aucun des 1 904 défauts n'est
   détecté par un test resté bloqué** (voir « Problèmes identifiés »).
 
+- Retouches du socle : 51 défauts — ce qui est pris pour une saturation, ce que l'API répond
+  alors, ce que les tâches de fond écrivent, la règle d'une ligne par période, l'oubli des
+  erreurs passées. **Tous sont détectés**, à la première exécution et sans compléter les
+  tests, chacun par une vérification : aucun par un test resté bloqué, aucun en faisant
+  échouer un fichier entier. Les dix-neuf défauts des lots précédents qui visent le même
+  terrain — transactions, erreurs de la base, traduction des erreurs en réponses — ont été
+  rejoués : tous détectés. Les autres défauts des lots précédents n'ont pas été rejoués ;
+  leurs motifs s'appliquent tous au code livré, ce qui porte à 1 955 les défauts rejouables
+  par script.
+
 ## Infrastructure : vérifications hors Docker
 
 L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accès aux dépôts de
@@ -1232,6 +1317,14 @@ sur ce que l'API annonce, et attend la fenêtre suivante lorsque la limite appro
 ici à travers le vrai Nginx, il compte 259 contrôles ; 122 puis 119 de ses requêtes y sont
 comptées par la limite, avec une pause de 43 secondes.
 
+**Retouches du socle.** Une exécution avant celle qui accompagne ces lignes (commit
+`fd0aa1a`) : au vert, sans correction, journaux lus. Le job de tests exécute les 2 160
+tests — dont ceux qui saturent un vrai pool de connexions, sur un PostgreSQL qui attend son
+disque —, sans dérive du schéma ni vulnérabilité connue. Le job Docker rejoue le parcours,
+inchangé : 162 requêtes, 123 comptées par la limite, une pause. **Les pannes, elles, ne sont
+pas rejouées par la CI** : les coupures de Redis et de la base ont été provoquées ici, à la
+main, sur l'API compilée.
+
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
 exécuté ici, hors Docker (`infrastructure/ci/publish-terms-cli.sh`) ; il reste à l'appeler
@@ -1246,13 +1339,59 @@ vérification d'identité à travers Nginx » :
 
 (avec le même retrait que les étapes voisines : six espaces devant le tiret.)
 
-**Ce que cela ne dit pas.** L'environnement qui prépare ce dépôt ne peut pas lire les journaux
-d'une exécution (leur hébergement lui est inaccessible) : seuls le résultat et la durée de
-chaque étape lui sont connus. Un échec futur devra donc être lu sur GitHub. La CI ne déploie
-rien, et ne teste ni TLS, ni sauvegarde, ni montée en charge (phase 9) ; elle n'exécute que
-Node.js 24.
+**Ce que cela ne dit pas.** Les journaux d'une exécution ne se lisent d'ici que depuis le
+lot 3 de la phase 3 ; des exécutions antérieures, seuls le résultat et la durée de chaque
+étape sont connus. La CI ne déploie rien, ne provoque aucune panne, et ne teste ni TLS, ni
+sauvegarde, ni montée en charge (phase 9) ; elle n'exécute que Node.js 24.
 
 ## Problèmes identifiés
+
+### Pendant les retouches du socle
+
+Relevés en provoquant des pannes pour vérifier les deux corrections. Les trois premiers sont
+antérieurs à ces retouches et **restent ouverts** ; le quatrième est un défaut de la
+correction elle-même, corrigé avant sa publication.
+
+1. **Si Redis revient vide, plus aucun message ne part — et rien ne le signale.** Les deux
+   tâches planifiées de l'API, le relais de la boîte d'envoi et la purge, sont inscrites dans
+   Redis au démarrage de l'API, et seulement là. Essai : Redis arrêté 12 secondes, puis
+   relancé **sans ses données**. L'API s'y reconnecte, la sonde de disponibilité répond
+   `200`, les requêtes aboutissent, aucune ligne d'erreur n'est écrite — et un événement
+   écrit à ce moment attendait encore une minute plus tard : plus rien n'est relayé ni purgé
+   jusqu'au redémarrage de l'API. Les codes de vérification, qui passent par ce relais, ne
+   partent plus. Relancé **avec** ses données, comme le fait la pile Docker du dépôt
+   (persistance activée, volume conservé), tout reprend de soi-même : un événement écrit de
+   la même façon est parti en moins de vingt secondes. Le cas suppose donc une persistance
+   absente, un volume perdu ou une bascule vers une instance neuve ; mais il est silencieux,
+   et c'est ce silence qu'il faut corriger : réinscrire les tâches quand Redis revient, et
+   faire dire à la sonde qu'elles manquent. **Non corrigé** ; d'ici là, `docs/DEPLOYMENT.md`
+   donne la vérification à faire après toute coupure de Redis.
+
+2. **L'API ne s'arrête pas d'elle-même tant que Redis est injoignable.** À la demande
+   d'arrêt, elle ferme d'abord les exécutants de ses files, puis son serveur HTTP. Or la
+   fermeture d'un exécutant attend sa connexion à Redis : pendant une coupure — et encore
+   huit secondes après le retour d'une coupure de 40 secondes —, elle n'aboutit pas, le
+   serveur HTTP continue de répondre, et le processus reste là : observé vingt secondes, et
+   une fois plus de deux minutes, jusqu'à l'arrêt forcé. Après une coupure courte, ou une
+   demi-minute après le retour, l'arrêt prend moins d'une seconde. Aucune donnée n'est en
+   jeu : l'hébergeur force l'arrêt à l'expiration de son délai, une transaction interrompue
+   est annulée, un événement non relayé reste en base. Mais une mise à jour déployée pendant
+   une panne de Redis en est ralentie, et les requêtes en cours à cet instant sont coupées.
+   Le comportement est celui de la bibliothèque des files, reproduit sans l'API. **Non
+   corrigé** : il faut borner l'arrêt.
+
+3. **Pendant une coupure de Redis, une requête attend jusqu'à neuf secondes avant
+   d'échouer.** La limitation de débit ne laisse rien passer sans compter : c'est voulu, et
+   la requête répond `500`. Mais elle ne le fait qu'après une à neuf secondes, le temps de
+   ses tentatives de reconnexion ; la sonde de disponibilité, elle, répond `503` en deux
+   secondes, ce qui suffit à retirer l'instance du trafic. Relevé, non modifié : à revoir
+   avec le point précédent.
+
+4. **Le premier jet de la règle « une ligne par période » perdait des décomptes.** Écrire la
+   ligne d'une erreur effaçait le nombre de répétitions des autres. Les tests unitaires
+   d'alors passaient ; c'est l'essai de 40 secondes sans Redis qui l'a montré — une seule des
+   six lignes portait son décompte. Corrigé avant publication, avec le test qui manquait ;
+   l'essai refait donne les six.
 
 ### Pendant le lot 3 de la phase 3
 
@@ -1261,8 +1400,8 @@ autres, par le contrôle des tests qui l'a suivie. Le premier touche le produit,
 ouvert ; le deuxième, son déploiement ; les trois suivants, le parcours de vérification ; les
 sixième, septième et huitième, les tests eux-mêmes — aucun de ces trois-là n'a demandé de
 modifier le code livré. Les deux derniers touchent de nouveau le produit : non ce lot, mais
-le socle sur lequel il repose, tel qu'il est depuis la phase 1. Ils restent ouverts ; une
-correction est proposée.
+le socle sur lequel il repose, tel qu'il est depuis la phase 1. Ouverts à la fin du lot, ils
+ont été corrigés depuis (« Retouches du socle »).
 
 1. **La base de données ne ferme pas la liste des types d'écriture.** Ce lot fait vérifier
    par PostgreSQL qu'une écriture d'ajustement a son ajustement, approuvé par deux personnes
@@ -1395,7 +1534,7 @@ correction est proposée.
    abandonnée n'a rien écrit : la requête peut être renvoyée, avec la même clé d'idempotence
    s'il s'agit d'un transfert. **Non corrigé dans ce lot** : c'est une règle nouvelle du
    socle, qui change une réponse de l'API ; elle est proposée en tête du prochain lot
-   (« Suite proposée de la phase 3 »).
+   (« Suite proposée de la phase 3 »). **Corrigé depuis** : voir « Retouches du socle ».
 
 10. **Une erreur d'une file de tâches de fond échappe aux journaux structurés.** Relevé dans
     la sortie des tests : celui du relais de la boîte d'envoi passe, mais affiche de temps à
@@ -1406,7 +1545,8 @@ correction est proposée.
     exécutant, et BullMQ les écrit alors lui-même sur la sortie d'erreur, sans format ni
     identifiant. Une connexion à Redis perdue ou un verrou de tâche expiré ne paraîtraient
     donc pas dans les journaux structurés — ce qui n'a pas été éprouvé hors des tests. **Non
-    corrigé dans ce lot** ; proposé avec le point précédent.
+    corrigé dans ce lot** ; proposé avec le point précédent. **Corrigé depuis**, et éprouvé
+    hors des tests : voir « Retouches du socle ».
 
 ### Pendant le lot 2 de la phase 3
 
@@ -1996,15 +2136,30 @@ Socle :
   nouvelles tentatives, étalées sur un quart de seconde au plus). Partout ailleurs, la
   requête répond `409` et c'est au client de la renvoyer.
 - **Base saturée** : une transaction qui attend plus de deux secondes une connexion libre à
-  la base est abandonnée — une requête simple, au bout de cinq —, et l'API répond
-  `500 INTERNAL_ERROR`, comme pour un défaut du programme. La transaction abandonnée n'a rien
-  écrit, et la requête peut être renvoyée ; mais `503`, avec le délai avant de réessayer,
-  serait la réponse exacte. Relevé sous 72 transferts simultanés, chaque validation retardée
-  de 100 ms ; correction proposée en tête du prochain lot (voir « Problèmes identifiés »).
-- **Erreurs des files de tâches de fond** : une erreur de l'exécutant d'une file — connexion
-  à Redis perdue, verrou de tâche expiré — est écrite sur la sortie d'erreur, hors des
-  journaux structurés : aucun des trois traitements de fond ne l'écoute. Correction proposée
-  avec la précédente.
+  la base est abandonnée — une requête simple, au bout de cinq —, et l'API répond `503` avec
+  le délai avant de réessayer. Elle reconnaît cette situation **au message de l'erreur**,
+  faute de code : une mise à jour de Prisma ou de `pg` qui en changerait les termes ferait
+  revenir le `500` — et échouer le test qui la provoque. L'API ne relance pas elle-même la
+  requête. Devant une base qui accepte la connexion et ne répond plus, les deux réponses se
+  mêlent : `500` pour la requête qui ouvrait une connexion, `503` pour celles qui attendaient
+  derrière elle. Le nombre de connexions — dix par instance — n'a pas été éprouvé sous charge
+  (phase 9).
+- **Journaux des tâches de fond** : une même erreur ne s'écrit qu'une fois par demi-minute,
+  avec le nombre de ses répétitions ; une erreur qui cesse ne laisse pas de ligne de fin — la
+  durée d'une panne se lit à trente secondes près. Aucune alerte n'est branchée sur ces
+  lignes (phase 9). Les pannes qui ont éprouvé ces journaux ont été provoquées à la main ;
+  aucun test automatique ne les rejoue.
+- **Redis revenu vide : ni relais ni purge, et aucun signal.** Les tâches planifiées ne sont
+  inscrites qu'au démarrage de l'API ; si Redis perd ses données, elles disparaissent, la
+  sonde de disponibilité répond pourtant `200`, et aucun message ne part jusqu'au redémarrage
+  de l'API. La pile Docker du dépôt conserve les données de Redis. Correction proposée en
+  tête du prochain lot (voir « Problèmes identifiés »).
+- **Arrêt pendant une coupure de Redis** : l'API ne s'arrête pas d'elle-même tant que Redis
+  est injoignable, ni dans les secondes qui suivent son retour d'une longue coupure ;
+  l'hébergeur doit forcer l'arrêt. Aucune donnée n'est en jeu. Correction proposée avec la
+  précédente.
+- **Requêtes pendant une coupure de Redis** : elles échouent (`500`) — la limitation de débit
+  ne laisse rien passer sans compter —, mais après une à neuf secondes d'attente.
 - **Boîte d'envoi** : remise « au moins une fois » (les consommateurs doivent être
   idempotents) ; nouvelle tentative par événement et non par consommateur ; pas encore
   d'outil pour rejouer un événement abandonné. Les événements publiés sont supprimés après
@@ -2114,3 +2269,17 @@ réalisées.
       la clôture ; le lever est l'acte d'**une seule personne** ;
     - une demande **échoit après 72 heures**, comme une demande de changement de rôle ;
     - les ajustements sont **fermés par défaut** ; les gels, non : on gèle à tout moment.
+
+16. **Socle : six choix techniques à confirmer, deux corrections à autoriser.** Les six choix
+    des retouches du socle (ADR 0028) ; sans objection de votre part, ils restent :
+    - une base saturée se reconnaît **au message de l'erreur** ; un test la provoque pour de
+      vrai, et signalera tout changement ;
+    - le délai annoncé au client est de **cinq secondes** ;
+    - ces refus, et les erreurs des tâches de fond, s'écrivent au niveau **« erreur »** ;
+    - l'API **ne relance pas** elle-même une requête refusée faute de connexion ;
+    - une même erreur de tâche de fond s'écrit **une fois par demi-minute** ;
+    - les **passages en échec** du relais et de la purge sont écrits eux aussi.
+
+    Et les deux corrections proposées en tête du prochain lot : réinscrire les tâches
+    planifiées quand Redis revient, et borner l'arrêt de l'API (« Suite proposée de la
+    phase 3 »).
