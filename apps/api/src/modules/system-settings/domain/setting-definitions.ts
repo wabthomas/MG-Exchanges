@@ -15,6 +15,7 @@ export const FEATURE_SETTING_KEYS = {
   registration: 'features.registration',
   kyc: 'features.kyc',
   internalTransfers: 'features.internal_transfers',
+  manualAdjustments: 'features.manual_adjustments',
   fiatDeposits: 'features.fiat_deposits',
   fiatWithdrawals: 'features.fiat_withdrawals',
   cryptoDeposits: 'features.crypto_deposits',

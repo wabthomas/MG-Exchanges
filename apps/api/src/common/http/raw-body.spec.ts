@@ -9,6 +9,23 @@ import { BoundedBody, type RawBodyLimits, readRawBody } from './raw-body.js';
 
 const LIMITS: RawBodyLimits = { maxBytes: 1000, discardUpToBytes: 4000, timeoutMs: 2000 };
 
+/**
+ * Attente maximale d'une réponse. Plus courte que le délai d'un test (5 s) : un serveur resté
+ * muet, ou qui garde la connexion, fait échouer le test sur ce constat — non sur son délai,
+ * qui ne dirait pas ce qui a manqué.
+ */
+const ANSWER_GUARD_MS = 3000;
+
+/** Ce qu'a laissé voir un serveur qui n'a pas fermé la connexion dans le temps imparti. */
+function unanswered(received: readonly Buffer[]): Error {
+  const raw = Buffer.concat(received).toString('latin1');
+  return new Error(
+    raw === ''
+      ? 'The server neither answered nor closed the connection.'
+      : `The server answered, but did not close the connection: ${raw.split('\r\n\r\n')[1] ?? raw}`,
+  );
+}
+
 interface Outcome {
   readonly code: string;
   readonly detail?: string;
@@ -151,8 +168,8 @@ describe('readRawBody', () => {
       let hungUp = false;
       const guard = setTimeout(() => {
         socket.destroy();
-        reject(new Error('The server neither answered nor closed the connection.'));
-      }, 8000);
+        reject(unanswered(chunks));
+      }, ANSWER_GUARD_MS);
 
       socket.on('connect', () => {
         socket.write([...head, '', ''].join('\r\n'));
@@ -277,8 +294,8 @@ describe('readRawBody', () => {
       const chunks: Buffer[] = [];
       const guard = setTimeout(() => {
         socket.destroy();
-        reject(new Error('No answer.'));
-      }, 8000);
+        reject(unanswered(chunks));
+      }, ANSWER_GUARD_MS);
       socket.on('connect', () => {
         socket.write(first);
         socket.write(bytes(3000));

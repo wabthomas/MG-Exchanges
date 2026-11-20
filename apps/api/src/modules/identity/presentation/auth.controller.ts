@@ -37,7 +37,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { CurrentUser, Public } from '../../../common/auth/auth.decorators.js';
+import {
+  AllowBeforeTermsAcceptance,
+  CurrentUser,
+  Public,
+} from '../../../common/auth/auth.decorators.js';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import {
   ApiProblemResponses,
@@ -84,12 +88,17 @@ export class AuthController {
     description:
       'Creates an individual account and e-mails a 6-digit verification code. The account ' +
       'cannot sign in until the address is verified. Signing up again with an address whose ' +
-      `sign-up was never completed replaces it entirely. ${SAME_ANSWER} ` +
+      `sign-up was never completed replaces it entirely. ${SAME_ANSWER}\n\n` +
+      'Signing up accepts the terms of use in force: `acceptedTermsVersion` is the `number` ' +
+      'of the version the person was shown (`GET /terms/current`). If another version has ' +
+      'been published since, the request is refused (`409 TERMS_VERSION_NOT_CURRENT`): show ' +
+      'the current version and try again. Until a first version is published, nobody can ' +
+      'sign up (`503 SERVICE_UNAVAILABLE`).\n\n' +
       'Requires the `registration` feature to be open.',
   })
   @ApiBody({ schema: toOpenApiInputSchema(registerRequestSchema) })
   @ApiAcceptedResponse({ schema: toOpenApiSchema(verificationPendingSchema) })
-  @ApiProblemResponses(400, 403, 422, 429, 503)
+  @ApiProblemResponses(400, 403, 409, 422, 429, 503)
   register(
     @Body({ schema: registerRequestSchema }) body: RegisterRequest,
     @ReqContext() client: RequestContext,
@@ -223,6 +232,7 @@ export class AuthController {
 
   @Post('logout')
   @AllowDuringMaintenance()
+  @AllowBeforeTermsAcceptance()
   @HttpCode(204)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Sign out', description: 'Closes the current session immediately.' })
@@ -279,6 +289,7 @@ export class AuthController {
   }
 
   @Post('password/change')
+  @AllowBeforeTermsAcceptance()
   @HttpCode(204)
   @ApiBearerAuth()
   @ApiOperation({

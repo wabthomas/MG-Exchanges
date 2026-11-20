@@ -3,6 +3,7 @@ import type { Job } from 'bullmq';
 import { PinoLogger } from 'nestjs-pino';
 
 import { DOMAIN_EVENTS_QUEUE } from '../../../infrastructure/queue/queue.constants.js';
+import { QueueErrorLog } from '../../../infrastructure/queue/queue-error-log.js';
 import { DomainEventHandlerRegistry } from '../application/domain-event-handler.registry.js';
 import type { DomainEventEnvelope } from '../domain/domain-event.js';
 
@@ -16,6 +17,7 @@ export class DomainEventsProcessor extends WorkerHost {
   constructor(
     private readonly registry: DomainEventHandlerRegistry,
     private readonly logger: PinoLogger,
+    private readonly queueErrors: QueueErrorLog,
   ) {
     super();
     this.logger.setContext(DomainEventsProcessor.name);
@@ -38,5 +40,10 @@ export class DomainEventsProcessor extends WorkerHost {
       },
       'Domain event handling failed',
     );
+  }
+
+  @OnWorkerEvent('error')
+  onWorkerError(error: Error): void {
+    this.queueErrors.workerError(DOMAIN_EVENTS_QUEUE, error);
   }
 }

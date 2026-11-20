@@ -138,6 +138,33 @@ export function textLineSchema(maxLength: number): z.ZodString {
     .regex(NO_CONTROL_CHARACTER, { error: 'Must not contain control characters.' });
 }
 
+/**
+ * Tout caractère, sauf les caractères de contrôle autres que le saut de ligne et la tabulation,
+ * et sauf une demi-paire de substitution isolée (texte mal formé, qui ne s'encode pas en UTF-8).
+ */
+const TEXT_BLOCK_CHARACTERS = /^(?:[\n\r\t]|[^\p{Cc}\p{Cs}])*$/u;
+const HAS_VISIBLE_CHARACTER = /\S/u;
+/** Marque d'ordre des octets : certains éditeurs en placent une, invisible, en tête de fichier. */
+const BYTE_ORDER_MARK = '\uFEFF';
+
+/**
+ * Texte libre de plusieurs lignes (texte contractuel…) : borné, non vide, sans caractère de
+ * contrôle autre que le saut de ligne et la tabulation, et sans marque d'ordre des octets en
+ * tête. Il n'est **pas** retouché : ce qui est validé est ce qui sera conservé, à l'octet près.
+ */
+export function textBlockSchema(maxLength: number): z.ZodString {
+  return z
+    .string()
+    .max(maxLength)
+    .regex(HAS_VISIBLE_CHARACTER, { error: 'Must not be blank.' })
+    .regex(TEXT_BLOCK_CHARACTERS, {
+      error: 'Must be plain text: no control characters other than line breaks and tabs.',
+    })
+    .refine((value) => !value.startsWith(BYTE_ORDER_MARK), {
+      error: 'Must not start with a byte order mark.',
+    });
+}
+
 /** Vrai si `value` est un fuseau horaire IANA connu de l'environnement (`Africa/Kinshasa`). */
 export function isTimeZone(value: string): boolean {
   try {

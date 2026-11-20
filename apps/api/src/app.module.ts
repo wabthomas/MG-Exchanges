@@ -13,9 +13,12 @@ import { AuditModule } from './modules/audit/audit.module.js';
 import { HealthModule } from './modules/health/health.module.js';
 import { IdentityModule } from './modules/identity/identity.module.js';
 import { KycModule } from './modules/kyc/kyc.module.js';
+import { AdjustmentsModule } from './modules/adjustments/adjustments.module.js';
+import { LedgerModule } from './modules/ledger/ledger.module.js';
 import { NotificationsModule } from './modules/notifications/notifications.module.js';
 import { OutboxModule } from './modules/outbox/outbox.module.js';
 import { SystemSettingsModule } from './modules/system-settings/system-settings.module.js';
+import { TransfersModule } from './modules/transfers/transfers.module.js';
 
 /**
  * Racine du monolithe modulaire.
@@ -42,6 +45,9 @@ import { SystemSettingsModule } from './modules/system-settings/system-settings.
     NotificationsModule,
     IdentityModule,
     KycModule,
+    LedgerModule,
+    TransfersModule,
+    AdjustmentsModule,
     HealthModule,
   ],
   providers: [

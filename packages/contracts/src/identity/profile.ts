@@ -134,6 +134,21 @@ export const ACTIVITY_TYPES = [
   'DATA_EXPORTED',
   'DATA_EXPORT_FAILED',
   'ACCOUNT_CLOSURE_FAILED',
+  'TERMS_ACCEPTED',
+  /** Un transfert a été envoyé depuis le compte. */
+  'TRANSFER_SENT',
+  /** Un transfert a été demandé sans la preuve du titulaire : mot de passe ou second facteur erroné. */
+  'TRANSFER_FAILED',
+  /** Un transfert a été refusé : plafonds, fonds, destinataire, portefeuille gelé. */
+  'TRANSFER_REFUSED',
+  /** La plateforme a crédité un portefeuille du compte (ajustement manuel). */
+  'WALLET_CREDITED',
+  /** La plateforme a débité un portefeuille du compte (ajustement manuel). */
+  'WALLET_DEBITED',
+  /** La plateforme a gelé un portefeuille du compte. */
+  'WALLET_FROZEN',
+  /** La plateforme a levé le gel d'un portefeuille du compte. */
+  'WALLET_UNFROZEN',
 ] as const;
 export type ActivityType = (typeof ACTIVITY_TYPES)[number];
 

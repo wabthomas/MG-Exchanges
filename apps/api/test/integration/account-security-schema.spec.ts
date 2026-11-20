@@ -37,7 +37,7 @@ describe('Sécurité des comptes — garanties portées par la base de données'
   const insertUser = async (db: pg.Client): Promise<string> => {
     sequence += 1;
     const result = await db.query<{ id: string }>(
-      `INSERT INTO users (email, country_code, terms_accepted_at)
+      `INSERT INTO users (email, country_code, registered_at)
        VALUES ($1, 'CD', now()) RETURNING id`,
       [`security${String(sequence)}@example.cd`],
     );

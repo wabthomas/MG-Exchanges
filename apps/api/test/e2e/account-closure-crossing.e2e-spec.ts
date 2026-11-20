@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import {
   type KycCase,
@@ -5,10 +7,14 @@ import {
   recoveryCodesSchema,
   sessionListSchema,
   totpEnrollmentSchema,
+  transferSchema,
 } from '@mgx/contracts';
+import { defineAsset, Money } from '@mgx/shared';
 import request from 'supertest';
 
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
+import { LedgerService } from '../../src/modules/ledger/application/ledger.service.js';
+import { platformAccount, userAccount } from '../../src/modules/ledger/domain/ledger-account.js';
 import {
   backgroundWorkDone,
   bearer,
@@ -35,12 +41,18 @@ import {
   png,
   type TestFile,
 } from '../support/kyc.js';
+import { registerAssetInSql } from '../support/ledger-sql.js';
 import {
   type CrossingMoment,
   RequestCrossing,
   RequestCrossingModule,
 } from '../support/request-crossing.module.js';
+import { publishTermsAsOperator } from '../support/terms.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
+import { withConnection } from '../support/test-database.js';
+import { freshKey, setLimitInSql } from '../support/transfers-sql.js';
+
+const USD = defineAsset('USD', 2);
 
 interface Member extends RegisteredUser {
   readonly id: string;
@@ -93,6 +105,8 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
   let prisma: PrismaService;
   let crossing: RequestCrossing;
   let officer: Member;
+  /** Destinataire des transferts de ces scénarios. */
+  let peer: Member;
 
   const get = (member: Member, path: string) =>
     http.get(`/api/v1${path}`).set(bearer(member.accessToken)).set(from(newClientIp()));
@@ -116,6 +130,29 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
       .set('Content-Type', file.contentType)
       .send(file.content);
   const caseOf = (response: { body: unknown }): KycCase => kycCaseSchema.parse(response.body);
+  /** Transfert en dollars de `member` à `peer`. */
+  const transfer = (member: Member, amount: string) =>
+    post(member, '/me/transfers', {
+      recipientEmail: peer.email,
+      assetCode: 'USD',
+      amount,
+      currentPassword: member.password,
+    }).set('Idempotency-Key', freshKey());
+  /** Des fonds arrivent de l'extérieur, par le grand livre. */
+  const deposit = (member: Member, amount: string): Promise<unknown> =>
+    testApp.app.get(LedgerService).post({
+      idempotencyKey: `e2e:${randomUUID()}`,
+      kind: 'test.deposit',
+      actor: { type: 'SYSTEM' },
+      postings: [
+        {
+          account: platformAccount('platform_custody'),
+          side: 'DEBIT',
+          amount: Money.parse(amount, USD),
+        },
+        { account: userAccount(member.id), side: 'CREDIT', amount: Money.parse(amount, USD) },
+      ],
+    });
 
   async function customer(): Promise<Member> {
     const user = await registerVerifiedUser(http, testApp);
@@ -200,6 +237,7 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
       challenges: await prisma.verificationChallenge.count(where),
       profiles: await prisma.userProfile.count(where),
       sessions: await prisma.userSession.count(where),
+      termsAcceptances: await prisma.termsAcceptance.count(where),
       unexaminedCases: await prisma.kycCase.count({
         where: { userId, status: { in: ['DRAFT', 'SUBMITTED'] } },
       }),
@@ -212,6 +250,7 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     challenges: 0,
     profiles: 0,
     sessions: 0,
+    termsAcceptances: 0,
     unexaminedCases: 0,
   };
 
@@ -234,9 +273,60 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     },
     { route: 'GET /me/mfa', expected: [200, null], prepare: async (m) => () => get(m, '/me/mfa') },
     {
+      route: 'GET /me/terms',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/terms'),
+    },
+    {
+      route: 'POST /me/terms/acceptance',
+      expected: [409, 409],
+      prepare: async (m) => {
+        // Une nouvelle version, que le compte doit accepter.
+        const { number } = await publishTermsAsOperator(testApp.database);
+        return () => post(m, '/me/terms/acceptance', { version: number });
+      },
+    },
+    {
       route: 'GET /me/verification',
       expected: [200, null],
       prepare: async (m) => () => get(m, '/me/verification'),
+    },
+    {
+      route: 'GET /me/wallets',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/wallets'),
+    },
+    {
+      route: 'GET /me/wallets/{assetCode}/movements',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/wallets/USD/movements'),
+    },
+    {
+      route: 'GET /me/transfers',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/transfers'),
+    },
+    {
+      route: 'GET /me/transfers/{transferId}',
+      expected: [200, null],
+      prepare: async (m) => {
+        // Un transfert de tout ce que le compte détient : il lui reste de quoi être clôturé.
+        await deposit(m, '10.00');
+        const made = transferSchema.parse((await transfer(m, '10.00').expect(201)).body);
+        return () => get(m, `/me/transfers/${made.id}`);
+      },
+    },
+    {
+      route: 'GET /me/transfer-limits',
+      expected: [200, null],
+      prepare: async (m) => () => get(m, '/me/transfer-limits'),
+    },
+    {
+      // Avant tout traitement : le mot de passe n'existe plus. À la première transaction : le
+      // compte de l'émetteur, verrouillé, est trouvé clôturé — avant même l'examen de ses fonds.
+      route: 'POST /me/transfers',
+      expected: [401, 409],
+      prepare: async (m) => () => transfer(m, '10.00'),
     },
     {
       route: 'POST /auth/logout',
@@ -429,7 +519,15 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     crossing = testApp.app.get(RequestCrossing);
     await openFeature(testApp, 'registration');
     await openFeature(testApp, 'kyc');
+    await openFeature(testApp, 'internalTransfers');
+    // Un actif tenu par la plateforme : sans lui, la lecture d'un portefeuille répond 404. Les
+    // transferts y sont ouverts aux comptes sans niveau vérifié.
+    await withConnection(testApp.database.ownerUrl, async (owner) => {
+      await registerAssetInSql(owner, 'USD', 2);
+      await setLimitInSql(owner, 'USD', 0, [10_000, 10_000, 10_000]);
+    });
     officer = await complianceOfficer();
+    peer = await customer();
   });
 
   afterAll(async () => {

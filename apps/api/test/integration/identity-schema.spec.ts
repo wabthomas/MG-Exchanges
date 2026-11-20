@@ -42,7 +42,7 @@ describe('Identité — garanties portées par la base de données', () => {
     const row = {
       email: `user${sequence}@example.cd`,
       country_code: 'CD',
-      terms_accepted_at: new Date(),
+      registered_at: new Date(),
       ...overrides,
     };
     const columns = Object.keys(row);

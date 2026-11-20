@@ -52,10 +52,12 @@ web et mobile : ils n'utilisent ni API Node.js ni framework serveur (règle ESLi
 apps/api/src/
   main.ts                 point d'entrée : charge et valide la configuration, démarre
   app.module.ts           racine : assemble socle technique et modules
-  bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests
+  bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests ;
+                          lancement (start.ts) et arrêt borné (shutdown.ts)
   config/                 schéma des variables d'environnement, configuration typée
   common/                 transverse : erreurs, filtre global, validation, expurgation,
-                          décorateurs d'accès (@Public, @RequirePermissions, @CurrentUser)
+                          décorateurs d'accès (@Public, @RequirePermissions,
+                          @AllowBeforeTermsAcceptance, @CurrentUser)
   infrastructure/         PostgreSQL (Prisma), Redis, files (BullMQ), journalisation, débit
   modules/
     health/               sondes de vivacité et de disponibilité
@@ -65,61 +67,143 @@ apps/api/src/
     notifications/        messages aux utilisateurs (port d'envoi, modèles, envoi SMTP, boîte de développement)
     identity/             comptes, authentification, second facteur, sessions, profil,
                           téléphone, historique, autorisations, back-office des comptes et
-                          des rôles, clôture, effacement et copie des données, purge périodique
+                          des rôles, conditions d'utilisation, clôture, effacement et copie
+                          des données, purge périodique
     kyc/                  vérification d'identité : dossiers par niveau, pièces chiffrées,
                           examen par la conformité
-  cli/                    outil d'exploitation (création des premiers administrateurs)
+    ledger/               grand livre en partie double : actifs, comptes, écritures ;
+                          portefeuilles en lecture ; gel d'un portefeuille ; vérification
+                          périodique
+    transfers/            transferts entre titulaires : clé d'idempotence, preuve du
+                          titulaire, plafonds par niveau de vérification ; administration
+                          des plafonds
+    adjustments/          ajustements manuels du personnel : crédit et débit d'un
+                          portefeuille, sous double validation
+  cli/                    outil d'exploitation (création des premiers administrateurs,
+                          publication des conditions d'utilisation)
 ```
 
-**Sens des dépendances entre modules métier.** `kyc` dépend d'`identity` (comptes, gardes,
-permissions) ; l'inverse n'est pas vrai : l'identité n'importe rien du module `kyc`.
+**Sens des dépendances entre modules métier.** `kyc`, `ledger`, `transfers` et `adjustments`
+dépendent d'`identity` (comptes, gardes, permissions, preuve du titulaire) ; l'inverse n'est
+pas vrai : l'identité n'importe rien de ces modules. `transfers` et `adjustments` dépendent
+en outre de `ledger` — ils y passent leurs écritures (`LedgerService.postWithin`) et y lisent
+les actifs, les soldes et les gels (`LedgerReader`) — ; le grand livre, lui, ignore tout des
+opérations qui s'en servent. **Le gel d'un portefeuille appartient au grand livre**, non à
+une opération : c'est lui qui le fait respecter, à chaque ligne, pour toutes.
 
 - Pour connaître le niveau d'un compte et son profil vérifié, elle **lit** les dossiers
   acceptés à travers son propre port, `VerificationStatusReader` — en lecture seule : seul le
   module `kyc` écrit un dossier.
 - Pour la purge des dossiers abandonnés, elle expose un registre, `MaintenanceStepRegistry` :
-  un module y inscrit une étape, exécutée avec la tâche horaire. Un module ajouté plus tard se
-  branche de la même façon, sans que l'identité le connaisse.
+  un module y inscrit une étape, exécutée avec la tâche horaire — une purge, ou une
+  vérification : le grand livre y inscrit la sienne (`verify-ledger`), les ajustements la
+  clôture de leurs demandes échues (`expire-ledger-adjustments`). Un module ajouté plus tard
+  se branche de la même façon, sans que l'identité le connaisse.
 - Pour la clôture d'un compte, elle expose un second registre, `AccountDataRegistry`. Un
   module qui détient des données rattachées à un compte s'y inscrit (`AccountDataHolder`) et
   répond de ce qu'il détient : ce qui s'oppose à la clôture, jusqu'à quand la loi impose de
   conserver, ce qui s'efface à la clôture puis à l'échéance, ce qui figure dans la copie
-  remise au titulaire. **Tout module à venir qui rattache des données à un compte — le grand
-  livre, les ordres — doit s'y inscrire** : sans cela, la clôture ignorerait ce qu'il détient.
+  remise au titulaire. Le grand livre s'y inscrit : des fonds s'opposent à la clôture, un
+  portefeuille gelé aussi, une écriture passée impose dix ans de conservation, rien ne
+  s'efface, les portefeuilles figurent dans la copie. Les transferts s'y inscrivent aussi, pour la seule copie des
+  données : ils ne retiennent pas la clôture — ce sont les fonds restants qui la retiennent,
+  et le grand livre le dit — et ne s'effacent pas. **Tout module à venir qui rattache des
+  données à un compte — les ordres, par exemple — doit s'y inscrire** : sans cela, la clôture
+  ignorerait ce qu'il détient.
   La base, elle, refuse de toute façon une ligne ajoutée à un compte clôturé, pour les tables
   qui portent le déclencheur `<table>_account_open` (voir [`DATABASE.md`](DATABASE.md)).
 
 ### Chaîne de traitement d'une requête
 
-Quatre gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
+Cinq gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
 
 1. **limitation de débit** par adresse IP ;
 2. **maintenance** — `503` sauf routes `@AllowDuringMaintenance()` ;
 3. **authentification** — refus par défaut : `401` sauf routes `@Public()` ;
 4. **permissions** — sur une route qui porte `@RequirePermissions(...)` : `403 FORBIDDEN` si
    le compte ne les détient pas, puis `403 MFA_ENROLLMENT_REQUIRED` s'il n'a pas activé la
-   validation en deux étapes. Tout refus est inscrit au journal d'audit.
+   validation en deux étapes. Tout refus est inscrit au journal d'audit ;
+5. **conditions d'utilisation** — refus par défaut : `403 TERMS_ACCEPTANCE_REQUIRED` tant
+   que le compte doit accepter la version en vigueur, sauf routes
+   `@AllowBeforeTermsAcceptance()`. Ne sont pas concernées les routes publiques (personne
+   n'y est identifié) ni celles du back-office (`@RequirePermissions(...)`). La règle est
+   relue en base à chaque requête — une lecture, sans cache.
+
+**Toute nouvelle route d'un titulaire est donc fermée** à un compte qui doit accepter, sauf
+si elle déclare le contraire ; un test de bout en bout (`terms.e2e-spec.ts`) recense les
+routes et échoue tant qu'une route ajoutée n'est pas classée.
 
 Vient ensuite, sur les routes concernées, `@RequiresFeature(...)` (fonctionnalité ouverte ?).
 
-**Corps des requêtes.** Seul le JSON est analysé. L'unique route qui reçoit un fichier
-(l'envoi d'une pièce de vérification) lit elle-même le corps brut de la requête
-(`common/http/raw-body.ts`), **après** les gardes et ses propres contrôles — quota, dossier —,
-borné en taille et en durée ; le nombre de réceptions simultanées est plafonné
-(`common/http/concurrency-limit.ts`). Un envoi irrecevable est donc refusé sans avoir été lu.
+**En-tête `Idempotency-Key`.** Une route qui déplace des fonds le reçoit par le décorateur
+de paramètre `@IdempotencyKey()` (`modules/transfers/presentation/idempotency-key.ts`), qui
+refuse un en-tête absent, répété ou mal formé (`400`) avant que le service ne soit appelé.
+Le format est celui du contrat (`@mgx/contracts`), que la base vérifie aussi. Une opération
+à venir réutilise ce décorateur ; ce que la clé protège — la table où elle est unique,
+l'empreinte de la requête — reste propre à chaque opération.
+
+**Corps des requêtes.** Seul le JSON est analysé — par l'analyseur commun, **avant** les
+gardes, d'où sa limite basse. Deux routes reçoivent davantage et lisent elles-mêmes leur
+corps brut (`common/http/raw-body.ts`), **après** les gardes, borné en taille et en durée :
+
+- l'envoi d'une pièce de vérification (un fichier), après ses propres contrôles — quota,
+  dossier ; le nombre de réceptions simultanées est plafonné
+  (`common/http/concurrency-limit.ts`) ;
+- la publication des conditions d'utilisation (du JSON, jusqu'à 1 Mio) : la route est
+  inscrite dans `common/http/deferred-json-body.ts`, l'analyseur commun l'ignore, et elle
+  décode puis valide son corps avec `readJsonBody`. Une route JSON à venir qui dépasserait
+  la limite commune s'y inscrit de la même façon.
+
+Un envoi irrecevable est donc refusé sans avoir été lu.
 
 ### Tâches de fond
 
 | Tâche                        | Cadence        | Rôle                                                              |
 | ---------------------------- | -------------- | ----------------------------------------------------------------- |
 | relais de la boîte d'envoi   | chaque seconde | publie les événements de domaine validés avec leur transaction    |
-| traitement des événements    | à la demande   | envoi des codes et des messages de sécurité                       |
+| traitement des événements    | à la demande   | envoi des codes, des messages de sécurité, des avis de transfert  |
+|                              |                | et des avis d'ajustement                                          |
 | purge des données d'identité | chaque heure   | inscriptions jamais vérifiées, sessions terminées, codes expirés, |
 |                              |                | dossiers de vérification jamais déposés, comptes clôturés arrivés |
 |                              |                | à l'échéance d'effacement, événements publiés depuis trente jours |
+| vérification du grand livre  | chaque heure   | étape de la même tâche : relit tout le grand livre ; une anomalie |
+|                              |                | est journalisée, inscrite au journal d'audit, et rien n'est       |
+|                              |                | corrigé automatiquement                                           |
+| échéance des ajustements     | chaque heure   | étape de la même tâche : clôt les demandes d'ajustement restées   |
+|                              |                | sans décision pendant 72 heures                                   |
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
+Une tâche planifiée n'existe que là : un Redis qui perd ses données la perd aussi. Elles
+s'inscrivent donc toutes par `JobSchedules` (`infrastructure/queue`), qui les inscrit au
+démarrage puis **vérifie toutes les trente secondes** qu'elles sont dans Redis et à l'heure,
+réinscrit celle qui ne l'est pas, et l'écrit au journal (ADR 0029). Un test parcourt Redis et
+échoue s'il y trouve une tâche inscrite ailleurs.
+
+Ce que les files et leurs exécutants signalent hors de toute requête — connexion à Redis
+perdue, verrou d'une tâche expiré, passage en échec — passe par `QueueErrorLog`
+(`infrastructure/queue`), donc par les journaux structurés : les files y sont écoutées
+d'office, chaque exécutant par son traitement (`@OnWorkerEvent`), et un test parcourt
+l'application pour vérifier qu'aucun ne manque. Une même erreur répétée s'écrit une fois par
+période de trente secondes, avec le nombre de répétitions (ADR 0028).
+
+### Arrêt
+
+L'API écoute elle-même `SIGTERM` et `SIGINT` (`bootstrap/shutdown.ts`) — l'écoute de NestJS
+n'est pas activée. À la demande d'arrêt :
+
+1. le serveur HTTP **cesse aussitôt d'accepter** des connexions ;
+2. l'application se ferme dans l'ordre de NestJS : les exécutants de files achèvent leur
+   tâche en cours (`onModuleDestroy`), le serveur HTTP attend ses dernières réponses, puis
+   les files, Redis et la base sont fermés (`onApplicationShutdown`) ;
+3. à l'échéance (`SHUTDOWN_TIMEOUT_MS`, huit secondes par défaut), le processus se termine
+   même si cette fermeture n'a pas abouti — ce qui arrive tant que Redis est injoignable.
+
+Ce dont une requête ou une tâche en cours se sert — la base, Redis, les files — ne se ferme
+donc qu'à la dernière étape : **une ressource nouvelle doit se fermer dans
+`onApplicationShutdown`, non dans `onModuleDestroy`**, qui passe avant les dernières
+réponses. Codes de sortie, lignes écrites, réglages d'hébergement : `DEPLOYMENT.md`,
+« Arrêt de l'API » ; décision : ADR 0029.
 
 ### Deux horloges, un seul port
 
@@ -134,9 +218,21 @@ relu par PostgreSQL à sa propre horloge (`now()`), et la base refuse tout effac
 lui. L'horloge de l'application décide quand tenter l'effacement ; celle de la base, s'il est
 permis.
 
+De même, la date de publication d'une version des conditions d'utilisation et celle de chaque
+acceptation sont **fixées par PostgreSQL** (`clock_timestamp()`), quelle que soit la valeur
+que l'application lui présente : ce sont des preuves, et l'ordre des versions en dépend. Il
+en va de même de la date d'une écriture du grand livre, de l'enregistrement d'un actif et de
+l'ouverture d'un compte ; de celle d'un transfert — **c'est elle que comptent les plafonds
+sur 24 heures et sur 31 jours**, recalculés par la base à sa propre horloge — et de celle
+d'une modification de plafonds ; de la date d'une demande d'ajustement, de **son échéance**
+et de sa décision ; de celle d'un gel et de sa levée.
+
 ### Couches d'un module métier
 
-`system-settings`, `identity` et `kyc` servent de modèles aux modules métier à venir :
+`system-settings`, `identity`, `kyc`, `ledger`, `transfers` et `adjustments` servent de
+modèles aux modules métier à venir — `transfers` étant celui d'une **opération qu'un
+titulaire demande**, `adjustments` celui d'une **opération du personnel, sous double
+validation** :
 
 | Couche            | Rôle                                           | Peut dépendre de                     |
 | ----------------- | ---------------------------------------------- | ------------------------------------ |
@@ -154,7 +250,12 @@ le mécanisme de persistance et s'appuient directement sur le client de base de 
 **Quand la règle vit dans la base.** Certaines garanties ne peuvent pas reposer sur le seul
 code applicatif — précisément celles qui doivent tenir même si ce code est fautif : journal
 d'audit en ajout seul, double validation des changements de rôle, parcours d'un dossier de
-vérification d'identité. Elles sont alors
+vérification d'identité, clôture d'un compte, publication et acceptation des conditions
+d'utilisation, grand livre (écritures entières et équilibrées, soldes jamais négatifs, rien
+qui se modifie ni ne s'efface), transferts (plafonds du niveau de vérification, un transfert
+pour chaque écriture de transfert), ajustements (deux personnes habilitées, un ajustement
+approuvé pour chaque écriture d'ajustement), gel d'un portefeuille (aucune ligne n'y passe).
+Elles sont alors
 écrites en SQL dans la migration (contraintes, déclencheurs), recensées dans `DATABASE.md`,
 et couvertes par des tests d'intégration qui s'adressent directement à PostgreSQL avec le
 rôle applicatif. Le service fait les mêmes contrôles en amont, pour répondre clairement ; il
@@ -166,6 +267,52 @@ erreur métier.
 **Transactions explicites.** `UnitOfWork.run(tx => …)` délimite une transaction ; le client
 `tx` est passé explicitement à chaque service qui y participe. Les frontières de transaction
 sont donc toujours visibles dans le code — essentiel pour les opérations financières.
+Lorsque PostgreSQL annule une transaction parce qu'elle en croisait une autre (interblocage,
+conflit de sérialisation), `UnitOfWork.run(work, { retry })` la **relance entière**, un
+nombre borné de fois, après une courte pause tirée au hasard ; `work` doit donc pouvoir être
+rejoué, et ne rien faire hors de la transaction. Sans cette option, ou une fois les
+tentatives épuisées, la requête répond `409 CONFLICT` — jamais une erreur serveur.
+Une transaction qui n'a pas obtenu de connexion à temps n'est **pas** relancée : la base est
+saturée, et insister l'aggraverait. Elle n'a pas commencé ; la requête répond `503`, avec le
+délai avant de réessayer (`isDatabaseSaturated`, ADR 0028).
+
+**Un seul chemin pour l'argent.** Aucun module n'écrit un solde : il passe une écriture par
+`LedgerService` — `post` dans sa propre transaction, `postWithin(tx, …)` dans celle de
+l'opération. Chaque écriture porte une **clé d'idempotence** : la repasser rend le résultat
+d'origine sans rien écrire. **Ordre des verrous : les titulaires, puis les comptes.** Une
+écriture retient d'abord ses titulaires, dans l'ordre de leurs identifiants, puis verrouille
+ses comptes, dans l'ordre des leurs ; deux écritures qui se croisent s'attendent sans
+s'interbloquer. Une opération peut donc verrouiller un titulaire _avant_ de passer une
+écriture — pour vérifier un plafond, par exemple —, jamais après (ADR 0025).
+
+**Une opération, une transaction.** Le transfert en est le modèle (`TransferService`, ADR
+0026). Hors transaction d'abord : la preuve du titulaire, ce que la requête demande, la clé
+d'idempotence — le transfert existe-t-il déjà ? —, puis les bornes du compte. Dans la
+transaction ensuite, et dans cet ordre : **verrouiller le compte de l'émetteur** (`FOR NO KEY
+UPDATE` — ses opérations passent une à une, sa suspension et sa clôture attendent, mais pas
+les écritures qui le créditent) ; relire la clé, qu'une requête jumelle a pu employer pendant
+l'attente ; les plafonds, les fonds, le destinataire ; puis l'écriture
+(`LedgerService.postWithin`), la ligne de l'opération, le journal d'audit et les événements.
+Un refus annule tout : il est inscrit au journal **après** l'annulation, hors transaction, et
+ne retient pas la clé. Ce que le client a demandé d'identique rend le résultat d'origine ; ce
+qu'il a demandé d'autre sous la même clé est refusé.
+
+**Une opération du personnel, deux personnes.** L'ajustement en est le modèle
+(`AdjustmentService`, ADR 0027). La demande n'écrit qu'elle-même. L'approbation, elle :
+hors transaction d'abord, **la preuve de l'approbateur** — mot de passe et second facteur —,
+puis ce que la demande permet (en attente, une autre personne que son auteur et que le
+titulaire) ; dans la transaction ensuite, et dans cet ordre : **verrouiller la demande** —
+deux décisions simultanées passent l'une après l'autre — ; l'écriture
+(`LedgerService.postWithin`, sous une clé propre à l'ajustement) ; la décision, qui désigne
+l'écriture ; le journal d'audit et l'événement. La base vérifie les deux personnes à la
+décision, et l'accord de l'ajustement et de son écriture à la validation.
+
+**Un gel est une règle du grand livre.** Aucune opération n'a à s'en souvenir : la base
+refuse toute ligne sur un portefeuille gelé, et `LedgerService` le dit avant d'écrire
+(`WalletFrozenError`). Une opération qui veut un refus plus clair, ou plus tôt, le lit par
+`LedgerReader.isWalletFrozen` — sous le verrou du titulaire, que le gel attend, la lecture
+est exacte. Seuls les types d'écriture listés dans `ledger/domain/wallet-freeze.ts` passent
+un gel ; la base tient la même liste, et un test vérifie qu'elles s'accordent.
 
 **Rien d'important sans trace.** `AuditService.record(tx, …)` écrit dans la transaction de
 l'opération auditée : une action sensible ne peut pas aboutir sans son entrée d'audit.
@@ -177,6 +324,9 @@ entre instances (`FOR UPDATE SKIP LOCKED`). Les consommateurs sont idempotents.
 **Accès refusé par défaut.** Une route n'est accessible sans authentification que si elle
 est marquée `@Public()` ; un test compare l'ensemble des routes publiques à une liste fermée.
 L'identité de l'appelant s'obtient par `@CurrentUser()` — jamais d'un paramètre de la requête.
+De même, une route authentifiée est fermée au compte qui doit accepter les conditions
+d'utilisation, sauf si elle porte `@AllowBeforeTermsAcceptance()` ; un test compare, là aussi,
+les routes à deux listes fermées.
 
 **Fonctionnalités fermées par défaut.** Chaque fonctionnalité réglementée est un paramètre
 système, désactivé tant qu'aucune décision tracée ne l'ouvre. `@RequiresFeature('exchange')`
@@ -186,7 +336,8 @@ suffit à y soumettre une route ; `@AllowDuringMaintenance()` exempte une route 
 chaînes décimales sur le fil, `NUMERIC` en base (ADR 0007). ESLint interdit `parseFloat` et `toFixed`.
 
 **Configuration validée.** Toute variable d'environnement est validée au démarrage ; aucune
-partie du code ne lit `process.env` en dehors de `config/`.
+partie du code ne lit `process.env` en dehors de `config/` et des deux points d'entrée
+(`main.ts`, `cli/main.ts`), qui le transmettent tel quel à ce qui le valide.
 
 ## Conventions
 
@@ -206,9 +357,18 @@ partie du code ne lit `process.env` en dehors de `config/`.
 2. Modéliser les tables dans `schema.prisma`, créer la migration (`pnpm db:migrate:dev --create-only`),
    y ajouter contraintes et déclencheurs à la main, la documenter dans `DATABASE.md`.
 3. Définir les contrats (schémas Zod) dans `@mgx/contracts`.
-4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi.
+4. Écrire les cas d'usage en passant `tx` à l'audit et à la boîte d'envoi. Un mouvement de
+   fonds passe par `LedgerService.postWithin(tx, …)`, avec une clé d'idempotence propre à
+   l'opération — jamais par une écriture directe dans les tables du grand livre. Une route
+   qui déplace des fonds exige en plus la clé du client (`@IdempotencyKey()`) et la preuve du
+   titulaire (`HolderProofService`), et suit l'ordre décrit sous « Une opération, une
+   transaction ». Un portefeuille gelé la refuse d'office : ne l'ajouter aux types qui
+   passent un gel que si deux personnes doivent pouvoir la mener sur un portefeuille gelé.
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.
-6. Tester : unitaires, intégration sur PostgreSQL réel (concurrence comprise), bout en bout.
-7. Importer le module dans `app.module.ts`.
+6. Si le module rattache des données à un compte : l'inscrire à `AccountDataRegistry`
+   (clôture, conservation, effacement, copie des données) et poser le déclencheur
+   `<table>_account_open` sur ses tables.
+7. Tester : unitaires, intégration sur PostgreSQL réel (concurrence comprise), bout en bout.
+8. Importer le module dans `app.module.ts`.

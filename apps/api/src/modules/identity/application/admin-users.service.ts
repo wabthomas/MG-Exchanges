@@ -31,6 +31,7 @@ import { MfaRepository } from './mfa.repository.js';
 import { PendingLoginStore } from './pending-login.store.js';
 import { ProfileRepository } from './profile.repository.js';
 import { SessionRepository } from './session.repository.js';
+import { TermsService } from './terms.service.js';
 import { type DirectoryEntry, UserDirectory } from './user-directory.js';
 import { UserRepository } from './user.repository.js';
 import { VerificationStatusReader } from './verification-status.reader.js';
@@ -93,6 +94,7 @@ export class AdminUsersService {
     private readonly throttle: SecondFactorThrottle,
     private readonly verification: VerificationStatusReader,
     private readonly closures: AccountClosureRepository,
+    private readonly terms: TermsService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
     private readonly unitOfWork: UnitOfWork,
@@ -177,16 +179,25 @@ export class AdminUsersService {
   /** Fiche d'un compte. La consultation est journalisée. */
   async get(userId: string, actor: StaffActor): Promise<AdminUserDetail> {
     const now = this.clock.now();
-    const [entry, declared, verification, totp, recoveryCodesRemaining, activeSessions, closure] =
-      await Promise.all([
-        this.directory.find(this.prisma, userId),
-        this.profiles.find(this.prisma, userId),
-        this.verification.read(this.prisma, userId),
-        this.mfa.findTotp(this.prisma, userId),
-        this.mfa.countUnusedRecoveryCodes(this.prisma, userId),
-        this.sessions.countActive(this.prisma, userId, now),
-        this.closures.find(this.prisma, userId),
-      ]);
+    const [
+      entry,
+      declared,
+      verification,
+      totp,
+      recoveryCodesRemaining,
+      activeSessions,
+      closure,
+      terms,
+    ] = await Promise.all([
+      this.directory.find(this.prisma, userId),
+      this.profiles.find(this.prisma, userId),
+      this.verification.read(this.prisma, userId),
+      this.mfa.findTotp(this.prisma, userId),
+      this.mfa.countUnusedRecoveryCodes(this.prisma, userId),
+      this.sessions.countActive(this.prisma, userId, now),
+      this.closures.find(this.prisma, userId),
+      this.terms.accountTerms(this.prisma, userId),
+    ]);
     if (entry === null) {
       throw notFound();
     }
@@ -206,7 +217,6 @@ export class AdminUsersService {
     return {
       ...toSummary(entry),
       locale: localeSchema.catch('fr').parse(entry.locale),
-      termsAcceptedAt: entry.termsAcceptedAt.toISOString(),
       updatedAt: entry.updatedAt.toISOString(),
       profile: { ...profile, dateOfBirth: dateOfBirth?.toISOString().slice(0, 10) ?? null },
       verification: { level: verification.level, identityVerified, addressVerified },
@@ -216,6 +226,7 @@ export class AdminUsersService {
         recoveryCodesRemaining: enabledAt === null ? 0 : recoveryCodesRemaining,
       },
       activeSessions,
+      terms,
       closure: closure === null ? null : toAdminClosureView(closure),
     };
   }

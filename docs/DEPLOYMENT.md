@@ -1,11 +1,11 @@
 # Déploiement
 
-> **Avertissement.** L'environnement de développement ne disposait pas de Docker : l'image,
-> la pile Compose et Nginx **n'ont jamais été exécutés par Docker**. Leur contenu a été
-> exécuté hors Docker avec les vrais logiciels (détail dans `PROJECT_STATUS.md`), et la CI
-> les construit et les teste — mais **elle n'est pas encore activée** (voir « Intégration
-> continue »). Considérer ce document comme à confirmer tant qu'elle n'est pas passée au
-> vert. Le déploiement en production est l'objet de la phase 9.
+> **Avertissement.** L'environnement de développement ne disposait pas de Docker : le contenu
+> de l'image, de la pile Compose et de Nginx y est exécuté hors Docker, avec les vrais
+> logiciels (détail dans `PROJECT_STATUS.md`). **L'intégration continue, elle, les construit
+> et les teste avec Docker à chaque modification** — au vert depuis sa première exécution, le
+> 2026-11-13 (voir « Intégration continue »). Rien de tout cela n'a encore servi en
+> production : le déploiement est l'objet de la phase 9.
 
 ## Environnements
 
@@ -26,34 +26,39 @@ par environnement (`mgx:<APP_ENV>:`).
 
 Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env.example).
 
-| Variable                      | Obligatoire           | Rôle                                                                                                             |
-| ----------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `APP_ENV`, `NODE_ENV`         | recommandé            | environnement                                                                                                    |
-| `DATABASE_URL`                | oui                   | PostgreSQL, **rôle applicatif**                                                                                  |
-| `DATABASE_MIGRATION_URL`      | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                                       |
-| `SHADOW_DATABASE_URL`         | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production                 |
-| `REDIS_URL`                   | oui                   | Redis (`rediss://` pour TLS)                                                                                     |
-| `QUEUE_REDIS_URL`             | non                   | Redis dédié aux files (politique `noeviction`)                                                                   |
-| `TRUST_PROXY_HOPS`            | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                                 |
-| `CORS_ALLOWED_ORIGINS`        | selon clients         | origines autorisées                                                                                              |
-| `LOG_LEVEL`                   | non                   | `info` par défaut                                                                                                |
-| `AUTH_CODE_HMAC_SECRET`       | oui                   | clé du HMAC des codes à usage unique et des codes de secours (32 caractères au moins) — secret                   |
-| `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder** |
-| `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                             |
-| `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                           |
-| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests), `smtp` ou `none` ; `memory` interdit en staging et en production                |
-| `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                             |
-| `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                          |
-| `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                              |
-| `KYC_STORAGE_DIR`             | pour le KYC           | répertoire (chemin absolu) des pièces de vérification chiffrées — un **volume persistant**                       |
-| `KYC_ENCRYPTION_KEY`          | pour le KYC           | clé maîtresse des pièces (32 octets en base64), distincte de la précédente — secret, **à sauvegarder à part**    |
+| Variable                      | Obligatoire           | Rôle                                                                                                                                |
+| ----------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`, `NODE_ENV`         | recommandé            | environnement                                                                                                                       |
+| `DATABASE_URL`                | oui                   | PostgreSQL, **rôle applicatif**                                                                                                     |
+| `DATABASE_MIGRATION_URL`      | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                                                          |
+| `SHADOW_DATABASE_URL`         | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production                                    |
+| `REDIS_URL`                   | oui                   | Redis (`rediss://` pour TLS)                                                                                                        |
+| `QUEUE_REDIS_URL`             | non                   | Redis dédié aux files (politique `noeviction`)                                                                                      |
+| `TRUST_PROXY_HOPS`            | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                                                    |
+| `CORS_ALLOWED_ORIGINS`        | selon clients         | origines autorisées                                                                                                                 |
+| `LOG_LEVEL`                   | non                   | `info` par défaut                                                                                                                   |
+| `SHUTDOWN_TIMEOUT_MS`         | non                   | durée maximale d'un arrêt, en millisecondes (8 000 par défaut, de 1 000 à 120 000) — inférieure au délai d'arrêt de l'orchestrateur |
+| `AUTH_CODE_HMAC_SECRET`       | oui                   | clé du HMAC des codes à usage unique et des codes de secours (32 caractères au moins) — secret                                      |
+| `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder**                    |
+| `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                                                |
+| `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                                              |
+| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests), `smtp` ou `none` ; `memory` interdit en staging et en production                                   |
+| `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                                                |
+| `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                                             |
+| `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                                                 |
+| `KYC_STORAGE_DIR`             | pour le KYC           | répertoire (chemin absolu) des pièces de vérification chiffrées — un **volume persistant**                                          |
+| `KYC_ENCRYPTION_KEY`          | pour le KYC           | clé maîtresse des pièces (32 octets en base64), distincte de la précédente — secret, **à sauvegarder à part**                       |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
 
 **Redis et BullMQ.** Les files exigent la politique `maxmemory-policy noeviction` et une
 persistance (AOF). Si le même Redis sert plus tard de cache avec éviction, fournir une
-instance distincte via `QUEUE_REDIS_URL`.
+instance distincte via `QUEUE_REDIS_URL`. La persistance n'est pas un confort. L'API
+réinscrit d'elle-même ses tâches planifiées si Redis les perd, mais **elle ne peut pas rendre
+ce que Redis portait d'autre** : les événements déjà remis à la file et pas encore traités —
+leurs messages ne partent pas —, les compteurs de la limitation de débit, les connexions en
+attente de leur seconde étape (voir « Saturation et pannes »).
 
 ## Images
 
@@ -76,11 +81,52 @@ docker build -f infrastructure/docker/api.Dockerfile --target migrator -t mgx-ap
 2. Exécuter les migrations avec l'image `migrator` et `DATABASE_MIGRATION_URL` (rôle propriétaire).
 3. Démarrer la nouvelle version de l'API (`DATABASE_URL`, rôle applicatif).
 4. Attendre `GET /health/ready` = 200 avant d'y diriger du trafic.
-5. Retirer l'ancienne version : à la réception de `SIGTERM`, l'API ferme proprement son
-   serveur HTTP, ses files et ses connexions PostgreSQL et Redis (vérifié sur l'artefact de production).
+5. Retirer l'ancienne version : à la réception de `SIGTERM`, l'API cesse d'accepter des
+   connexions, mène à leur terme les requêtes et les tâches de fond en cours, puis ferme ses
+   files et ses connexions PostgreSQL et Redis — en `SHUTDOWN_TIMEOUT_MS` au plus (huit
+   secondes par défaut), que Redis réponde ou non. Voir « Arrêt de l'API ».
 
 Les migrations doivent donc rester compatibles avec la version précédente du code le temps
 de la bascule (schéma « étendre, migrer, contracter »).
+
+> **Exception : la migration `terms_of_use` (conditions d'utilisation).** Elle **renomme**
+> une colonne de `users` (`terms_accepted_at` devient `registered_at`) : une fois appliquée,
+> la version précédente de l'API ne lit plus aucun compte. **Arrêter l'API avant de migrer**,
+> puis démarrer la nouvelle version — une courte interruption, admise parce qu'aucun
+> environnement n'est encore en service. Pour la même raison, **revenir à l'image
+> précédente n'est plus possible une fois cette migration appliquée**, sauf à restaurer la
+> base. Sans objet pour une base neuve. La règle ci-dessus vaut de nouveau pour les
+> migrations suivantes.
+
+La migration `ledger` (grand livre), elle, **n'ajoute que** des tables, des règles et deux
+permissions : elle suit la règle, et la version précédente de l'API continue de fonctionner
+sur la base migrée. Constaté sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet — inscription, vérification d'identité, back-office, copie des données, clôture —
+sans une erreur.
+
+La migration `internal_transfers` (transferts entre titulaires) fait de même : deux tables,
+leurs règles, deux permissions. Elle ne fixe aucun plafond et n'ouvre aucune fonctionnalité.
+Constaté de la même façon, sur une base qui contenait déjà des comptes : la migration
+appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son parcours
+complet sans une erreur ; puis la nouvelle version a passé le sien, transferts compris.
+
+La migration `staff_ledger_operations` (ajustements manuels, gel d'un portefeuille) ajoute
+deux tables, leurs règles et six permissions — et **une règle sur une table existante** : un
+déclencheur sur `ledger_postings`, qui refuse toute ligne sur un portefeuille gelé. Aucun
+portefeuille n'est gelé par la migration, et la version précédente de l'API ne sait pas en
+geler : pour elle, rien ne change. Elle ne crédite aucun portefeuille et n'ouvre aucune
+fonctionnalité. Constaté de la même façon, sur une base qui contenait déjà des comptes : la
+migration appliquée pendant que la version précédente tournait, celle-ci a ensuite passé son
+parcours complet sans une erreur ; puis la nouvelle version a passé le sien.
+
+> **Une fois un portefeuille gelé, ne pas revenir à l'image précédente sans y penser.** La
+> base continue de faire respecter le gel — c'est voulu —, mais la version précédente de
+> l'API ne sait pas le dire. Constaté en gelant un portefeuille sous cette version : un
+> transfert depuis ce portefeuille, ou vers lui, y répond `500` au lieu d'un refus — rien ne
+> bouge, et le journal porte l'erreur `MGX12` — ; ni le portefeuille ni la copie des données
+> (format `4`) ne disent qu'il est gelé ; la clôture du compte, elle, reste refusée (`409`).
+> Le gel levé, tout reprend.
 
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
@@ -112,9 +158,14 @@ toutes les instances) : le relais de la boîte d'envoi (chaque seconde) et la **
 données d'identité** (chaque heure : inscriptions jamais vérifiées, sessions terminées, codes
 expirés, enrôlements abandonnés, demandes de rôle échues, dossiers de vérification jamais
 déposés, événements publiés de la boîte d'envoi, **effacement des comptes clôturés arrivés à
-échéance** — durées dans `DATABASE.md`). Un échec est journalisé
-(`Account maintenance step failed`) et visible dans la file `account-maintenance` ;
-l'exécution suivante réessaie.
+échéance** — durées dans `DATABASE.md` ; puis **vérification du grand livre**, voir « Grand
+livre », et clôture des demandes d'ajustement échues). Un échec est journalisé — l'étape
+(`Account maintenance step failed`), puis le passage (`Background job failed`) — et visible
+dans la file `account-maintenance` ; l'exécution suivante réessaie. Un passage du relais en
+échec, base injoignable par exemple, laisse la même ligne `Background job failed` : le
+suivant a lieu une seconde plus tard. Ces deux tâches n'existent que dans Redis : l'API les
+y inscrit à son démarrage, **puis vérifie toutes les trente secondes qu'elles y sont
+encore**, et les réinscrit sinon (« Saturation et pannes », « Au retour de Redis »).
 
 ## Clôture des comptes et effacement
 
@@ -160,7 +211,7 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   le passage : elle n'attend aucun verrou plus de 300 ms, puis recommence. Ce délai doit
   rester inférieur à `deadlock_timeout` de PostgreSQL (une seconde par défaut) : **ne pas
   abaisser ce réglage sous une seconde**, faute de quoi la base interromprait elle-même l'une
-  des deux requêtes, au hasard (`500`).
+  des deux requêtes, au hasard (`409` : rien n'est écrit, mais la requête est à refaire).
 - **Surveiller l'effacement.** L'étape `erase-closed-accounts` traite au plus 200 comptes par
   heure, de l'échéance la plus ancienne à la plus récente. Un compte qui ne peut pas être
   effacé est journalisé (`Closed account not erased`, avec son identifiant) et retenté à
@@ -186,6 +237,227 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
   rouvrir le service.
 - **Journal d'audit.** Il n'est jamais purgé (identifiant technique du compte, adresse IP,
   appareil). Sa durée de conservation reste à fixer avec le conseil juridique.
+
+## Grand livre
+
+Décisions : ADR 0025. Deux opérations passent des écritures à ce jour : le transfert entre
+titulaires, et l'ajustement du personnel sous double validation — **la seule route de l'API
+par laquelle des fonds entrent dans le grand livre ou en sortent** —, décrits aux deux
+sections suivantes. Ce que l'exploitation doit savoir :
+
+- **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
+  aucun ne l'est par les migrations. Un administrateur (`super_admin`, validation en deux
+  étapes) les enregistre par l'API :
+
+  ```bash
+  curl -X POST https://<hôte>/api/v1/admin/ledger/assets \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"code":"USD","name":"US dollar","kind":"FIAT","scale":2,"reason":"Comptes en dollars : décision du 12/03"}'
+  ```
+
+  **C'est définitif** : ni le code, ni le libellé, ni la nature, ni le nombre de décimales
+  (`scale` : 2 pour le dollar et le franc congolais, 8 pour le bitcoin, 18 au plus) ne se
+  modifient ensuite, et un actif ne se retire pas. Un nombre de décimales erroné oblige à
+  enregistrer l'actif sous un autre code. Enregistrer un actif ne déplace aucun fonds et
+  n'ouvre aucune opération : chaque titulaire voit apparaître un portefeuille à zéro.
+
+- **Vérification horaire.** L'étape `verify-ledger` de la tâche de maintenance relit **tout**
+  le grand livre. Une anomalie produit :
+  - une erreur dans les journaux, `Ledger verification failed`, avec la liste des anomalies
+    (nature et identifiant — jamais de montant ; cinquante au plus) ;
+  - une entrée `ledger.verification_failed` au journal d'audit ;
+  - l'échec de l'étape (`Account maintenance step failed`), à chaque passage tant que
+    l'anomalie demeure.
+
+  **Cette alerte doit être traitée sans délai** — et aucune alerte automatique n'est encore
+  branchée (phase 9) : c'est à la supervision des journaux de la relever. Une anomalie ne
+  peut venir que d'une écriture faite hors des règles de la base (déclencheurs désactivés
+  avec le rôle propriétaire, restauration partielle) ou d'un défaut de ces règles. **Ne rien
+  corriger à la main** : passer en mode maintenance, conserver les journaux, examiner. Rien
+  n'est corrigé automatiquement.
+
+- **Rôle propriétaire.** Il peut désactiver les règles du grand livre ; le rôle de l'API ne
+  le peut pas. Ses identifiants (`DATABASE_MIGRATION_URL`) ne servent qu'aux migrations et
+  aux outils d'exploitation, et ne sont jamais donnés à l'API.
+- **Requêtes qui se croisent.** Avertissement
+  `Request abandoned: its transaction conflicted with another one` : PostgreSQL a annulé une
+  transaction qui en croisait une autre, y compris après ses nouvelles tentatives ; la
+  requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans gravité ; répété,
+  il désigne des requêtes qui se disputent les mêmes lignes — à signaler.
+- **Sauvegarde et restauration.** Le grand livre se restaure **en entier, avec le reste de la
+  base** : restaurer une partie de ses tables le rendrait incohérent, ce que la vérification
+  relèverait. Après une restauration, laisser passer la vérification horaire avant de
+  rouvrir le service.
+- **Clôture d'un compte.** Un compte dont un portefeuille détient des fonds ne se clôt pas,
+  pas même par le personnel (`409`). Le titulaire peut les transférer à un autre compte, si
+  les transferts lui sont ouverts ; sinon, le personnel les fait sortir par un **débit sous
+  double validation** (voir « Opérations du personnel »). Un compte dont un portefeuille est
+  gelé ne se clôt pas davantage : le gel est d'abord levé.
+- **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
+  bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
+  puis à borner, avant que le grand livre ne compte des millions de lignes.
+
+## Transferts entre titulaires
+
+Décisions : ADR 0026. Ce que l'exploitation doit savoir :
+
+- **La mise à jour n'ouvre rien.** Après la migration, aucun plafond n'existe et la
+  fonctionnalité est fermée : `POST /api/v1/me/transfers` répond `403 FEATURE_DISABLED`.
+- **Ouvrir les transferts : trois décisions, dans cet ordre**, chacune par un administrateur
+  (`super_admin`, validation en deux étapes) et chacune justifiée :
+  1. **l'actif est enregistré** (voir « Grand livre ») ;
+  2. **des plafonds sont fixés**, dans cet actif, pour chaque niveau de vérification qui doit
+     y prendre part — un appel par niveau :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/transfer-limits/USD/1 \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"perTransfer":"<montant>","daily":"<montant>","monthly":"<montant>","reason":"Plafonds du niveau 1 : décision du 12/03"}'
+     ```
+
+     Les montants sont des chaînes décimales dans l'unité de l'actif (`"100.00"`), par
+     transfert, sur 24 heures glissantes et sur 31 jours glissants, et croissants.
+     **Aucune valeur n'est proposée ici : elles sont à arrêter par le propriétaire, avec la
+     conformité.** `GET /api/v1/admin/transfer-limits` relit ce qui est fixé ;
+
+  3. **la fonctionnalité est ouverte** :
+
+     ```bash
+     curl -X PUT https://<hôte>/api/v1/admin/system-settings/features.internal_transfers \
+       -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+       -d '{"value":true,"reason":"Ouverture des transferts : décision du 12/03"}'
+     ```
+
+- **Un niveau sans plafonds n'envoie ni ne reçoit.** Niveau 0 : adresse e-mail vérifiée,
+  aucun dossier accepté ; niveaux 1 à 3 : ceux de la vérification d'identité. Pour qu'un
+  compte **reçoive**, son niveau doit avoir des plafonds non nuls dans l'actif — ce qui lui
+  permet aussi d'envoyer, dans cette limite : il n'existe pas de réglage « réception seule ».
+- **Un changement de plafonds prend effet aussitôt**, y compris pour ce qui a déjà été
+  envoyé : un compte dont les envois dépassent déjà un plafond abaissé n'envoie plus rien
+  tant qu'ils ne sont pas sortis de la fenêtre. Une valeur erronée prend effet aussitôt elle
+  aussi : relire la réponse, qui rend les plafonds tels qu'ils sont enregistrés.
+- **Refermer.** Toute la fonctionnalité : le même appel avec `"value":false` — effectif en
+  moins de cinq secondes sur chaque instance. Un niveau dans un actif : ses trois montants à
+  `"0"` — effectif aussitôt. Des plafonds ne se suppriment pas.
+- **À ne pas ouvrir en production en l'état.** Les seuls fonds à transférer sont ceux que le
+  personnel a crédités à la main : les dépôts n'existent pas. Les valeurs des plafonds ne
+  sont pas arrêtées, et l'autorisation d'opérer reste à établir pays par pays (voir
+  `SECURITY.md`).
+- **E-mail.** Chaque transfert prévient ses deux parties. Sans serveur d'envoi configuré
+  (voir « Notifications »), ces messages ne partent pas — et le transfert a lieu quand même.
+- **Horloge de la base.** Les fenêtres de 24 heures et de 31 jours sont comptées à l'horloge
+  de PostgreSQL : elle doit être synchronisée (NTP), y compris sur un serveur de secours.
+- **Journal d'audit.** `transfer.created` (un transfert), `transfer.refused` (un refus, avec
+  son motif), `transfer.proof_failed` (mot de passe ou second facteur erroné),
+  `transfer_limit.set` (plafonds remplacés et nouveaux, justification),
+  `transfer_limit.listed_by_admin` (consultation).
+- **Journaux.** Avertissement
+  `Transfer refused by the database after the application admitted it` : l'état d'un compte a
+  changé pendant la requête — vérification retirée, plafonds abaissés, destinataire
+  suspendu ; la requête a répondu `409`, rien n'a été écrit. Isolé, le message est sans
+  gravité ; **répété, il signale que l'application et la base ne s'accordent plus sur une
+  règle** — un défaut, à signaler.
+- **Sauvegarde et restauration.** Les transferts se restaurent avec le grand livre, **en
+  entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La
+  vérification horaire du grand livre ne relit pas cette correspondance ; la base, elle, la
+  vérifie à chaque écriture.
+- **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre les transferts
+  et les ajustements manuels, fixe des plafonds sur son actif de test, **crédite un
+  portefeuille**, et laisse le tout ouvert : il est fait pour une pile de test, jamais pour
+  une plateforme en service.
+
+## Opérations du personnel : ajustements et gels
+
+Décisions : ADR 0027. Ce que l'exploitation doit savoir :
+
+- **La mise à jour n'ouvre rien et ne crédite rien.** Après la migration, les ajustements
+  manuels sont fermés (`403 FEATURE_DISABLED`), aucun portefeuille n'est gelé, et tous les
+  soldes sont ce qu'ils étaient.
+- **Il faut deux administrateurs.** Un ajustement est demandé par une personne et approuvé
+  par une autre, toutes deux habilitées — seul `super_admin` l'est à la livraison. Avec un
+  seul administrateur, **aucun ajustement ne peut aboutir** (voir « Premiers comptes
+  d'administration »). Chacun doit avoir activé la validation en deux étapes.
+- **Ouvrir les ajustements** — une décision d'administrateur, justifiée et tracée :
+
+  ```bash
+  curl -X PUT https://<hôte>/api/v1/admin/system-settings/features.manual_adjustments \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"value":true,"reason":"Ouverture des ajustements manuels : décision du 12/03"}'
+  ```
+
+  Le même appel avec `"value":false` les referme — effectif en moins de cinq secondes sur
+  chaque instance. Ce qui est en attente ne s'approuve plus, mais se refuse et se retire
+  encore.
+
+- **Créditer ou débiter un portefeuille : deux appels, par deux personnes.**
+
+  ```bash
+  # 1. Une première personne demande — rien ne bouge :
+  curl -X POST https://<hôte>/api/v1/admin/ledger/adjustments \
+    -H "Authorization: Bearer <jeton de la première>" -H "Content-Type: application/json" \
+    -d '{"userId":"<compte>","assetCode":"USD","direction":"CREDIT","amount":"<montant>","reason":"<pièce justificative>"}'
+
+  # 2. Une seconde approuve, en présentant de nouveau son mot de passe et son second facteur :
+  curl -X POST https://<hôte>/api/v1/admin/ledger/adjustments/<identifiant>/approve \
+    -H "Authorization: Bearer <jeton de la seconde>" -H "Content-Type: application/json" \
+    -d '{"currentPassword":"<mot de passe>","code":"<code à six chiffres>"}'
+  ```
+
+  **L'approbation est immédiate et définitive** : une erreur se corrige par un ajustement
+  inverse, lui aussi sous double validation. Une demande restée sans décision échoit après
+  72 heures. La justification (`reason`) est conservée indéfiniment et n'est jamais montrée
+  au titulaire : y désigner la pièce qui fonde l'ajustement — relevé, reçu, décision.
+
+- **Ce que crédite un ajustement.** La contrepartie est le compte de conservation de la
+  plateforme : un crédit dit que la plateforme détient, hors du grand livre, des fonds de
+  plus pour ce titulaire. **Rien ne le vérifie** : le rapprochement avec ce qu'elle détient
+  réellement reste à construire. Tant qu'il n'existe pas, chaque ajustement doit pouvoir être
+  rapproché à la main de sa pièce.
+- **Geler un portefeuille** — un appel, une personne (`wallet_freezes.create` : `super_admin`
+  et `compliance`) :
+
+  ```bash
+  curl -X POST https://<hôte>/api/v1/admin/ledger/wallet-freezes \
+    -H "Authorization: Bearer <jeton d'accès>" -H "Content-Type: application/json" \
+    -d '{"userId":"<compte>","assetCode":"USD","reason":"<motif>"}'
+  ```
+
+  Effet immédiat : plus rien ne part de ce portefeuille, plus rien n'y arrive — sauf par un
+  ajustement. **Le titulaire le voit** (son portefeuille porte `frozen`, ses transferts
+  répondent `WALLET_FROZEN`), sans en lire le motif ni recevoir de message : un gel n'est pas
+  une mesure discrète. Il vaut pour **un actif** ; pour arrêter tout un compte, le suspendre.
+  Lever un gel (`POST …/wallet-freezes/<identifiant>/lift`, avec `reason`) est réservé à
+  `super_admin`.
+
+- **Fermer un compte qui détient des fonds.** Dans l'ordre : un **débit** du solde, sous
+  double validation — la plateforme rend les fonds au titulaire hors de l'API — ; la levée du
+  gel éventuel ; puis la clôture (`POST /api/v1/admin/users/<compte>/close`). Un débit passe
+  sur un compte suspendu et sur un portefeuille gelé.
+- **E-mail.** Chaque ajustement approuvé prévient le titulaire. Sans serveur d'envoi
+  configuré (voir « Notifications »), ce message ne part pas — et l'ajustement a lieu quand
+  même. Un gel et sa levée n'envoient aucun message.
+- **Horloge de la base.** L'échéance d'une demande (72 heures) est fixée et relue à
+  l'horloge de PostgreSQL.
+- **Journal d'audit.** `ledger_adjustment.requested`, `.approved`, `.rejected`, `.cancelled` ;
+  `ledger_adjustment.approval_refused` (approbation qui n'a pas abouti, avec son motif) ;
+  `ledger_adjustment.approval_proof_failed` (mot de passe ou second facteur erroné) ;
+  `ledger_adjustment.request_denied` et `.decision_denied` (tentative sur son propre
+  portefeuille, ou d'approuver sa propre demande) ; `user.wallet_credited`,
+  `user.wallet_debited`, `user.wallet_frozen`, `user.wallet_unfrozen` (rattachées au compte
+  du titulaire) ; `user.wallet_freeze_denied`, `user.wallet_unfreeze_denied` ; consultations :
+  `ledger_adjustment.listed_by_admin`, `.viewed_by_admin`, `wallet_freeze.listed_by_admin`.
+- **Journaux.** Avertissement `Ledger adjustment approval refused by the database` : entre
+  le contrôle de l'API et l'écriture, la demande a échu, ou l'un des deux intervenants a
+  perdu sa qualité ; la requête a répondu `409`, rien n'a été écrit. Isolé, le message est
+  sans gravité. **Répété, ou portant sur des intervenants qui n'ont rien perdu, il signale
+  que l'application et la base ne s'accordent plus sur une règle** — un défaut, à signaler.
+  Il en va de même de `Wallet freeze refused by the database` et de
+  `Ledger adjustment request refused by the database`.
+- **Sauvegarde et restauration.** Les ajustements et les gels se restaurent avec le grand
+  livre, **en entier** : un ajustement approuvé sans son écriture, ou l'inverse, serait
+  incohérent ; un gel absent d'une restauration partielle laisserait passer ce qu'il
+  arrêtait. La vérification horaire du grand livre ne relit pas ces correspondances ; la
+  base, elle, les vérifie à chaque écriture.
 
 ## Vérification d'identité : stockage des pièces
 
@@ -235,9 +507,10 @@ des migrations), seul autorisé à écrire une attribution. L'opération est ins
 d'audit.
 
 **Il en faut au moins deux**, détenus par deux personnes : tout changement de rôle par l'API
-exige qu'un administrateur le demande et qu'un _autre_ l'approuve. Avec un seul
-administrateur, les rôles ne peuvent plus évoluer que par cet outil — qui reste aussi le
-recours si tous les administrateurs perdent leur accès.
+exige qu'un administrateur le demande et qu'un _autre_ l'approuve — et il en va de même de
+tout crédit ou débit manuel d'un portefeuille. Avec un seul administrateur, les rôles ne
+peuvent plus évoluer que par cet outil — qui reste aussi le recours si tous les
+administrateurs perdent leur accès —, et **aucun ajustement ne peut aboutir**.
 
 ```bash
 read -rs MGX_ADMIN_PASSWORD && export MGX_ADMIN_PASSWORD   # saisie masquée, 10 caractères au moins
@@ -257,9 +530,71 @@ production, quel que soit l'environnement.
 se connecter, puis `POST /api/v1/me/mfa/totp/enroll` et `POST /api/v1/me/mfa/totp/confirm`
 (voir `API.md`). Tant que ce n'est pas fait, toute route du back-office répond
 `403 MFA_ENROLLMENT_REQUIRED`. Conserver les codes de secours en lieu sûr. Le compte peut
-ensuite ouvrir les fonctionnalités
+ensuite publier les conditions d'utilisation (section suivante), ouvrir les fonctionnalités
 (`PUT /api/v1/admin/system-settings/features.registration`…) et demander l'attribution du
 rôle `support` aux agents (`POST /api/v1/admin/role-changes`).
+
+## Conditions d'utilisation
+
+**Avant d'ouvrir l'inscription, publier la version 1.** Tant qu'aucune version n'est publiée,
+`POST /auth/register` répond `503` ; dès qu'elle l'est, **tout compte existant doit
+l'accepter** avant de continuer — personnel compris, pour ses routes de client (le back-office,
+lui, reste ouvert). Le texte n'est pas fourni par le dépôt : il revient au propriétaire et à
+son conseil.
+
+**Publier est définitif.** Une version ne se modifie pas et ne se retire pas ; une erreur se
+corrige en publiant la version suivante. Relire le fichier avant de lancer la commande.
+
+Deux moyens, mêmes règles (`API.md`, « Conditions d'utilisation : publication ») :
+
+- le **back-office**, `POST /api/v1/admin/terms/versions`, par un administrateur ;
+- l'**outil en ligne de commande**, sur le serveur, avec le **rôle propriétaire** de la base —
+  le rôle même qui a exécuté les migrations. Il sert à installer la première version avant
+  l'ouverture, ou à publier sans back-office. Avec le rôle de l'API, la base refuse.
+
+```bash
+sha256sum conditions-fr.md        # à comparer avec l'empreinte que l'outil affichera
+
+# poste de développement (DATABASE_MIGRATION_URL lue dans apps/api/.env)
+pnpm build && pnpm terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr ./conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+
+# pile conteneurisée : le dossier des textes est monté en lecture seule dans l'image de migration
+docker compose --profile app run --rm --volume "$PWD/conditions:/terms:ro" \
+  migrate node dist/cli/main.js terms:publish --number 1 --requires-acceptance yes \
+  --reason "Première version, validée par le conseil le 12/03" \
+  --fr /terms/conditions-fr.md --fr-summary "Première version des conditions d'utilisation."
+```
+
+- `--number` : le numéro de la version en vigueur plus un (`1` pour la première). Tout autre
+  numéro est refusé, et l'outil rappelle celui qui est attendu : une commande relancée par
+  mégarde ne publie pas deux fois.
+- `--requires-acceptance yes|no` : la règle de cette version — `yes`, chaque compte doit
+  l'accepter ; `no`, elle est seulement signalée. La version 1 exige `yes`.
+- `--fr <fichier>` et `--fr-summary <texte>` sont obligatoires ; `--en <fichier>` et
+  `--en-summary <texte>` vont ensemble ou pas du tout. Texte brut ou Markdown, **en UTF-8** :
+  un fichier dans un autre encodage est refusé. 200 000 caractères au plus par texte.
+- Un chemin relatif s'entend depuis le dossier où la commande est lancée (avec
+  `pnpm --dir <dossier>`, depuis ce dossier-là). Si un fichier est introuvable, l'outil nomme
+  le chemin complet qu'il a cherché, et ne publie rien.
+- `--reason` : la justification, écrite au journal d'audit (10 à 500 caractères).
+- L'outil affiche le numéro publié, l'heure et **l'empreinte SHA-256 de chaque texte
+  conservé** : elle doit être celle de `sha256sum`. Si le fichier commençait par une marque
+  d'ordre des octets (certains éditeurs Windows en placent une), l'outil la retire et le dit :
+  l'empreinte affichée est alors celle du texte sans ces trois octets.
+- Codes de sortie : `0` publié ; `1` rien n'a été publié, la commande est à corriger (option,
+  fichier, numéro, rôle de base) ; `2` échec technique (base injoignable…) — vérifier avec
+  `GET /api/v1/terms/current` avant de relancer.
+- Dans la pile conteneurisée, le dossier monté et ses fichiers doivent être lisibles par
+  l'utilisateur de l'image (`node`, uid 1000) : `chmod -R a+rX conditions`.
+- Vérifier ensuite : `curl -s https://…/api/v1/terms/current | jq '{number, sha256}'`.
+
+> La commande `pnpm terms:publish` et l'outil dans l'image de migration ont été exécutés hors
+> Docker (voir l'avertissement en tête). **La commande `docker compose run --volume …`
+> ci-dessus n'a pas encore été exécutée par Docker** : le script
+> `infrastructure/ci/publish-terms-cli.sh` la lance et vérifie son résultat, mais le workflow
+> ne l'appelle pas encore (voir « Intégration continue »).
 
 ## Notifications
 
@@ -278,7 +613,8 @@ Définir `SMTP_HOST` suffit à activer l'envoi. La connexion est toujours chiffr
 pré-production et en production, et le certificat du serveur toujours vérifié (un relais
 interne signé par une autorité privée se déclare à Node.js par `NODE_EXTRA_CA_CERTS`).
 
-Avant d'ouvrir l'inscription :
+Avant d'ouvrir l'inscription (et après avoir publié la version 1 des conditions
+d'utilisation, voir plus haut) :
 
 1. **Autoriser le domaine expéditeur** chez le prestataire (enregistrements SPF et DKIM, puis
    DMARC). Sans cela, les messages partent mais finissent en indésirables.
@@ -330,17 +666,21 @@ attribution de `X-Request-Id` et transmission de l'adresse réelle du client (un
 `X-Forwarded-For` fourni par le client est écrasé). Seuls `/api/` et `/health/live` sont
 relayés ; `/health/ready` est réservée au réseau interne.
 
-Les corps sont bornés à 128 Ko, sauf sur **une** route : l'envoi d'une pièce de vérification
-(6 Mio). Le fichier y est transmis à l'API au fil de l'eau, **sans copie sur le disque du
-proxy**, avec au plus quatre envois simultanés par adresse.
+Les corps sont bornés à 128 Ko, sauf sur **deux** routes, où ils sont transmis à l'API au fil
+de l'eau, **sans copie sur le disque du proxy** — une requête sans droit est ainsi refusée
+par l'API avant que son contenu n'ait été reçu :
+
+- l'envoi d'une pièce de vérification (6 Mio), avec au plus quatre envois simultanés par
+  adresse ;
+- la publication des conditions d'utilisation (1 100 Ko ; l'API, elle, s'arrête à 1 Mio).
 
 **Aucune réponse de l'API n'est copiée sur le disque du proxy non plus**
 (`proxy_max_temp_file_size 0`) : une réponse plus grande que ses tampons — une pièce
 téléchargée par un examinateur, la copie des données d'un compte — est relayée au rythme du
 client, depuis la mémoire. Une pièce d'identité ne passe donc en clair par aucun fichier
 temporaire, dans un sens comme dans l'autre. Un proxy ou un répartiteur placé devant Nginx
-doit admettre des corps de 6 Mio sur la route d'envoi, et ne rien mettre en tampon sur
-disque — ni les envois, ni les réponses.
+doit admettre des corps de 6 Mio sur la route d'envoi et de 1 100 Ko sur la route de
+publication, et ne rien mettre en tampon sur disque — ni les envois, ni les réponses.
 
 Les erreurs que Nginx produit lui-même (route non relayée, corps trop volumineux, limitation
 de débit, API injoignable) sont renvoyées au format d'erreur de l'API (voir `API.md`). Leur
@@ -356,31 +696,260 @@ configuration TLS en phase 9.
 | `GET /health/live`  | redémarrer l'instance si KO        | rien              |
 | `GET /health/ready` | retirer l'instance du trafic si KO | PostgreSQL, Redis |
 
-## Intégration continue
+**La sonde de disponibilité ne regarde pas les tâches planifiées — à dessein.** Elle sert à
+retirer une instance du trafic ; or une instance dont le relais a du retard sert encore ses
+requêtes, et toutes les instances partagent les mêmes tâches : les déclarer indisponibles
+couperait tout le service pour un retard que l'API répare seule en moins d'une minute. Ce
+qui signale une tâche perdue est une ligne du journal (« Au retour de Redis », ci-dessous).
 
-Le workflow GitHub Actions est fourni dans `infrastructure/ci/ci.yml`. **Il n'est pas
-encore actif** : GitHub n'exécute que les fichiers de `.github/workflows/`, dossier dans lequel
-l'outil qui a préparé le dépôt n'était pas autorisé à écrire. Pour l'activer :
+Dès qu'un arrêt est demandé, l'API n'accepte plus de connexion : les deux sondes cessent de
+répondre.
 
-```bash
-git mv infrastructure/ci/ci.yml .github/workflows/ci.yml
-git commit -m "ci: activer l'intégration continue" && git push
+## Saturation et pannes : ce que l'API répond, ce qu'elle écrit
+
+La saturation est établie par les tests, sur un PostgreSQL réel. Les pannes ont été
+provoquées sur l'API compilée, lancée seule contre un PostgreSQL et un Redis réels, en
+arrêtant l'un puis l'autre.
+
+**Base saturée — `503`, pas `500`.** L'API tient `DATABASE_POOL_MAX` connexions (10 par
+défaut). Lorsque toutes sont occupées et qu'aucune ne se libère à temps — deux secondes pour
+une transaction, `DATABASE_CONNECTION_TIMEOUT_MS` (cinq secondes) pour toute autre
+requête —, la requête répond `503 SERVICE_UNAVAILABLE` avec `Retry-After: 5`. L'opération
+refusée n'avait pas commencé : elle n'a rien écrit. Chaque refus laisse une ligne
+`Request failed` de niveau `error`, champ `code` à `SERVICE_UNAVAILABLE`, l'erreur d'origine
+dans `err`. Ce n'est pas une panne, mais une charge que la base n'écoule plus : chercher
+d'abord les transactions longues, puis rapporter la taille du pool et le nombre d'instances
+au `max_connections` de PostgreSQL. Une base **injoignable** reste une panne : `500` pour les
+requêtes, `503` pour `GET /health/ready`. Devant une base qui accepte la connexion et ne
+répond plus, les deux se mêlent : `500` pour la requête qui ouvrait une connexion, `503`
+pour celles qui attendaient leur tour.
+
+**Files de tâches de fond — tout passe par le journal structuré.** Ce que BullMQ signale
+hors de toute requête est écrit au niveau `error`, contexte `QueueErrorLog` :
+
+| Message                        | Champs                                         | Quand                                                                                 |
+| ------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `Background queue error`       | `queue`, `source` (`queue` ou `worker`), `err` | connexion à Redis perdue, verrou d'une tâche expiré                                   |
+| `Background job failed`        | `queue`, `err`                                 | un passage du relais (`outbox-relay`) ou de la purge (`account-maintenance`) a échoué |
+| `Domain event handling failed` | `eventId`, `eventType`, `attemptsMade`, `err`  | le traitement d'un événement a échoué (inchangé, contexte `DomainEventsProcessor`)    |
+
+Les deux premières ne se répètent pas à chaque occurrence : **une même erreur, venue du même
+objet, s'écrit une fois, puis une fois toutes les trente secondes tant qu'elle dure**, avec
+le champ `repeated` — le nombre d'occurrences passées sous silence depuis la ligne
+précédente. Une erreur qui cesse ne laisse pas de ligne de fin : la durée d'un épisode se lit
+à trente secondes près. `Domain event handling failed` s'écrit à chaque fois.
+
+| Panne provoquée              | Avant                                                               | Désormais                                                                                                        |
+| ---------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Redis arrêté 12 secondes     | 120 erreurs brutes sur la sortie d'erreur (960 lignes), hors format | 6 lignes structurées — trois files, trois exécutants —, sortie d'erreur vide                                     |
+| Redis arrêté 40 secondes     | 150 erreurs brutes (1 200 lignes)                                   | 12 lignes : 6 à la perte, 6 après 37 secondes, qui en annoncent 129 autres par `repeated` ; sortie d'erreur vide |
+| base supprimée huit secondes | rien : huit passages du relais en échec, visibles dans Redis seul   | une ligne `Background job failed` (file `outbox-relay`) ; sortie d'erreur vide                                   |
+
+**Pendant une coupure de Redis.** La limitation de débit ne laisse rien passer sans compter
+(`SECURITY.md`) : une requête ordinaire répond `500`, après une attente d'une à neuf
+secondes selon l'instant — le temps de ses tentatives de reconnexion.
+`GET /health/ready` répond `503` en deux secondes, `GET /health/live` `200`. Rien n'est
+relayé ; les événements attendent dans la boîte d'envoi, en base.
+
+**Au retour de Redis : les traitements reprennent d'eux-mêmes, qu'il ait gardé ses données
+ou non.**
+
+- **Redis revient avec ses données** (AOF) : rien n'est à réparer. Un événement écrit au
+  retour, après 12 secondes de coupure, est parti 16 secondes plus tard — le temps que les
+  exécutants se reconnectent.
+- **Redis revient vide** — persistance absente, volume perdu, bascule vers une instance
+  neuve : les deux tâches planifiées de l'API, le relais de la boîte d'envoi et la purge,
+  ont disparu avec ses données. **L'API les réinscrit d'elle-même, sans redémarrage** :
+  chaque instance vérifie toutes les trente secondes que ses tâches planifiées sont dans
+  Redis et à l'heure, et réinscrit celle qui ne l'est pas. Même essai : les deux tâches
+  réinscrites 14 à 18 secondes après le retour, l'événement resté en attente parti
+  aussitôt. Compter une minute au plus : trente secondes de vérification, vingt de
+  reconnexion.
+
+Chaque réinscription écrit une ligne de niveau `error`, contexte `JobSchedules` :
+
+| Message                                | Champs                         | `reason`                                                                                               |
+| -------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `Background schedule registered again` | `queue`, `scheduler`, `reason` | `missing` : la tâche n'était plus dans Redis ; `late` : elle y était, avec plus d'une minute de retard |
+
+Ce que cette ligne demande :
+
+- **`missing` : Redis a perdu des données.** Les tâches planifiées sont revenues ; le reste
+  non. Les événements déjà remis à la file `domain-events` et pas encore traités ont
+  disparu — ils sont marqués `PUBLISHED` en base, et leurs messages ne partiront pas — ; les
+  compteurs de la limitation de débit repartent de zéro ; une connexion en attente de sa
+  seconde étape est à refaire. Chercher pourquoi Redis a perdu ses données : persistance,
+  volume, bascule.
+- **`late`, une fois, au retour d'une coupure de Redis de plus d'une minute** : attendu. Le
+  relais a attendu Redis plus d'une minute ; le réinscrire n'a rien changé. Relevé après 75
+  secondes de coupure, données conservées : une ligne, pour le relais, 14 secondes après le
+  retour ; aucune pour la purge, dont l'échéance était à venir.
+- **`late`, qui se répète** — toutes les minutes et demie environ pour le relais : la tâche
+  est inscrite, mais personne ne l'exécute. Lire les lignes `Background queue error` et
+  `Background job failed` voisines, et redémarrer l'instance.
+
+Si la vérification elle-même échoue — Redis injoignable, écriture refusée —, elle écrit
+`Background queue error`, comme toute erreur de file, et recommence trente secondes plus
+tard. Aucune alerte n'est encore branchée sur ces lignes (phase 9).
+
+Pour vérifier que le relais tourne, cette requête doit rendre zéro :
+
+```sql
+SELECT count(*) FROM outbox_events
+WHERE status = 'PENDING' AND available_at < now() - interval '1 minute';
 ```
 
-Il s'exécute ensuite à chaque demande de fusion et sur `main` :
+### Arrêt de l'API
+
+À la réception de `SIGTERM` ou de `SIGINT`, l'API s'arrête dans l'ordre, et **en un temps
+borné** :
+
+1. elle **cesse aussitôt d'accepter des connexions** — une requête nouvelle est refusée par
+   le système, et non servie par une instance en train de fermer ;
+2. elle **mène à leur terme** les requêtes en cours et les tâches de fond en cours ;
+3. elle ferme ses files, Redis et la base, écrit `Shutdown complete`, et se termine par le
+   code **0** ;
+4. si cette fermeture n'a pas abouti après `SHUTDOWN_TIMEOUT_MS` — huit secondes par
+   défaut —, elle écrit une ligne d'erreur et se termine quand même, par le code **1**.
+
+La quatrième règle vaut tant que Redis est injoignable, et quelques secondes encore après
+son retour d'une longue coupure : la fermeture des exécutants de files attend une connexion
+qui ne revient pas. Rien n'est perdu à l'échéance : une transaction interrompue est annulée
+par PostgreSQL, un événement non relayé reste dans la boîte d'envoi, une tâche interrompue
+est reprise. Un second signal reçu pendant l'arrêt y met fin sur-le-champ (code 1).
+
+**Pendant le démarrage.** Tant que l'API s'initialise — connexions à la base et à Redis,
+inscription des tâches —, elle n'a rien à mener à son terme : un signal y met fin
+sur-le-champ, par le code 0. Auparavant, l'arrêt y croisait l'initialisation et se terminait
+le plus souvent par une erreur (code 1, trois essais sur quatre). Le journal n'écrit encore
+rien ; une ligne part sur la sortie d'erreur :
+
+```
+Shutdown requested (SIGTERM) before the application was ready: exiting.
+```
+
+Reste la toute première seconde, celle du chargement du programme : l'API n'y écoute pas
+encore ses signaux. Hors conteneur, le système arrête alors le processus. **Dans un
+conteneur, où l'API est le processus 1, le signal est ignoré** : elle démarre, et
+l'orchestrateur la tue à l'expiration de son délai. Antérieur à ces corrections, non
+corrigé.
+
+Lignes écrites, contexte `Shutdown` :
+
+| Message                                      | Niveau  | Champs                | Code de sortie |
+| -------------------------------------------- | ------- | --------------------- | -------------- |
+| `Shutdown requested`                         | `info`  | `signal`, `timeoutMs` | —              |
+| `Shutdown complete`                          | `info`  | `signal`              | 0              |
+| `Shutdown did not complete in time: exiting` | `error` | `signal`, `timeoutMs` | 1              |
+| `Shutdown failed: exiting`                   | `error` | `signal`, `err`       | 1              |
+| `Second shutdown signal: exiting now`        | `error` | `signal`              | 1              |
+
+Relevé sur l'API compilée, lancée seule contre un PostgreSQL et un Redis réels :
+
+| Arrêt demandé                                       | Avant                                                             | Désormais                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| en service normal                                   | environ un dixième de seconde ; code 143, ou 0 dans un conteneur  | de même ; code 0                                            |
+| cinq secondes après la perte de Redis               | tourne et répond encore vingt secondes plus tard ; `SIGKILL` seul | n'accepte plus rien dans la seconde ; terminé à 8 s, code 1 |
+| huit secondes après le retour d'une coupure de 40 s | de même — observé jusqu'à 135 secondes                            | terminé à 8 s, code 1                                       |
+| trente secondes après le retour d'une coupure       | environ une seconde                                               | de même ; code 0                                            |
+| pendant qu'une requête écrit en base                | la requête échoue (`500`) : la base était fermée sous elle        | la requête reçoit sa réponse ; l'arrêt l'attend             |
+
+**À régler côté hébergement.**
+
+- **Le délai d'arrêt de l'orchestrateur doit dépasser `SHUTDOWN_TIMEOUT_MS`** : dix secondes
+  sous Docker — c'est le `stop_grace_period` écrit dans `docker-compose.yml` —, trente par
+  défaut sous Kubernetes. S'il est plus court, `SIGKILL` tombe avant l'échéance : rien n'est
+  perdu non plus, mais les requêtes en cours sont coupées et aucune ligne ne le dit.
+- **Le code de sortie d'un arrêt propre est désormais 0** (il était 143 hors conteneur). Un
+  code 1 à l'arrêt signifie une fermeture coupée à l'échéance : chercher la ligne d'erreur,
+  et l'état de Redis à cet instant.
+- Retirer l'instance du trafic avant de l'arrêter reste la règle : dès le signal, elle
+  refuse les connexions nouvelles.
+
+Dans l'image Docker, l'API est le processus 1 de son conteneur. Ces essais ont été refaits
+dans cette position — sans Docker, par un espace de processus séparé (`unshare`) : arrêt en
+un dixième de seconde environ, code 0 ; Redis arrêté, fin à huit secondes, code 1 ; signal
+reçu 1,2 ou 1,3 seconde après le lancement, pendant l'initialisation : fin en un tiers de
+seconde, code 0 ; signal reçu 0,3 ou 0,7 seconde après le lancement : ignoré, comme avant ces
+corrections. **Sous Docker même, l'arrêt n'est pas mesuré** : l'intégration continue arrête
+la pile sans relever ni sa durée ni son code de sortie.
+
+## Intégration continue
+
+Le workflow GitHub Actions (`.github/workflows/ci.yml`) s'exécute à chaque demande de fusion
+et sur `main`. Les scripts qu'il appelle sont dans `infrastructure/ci/`.
 
 1. **verify** — installation figée, mise en forme, build, lint, types, cohérence
    migrations/schéma, tous les tests sur PostgreSQL 18 et Redis 8 réels, audit des dépendances ;
 2. **docker** — validation de la configuration Compose, construction des images, démarrage
    de la pile complète (initialisation de PostgreSQL, migrations, API, Nginx), test de fumée
    à travers Nginx, parcours d'identité complet (administrateur créé en ligne de commande,
-   activation de sa validation en deux étapes, ouverture de l'inscription, inscription,
-   vérification, connexion, contrôle des droits, connexion en deux étapes, back-office,
+   activation de sa validation en deux étapes, ouverture de l'inscription, **publication
+   des conditions d'utilisation** — un texte de 185 Ko relu à l'octet près à travers le
+   proxy, refus au-delà des limites —, inscription, vérification, connexion, contrôle des
+   droits, connexion en deux étapes, back-office, **nouvelle version à accepter** — le
+   compte est arrêté, accepte, reprend —,
    **vérification d'identité** : envoi de pièces à travers le proxy — jusqu'à la taille
    maximale, et à quatre de front —, dépôt, examen, téléchargement d'une pièce à l'identique,
-   acceptation), contrôle que le volume ne contient que des pièces chiffrées, puis contrôle
-   de cohérence migrations/schéma avec le rôle propriétaire et la base fantôme créée par le
-   script d'initialisation.
+   acceptation, **grand livre** : enregistrement d'un actif, portefeuille à zéro, balance,
+   **transferts** : ouverture, rien ne part sans plafonds, plafonds fixés puis lus par le
+   titulaire, demandes refusées — sans clé d'idempotence, sans le bon mot de passe, au-delà
+   du plafond, au-delà du solde — sans que rien ne bouge,
+   **opérations du personnel** : ajustements fermés puis ouverts, crédit demandé par un
+   administrateur — qui ne peut pas l'approuver —, approuvé par un **second**, créé lui aussi
+   en ligne de commande, avec sa preuve ; **un vrai transfert**, renvoyé sous la même clé
+   sans être fait deux fois ; portefeuille gelé — rien n'en part, le compte ne se clôt pas —,
+   débit sous double validation, gel levé,
+   puis copie des données et clôture du compte), contrôle que le volume
+   ne contient que des pièces chiffrées, contrôle qu'aucune réponse de l'API n'a été copiée
+   sur le disque du proxy, puis contrôle de cohérence migrations/schéma avec le rôle
+   propriétaire et la base fantôme créée par le script d'initialisation.
+
+**Le parcours se règle sur la limite de débit de l'API.** Toutes ses requêtes partent d'une
+même adresse, et la limite générale de l'API (120 par minute) en compte désormais autant
+qu'elle en admet — 119 et 122 lors de deux exécutions, le nombre de relectures d'attente
+variant de l'une à l'autre : il lit ce que chaque réponse annonce (`X-RateLimit-Limit`,
+`X-RateLimit-Remaining`, `X-RateLimit-Reset`) et, lorsqu'il ne lui reste que cinq requêtes,
+attend la fin de la fenêtre — une pause d'une minute au plus, annoncée dans sa sortie
+(`wait …`) ; elle a duré 43 secondes lors de ces deux exécutions. La limite
+elle-même n'est ni relevée ni contournée. Sa dernière ligne `info` dit ce qu'il a envoyé : le
+nombre de requêtes, celles que la limite générale a comptées, le plus petit reste annoncé,
+les pauses. Il reconnaît la limite générale à la première valeur de `X-RateLimit-Limit`
+qu'il reçoit : si elle était réglée sur la même valeur qu'une limite propre à une route, il
+les confondrait.
+
+**Trois requêtes d'inscription par exécution.** Le parcours inscrit désormais un second
+compte, le destinataire du transfert, en plus du premier et d'une inscription qui doit être
+refusée. Or la route d'inscription admet dix requêtes par heure et par adresse, **refusées ou
+non** : sur une pile que l'on garde, le parcours ne s'exécute plus que trois fois par heure
+depuis une même adresse — à la quatrième, il échoue sur `POST /auth/register -> 429`.
+
+**Le second administrateur.** La double validation en exige un, et aucune route n'en crée.
+Sous GitHub Actions, le script le crée lui-même, par la commande `docker compose … admin:create`
+que l'étape du workflow emploie pour le premier — le workflow n'a donc pas eu à changer —,
+et **échoue s'il n'en a pas** : une exécution réussie de l'intégration continue établit donc
+que la double validation, le transfert abouti et le débit ont eu lieu. Ailleurs, le désigner
+par `SECOND_ADMIN_EMAIL` et `SECOND_ADMIN_PASSWORD` ; sans lui, le script le dit (`skip …`),
+retire la demande au lieu de l'approuver, et n'éprouve ni l'approbation, ni le transfert
+abouti, ni le débit.
+
+**Une étape reste à ajouter au workflow.** `infrastructure/ci/publish-terms-cli.sh` publie
+une version des conditions d'utilisation avec l'outil en ligne de commande, dans la pile
+Compose, comme la section « Conditions d'utilisation » le décrit : dossier des textes monté
+en lecture seule dans l'image de migration, numéro inexact refusé, texte relu à l'octet près
+à travers Nginx. Ce script a été exécuté hors Docker. Pour que la CI l'exécute, ajouter au
+job `docker` de `.github/workflows/ci.yml`, juste après l'étape « Parcours d'identité et de
+vérification d'identité à travers Nginx » :
+
+```yaml
+- name: Conditions d'utilisation publiées en ligne de commande
+  run: infrastructure/ci/publish-terms-cli.sh
+```
+
+(avec le même retrait que les étapes voisines : six espaces devant le tiret.)
+
+L'outil qui prépare ce dépôt n'est pas autorisé à modifier les fichiers de
+`.github/workflows/` : cet ajout revient au propriétaire du dépôt.
 
 Aucun déploiement automatique n'est configuré : une modification financière critique ne
 sera jamais déployée sans validation explicite.

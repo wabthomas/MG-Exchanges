@@ -11,7 +11,7 @@ export interface NewUser {
   readonly accountType: AccountType;
   readonly status: UserStatus;
   readonly emailVerifiedAt: Date | null;
-  readonly termsAcceptedAt: Date;
+  readonly registeredAt: Date;
   readonly passwordHash: string;
 }
 
@@ -20,7 +20,7 @@ export interface PendingRegistration {
   readonly phone: string | null;
   readonly countryCode: string;
   readonly locale: string;
-  readonly termsAcceptedAt: Date;
+  readonly registeredAt: Date;
   readonly passwordHash: string;
 }
 
@@ -57,15 +57,42 @@ export class PhoneAlreadyVerifiedError extends Error {
   }
 }
 
+/** Compte retenu par {@link UserRepository.holdOpen}, et son statut au moment où il l'a été. */
+export interface HeldUser {
+  readonly id: string;
+  readonly status: UserStatus;
+}
+
 /** Port de persistance des comptes, de leur secret et de leurs droits. */
 export abstract class UserRepository {
   abstract findById(db: DbClient, userId: string): Promise<UserRecord | null>;
+
+  /**
+   * Retient des comptes jusqu'à la fin de la transaction : tant qu'elle dure, aucun ne peut être
+   * clôturé ni supprimé. Une clôture déjà en cours est attendue — le statut rendu est alors
+   * celui qu'elle a laissé. À l'usage des modules qui écrivent au nom d'un compte.
+   *
+   * C'est le verrou que la base prend elle-même lorsqu'une ligne est ajoutée à un compte
+   * (`FOR KEY SHARE`) : plusieurs transactions le tiennent ensemble, et il ne gêne aucune autre
+   * modification du compte — pas même sa suspension. Les comptes sont verrouillés dans l'ordre
+   * de leurs identifiants ; un compte inconnu n'est pas rendu.
+   */
+  abstract holdOpen(tx: DbClient, userIds: readonly string[]): Promise<HeldUser[]>;
 
   /**
    * Compte qui porte cette adresse. Un compte clôturé n'en porte plus : il n'est jamais trouvé
    * ainsi — ni par son ancienne adresse, ni par l'adresse factice qui la remplace.
    */
   abstract findByEmail(db: DbClient, email: string): Promise<UserRecord | null>;
+
+  /**
+   * Adresse que porte aujourd'hui chacun des comptes désignés, par identifiant. Un compte
+   * clôturé n'en porte plus : `null`. Un compte inconnu n'est pas rendu.
+   */
+  abstract findEmails(
+    db: DbClient,
+    userIds: readonly string[],
+  ): Promise<Map<string, string | null>>;
 
   abstract findByEmailWithPasswordHash(
     db: DbClient,

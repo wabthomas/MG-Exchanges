@@ -491,6 +491,7 @@ describe('Profil, téléphone et historique d’activité — bout en bout', () 
         ['SIGN_IN_FAILED', 'FAILURE'],
         ['SIGN_IN', 'SUCCESS'],
         ['EMAIL_VERIFIED', 'SUCCESS'],
+        ['TERMS_ACCEPTED', 'SUCCESS'],
         ['ACCOUNT_CREATED', 'SUCCESS'],
       ]);
       expect(list.nextCursor).toBeNull();
@@ -526,6 +527,7 @@ describe('Profil, téléphone et historique d’activité — bout en bout', () 
         'PROFILE_UPDATED',
         'SIGN_IN',
         'EMAIL_VERIFIED',
+        'TERMS_ACCEPTED',
         'ACCOUNT_CREATED',
       ]);
 
@@ -538,14 +540,16 @@ describe('Profil, téléphone et historique d’activité — bout en bout', () 
         );
         pages.push(page.entries.map((entry) => entry.id));
         cursor = page.nextCursor;
-      } while (cursor !== null);
-      expect(pages.map((page) => page.length)).toEqual([4, 2]);
+        // Borné : un curseur ignoré rendrait sans fin la même page.
+      } while (cursor !== null && pages.length < 10);
+      expect(pages.map((page) => page.length)).toEqual([4, 3]);
       expect(pages.flat()).toEqual(all.entries.map((entry) => entry.id));
 
       // Une page exactement pleine n'annonce pas de suite.
       const exact = activityListSchema.parse(
-        (await activity(reader.accessToken, '?limit=6').expect(200)).body,
+        (await activity(reader.accessToken, '?limit=7').expect(200)).body,
       );
+      expect(exact.entries).toHaveLength(7);
       expect(exact.nextCursor).toBeNull();
 
       const ownEvents = await prisma.auditLog.findMany({
@@ -576,6 +580,7 @@ describe('Profil, téléphone et historique d’activité — bout en bout', () 
       expect(typesOf((await activity(accessToken).expect(200)).body)).toEqual([
         'SIGN_IN',
         'EMAIL_VERIFIED',
+        'TERMS_ACCEPTED',
         'ACCOUNT_CREATED',
       ]);
 

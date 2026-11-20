@@ -27,6 +27,7 @@ export {
   recoveryCodeSchema,
   SUPPORTED_LOCALES,
   type SupportedLocale,
+  textBlockSchema,
   textLineSchema,
   TIME_ZONE_MAX_LENGTH,
   timeZoneSchema,

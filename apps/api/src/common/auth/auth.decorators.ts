@@ -6,6 +6,7 @@ import { type AuthenticatedUser, getAuthenticatedUser } from './authenticated-us
 
 export const IS_PUBLIC_KEY = 'mgx:public-route';
 export const REQUIRED_PERMISSIONS_KEY = 'mgx:required-permissions';
+export const ALLOWED_BEFORE_TERMS_ACCEPTANCE_KEY = 'mgx:allowed-before-terms-acceptance';
 
 /**
  * Ouvre la route (ou le contrôleur) aux requêtes non authentifiées.
@@ -22,6 +23,18 @@ export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUB
 export const RequirePermissions = (
   ...permissions: [PermissionKey, ...PermissionKey[]]
 ): MethodDecorator & ClassDecorator => SetMetadata(REQUIRED_PERMISSIONS_KEY, permissions);
+
+/**
+ * Laisse la route (ou le contrôleur) accessible à un compte qui doit encore accepter la
+ * version en vigueur des conditions d'utilisation.
+ *
+ * Une route authentifiée lui est fermée **par défaut** (`TERMS_ACCEPTANCE_REQUIRED`) : ne lui
+ * restent ouvertes que celles qui le déclarent — consulter son compte, le sécuriser, obtenir
+ * la copie de ses données, le clôturer, lire et accepter les conditions. Toute nouvelle
+ * fonctionnalité est donc fermée sans qu'il faille y penser.
+ */
+export const AllowBeforeTermsAcceptance = (): MethodDecorator & ClassDecorator =>
+  SetMetadata(ALLOWED_BEFORE_TERMS_ACCEPTANCE_KEY, true);
 
 /** Injecte l'identité de l'appelant. À n'utiliser que sur une route authentifiée. */
 export const CurrentUser = createParamDecorator(
