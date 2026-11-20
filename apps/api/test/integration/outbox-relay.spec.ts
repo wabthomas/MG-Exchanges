@@ -4,6 +4,7 @@ import type { Queue } from 'bullmq';
 
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
 import { UnitOfWork } from '../../src/infrastructure/database/unit-of-work.js';
+import { JobSchedules } from '../../src/infrastructure/queue/job-schedules.js';
 import {
   DOMAIN_EVENTS_QUEUE,
   OUTBOX_RELAY_QUEUE,
@@ -54,6 +55,8 @@ describe('Boîte d’envoi transactionnelle (PostgreSQL, Redis et BullMQ réels)
     eventsQueue = testApp.app.get<Queue>(getQueueToken(DOMAIN_EVENTS_QUEUE));
 
     // Le planificateur est arrêté : chaque test déclenche le relais lui-même, de façon déterministe.
+    // La surveillance des tâches planifiées l'est d'abord : elle le réinscrirait.
+    testApp.app.get(JobSchedules).stop();
     const relayQueue = testApp.app.get<Queue>(getQueueToken(OUTBOX_RELAY_QUEUE));
     await relayQueue.removeJobScheduler('outbox-relay');
     await relayQueue.pause();

@@ -9,6 +9,7 @@ import {
   DOMAIN_EVENTS_QUEUE,
   OUTBOX_RELAY_QUEUE,
 } from './queue.constants.js';
+import { JobSchedules } from './job-schedules.js';
 import { QueueErrorLog } from './queue-error-log.js';
 
 /**
@@ -18,7 +19,8 @@ import { QueueErrorLog } from './queue-error-log.js';
  * traitements terminés sont purgés, les échecs définitifs conservés 7 jours pour analyse.
  *
  * Ce que les files et leurs exécutants signalent hors de toute requête passe par les journaux
- * structurés (`QueueErrorLog`).
+ * structurés (`QueueErrorLog`). Les tâches périodiques s'inscrivent par `JobSchedules`, qui
+ * les réinscrit si Redis les perd.
  */
 @Global()
 @Module({
@@ -44,7 +46,7 @@ import { QueueErrorLog } from './queue-error-log.js';
       { name: ACCOUNT_MAINTENANCE_QUEUE },
     ),
   ],
-  providers: [QueueErrorLog],
-  exports: [BullModule, QueueErrorLog],
+  providers: [QueueErrorLog, JobSchedules],
+  exports: [BullModule, QueueErrorLog, JobSchedules],
 })
 export class QueueModule {}
