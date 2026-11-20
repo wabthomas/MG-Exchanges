@@ -80,7 +80,8 @@ export function configureApp(app: NestExpressApplication): void {
 
   app.setGlobalPrefix(API_PREFIX, { exclude: UNPREFIXED_ROUTES });
   app.enableVersioning({ type: VersioningType.URI });
-  app.enableShutdownHooks();
+  // Les signaux d'arrêt ne sont pas écoutés ici : le lancement réel installe un arrêt borné
+  // (`shutdown.ts`), les tests ferment eux-mêmes ce qu'ils ont ouvert.
 
   setupOpenApi(app, config);
 }

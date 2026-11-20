@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Injectable, type OnApplicationShutdown, type OnModuleInit } from '@nestjs/common';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 import { AppConfig } from '../../config/app-config.js';
@@ -12,7 +12,7 @@ export type DbClient = Prisma.TransactionClient;
 
 /** Connexion PostgreSQL de l'application (pool `pg`, client Prisma généré). */
 @Injectable()
-export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
+export class PrismaService extends PrismaClient implements OnModuleInit, OnApplicationShutdown {
   constructor(config: AppConfig) {
     super({
       adapter: new PrismaPg({
@@ -32,7 +32,13 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     await this.$queryRaw`SELECT 1`;
   }
 
-  async onModuleDestroy(): Promise<void> {
+  /**
+   * La base se ferme à la dernière étape de l'arrêt : après les tâches de fond en cours
+   * (`onModuleDestroy`) et après les requêtes HTTP en cours, que le serveur mène à leur terme
+   * juste avant cette étape. Fermée plus tôt, elle faisait échouer (`500`) la requête qui
+   * s'en servait à l'instant de l'arrêt.
+   */
+  async onApplicationShutdown(): Promise<void> {
     await this.$disconnect();
   }
 }

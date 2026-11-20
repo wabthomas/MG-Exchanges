@@ -127,6 +127,11 @@ export const envSchema = z
     PORT: integer(1, 65_535).default(3000),
     /** Nombre de proxys de confiance devant l'API (0 = connexion directe, 1 = Nginx). */
     TRUST_PROXY_HOPS: integer(0, 5).default(0),
+    /**
+     * Durée maximale d'un arrêt demandé par signal ; au-delà, le processus se termine sans
+     * attendre. À garder inférieure au délai de l'orchestrateur (dix secondes sous Docker).
+     */
+    SHUTDOWN_TIMEOUT_MS: integer(1000, 120_000).default(8000),
 
     // --- HTTP ---
     CORS_ALLOWED_ORIGINS: originList.default([]),

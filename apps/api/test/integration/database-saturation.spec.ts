@@ -81,7 +81,7 @@ describe('Base saturée — aucune connexion ne se libère à temps (PostgreSQL 
   });
 
   afterAll(async () => {
-    await Promise.all(clients.map((prisma) => prisma.onModuleDestroy()));
+    await Promise.all(clients.map((prisma) => prisma.onApplicationShutdown()));
     await database.drop();
   });
 

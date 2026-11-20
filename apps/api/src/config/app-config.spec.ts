@@ -36,6 +36,7 @@ describe('loadAppConfig', () => {
       host: '0.0.0.0',
       port: 3000,
       trustProxyHops: 0,
+      shutdownTimeoutMs: 8000,
     });
     expect(config.app.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(config.http).toEqual({
@@ -48,6 +49,20 @@ describe('loadAppConfig', () => {
     expect(config.swagger).toEqual({ enabled: true, credentials: null });
     expect(config.isProduction).toBe(false);
     expect(Object.isFrozen(config)).toBe(true);
+  });
+
+  it('borne la durée d’un arrêt : d’une seconde à deux minutes, huit secondes par défaut', () => {
+    expect(loadAppConfig({ ...minimal, SHUTDOWN_TIMEOUT_MS: '1000' }).app.shutdownTimeoutMs).toBe(
+      1000,
+    );
+    expect(loadAppConfig({ ...minimal, SHUTDOWN_TIMEOUT_MS: '120000' }).app.shutdownTimeoutMs).toBe(
+      120_000,
+    );
+    for (const value of ['999', '120001', '0', '8s', '-1']) {
+      expect(problemsOf({ ...minimal, SHUTDOWN_TIMEOUT_MS: value })).toEqual([
+        expect.stringMatching(/^SHUTDOWN_TIMEOUT_MS: /),
+      ]);
+    }
   });
 
   it('traite une variable vide comme absente', () => {
