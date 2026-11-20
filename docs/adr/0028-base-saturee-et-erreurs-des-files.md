@@ -1,6 +1,6 @@
 # 0028 — Base saturée et erreurs des files : `503` avec délai, journaux structurés
 
-**Statut :** acceptée (2026-11-18) — complète les ADR 0008 (erreurs), 0009 (boîte d'envoi sur BullMQ) et 0011 (journaux). Six choix restent à confirmer (plus bas).
+**Statut :** acceptée (2026-11-18) — complète les ADR 0008 (erreurs), 0009 (boîte d'envoi sur BullMQ) et 0011 (journaux) ; complétée par l'ADR 0029. Six choix restent à confirmer (plus bas).
 
 ## Contexte
 
@@ -117,3 +117,4 @@ Six choix ont été faits sans vous ; chacun se change sans reprendre le reste.
   n'a plus les tâches planifiées, que l'API n'inscrit qu'à son démarrage — plus rien n'est
   relayé, sans qu'aucune sonde ni aucune ligne le dise. Décrits dans `DEPLOYMENT.md`
   (« Saturation et pannes ») et proposés à la correction dans `PROJECT_STATUS.md`.
+  **Corrigés depuis : ADR 0029.**

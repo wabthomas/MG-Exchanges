@@ -52,7 +52,8 @@ web et mobile : ils n'utilisent ni API Node.js ni framework serveur (règle ESLi
 apps/api/src/
   main.ts                 point d'entrée : charge et valide la configuration, démarre
   app.module.ts           racine : assemble socle technique et modules
-  bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests
+  bootstrap/              configuration HTTP partagée par l'exécution réelle et les tests ;
+                          lancement (start.ts) et arrêt borné (shutdown.ts)
   config/                 schéma des variables d'environnement, configuration typée
   common/                 transverse : erreurs, filtre global, validation, expurgation,
                           décorateurs d'accès (@Public, @RequirePermissions,
@@ -173,8 +174,11 @@ Un envoi irrecevable est donc refusé sans avoir été lu.
 
 Chaque tâche planifiée a un **planificateur unique** dans Redis (BullMQ), partagé par toutes
 les instances de l'API : elle ne s'exécute qu'une fois par échéance, quel que soit leur nombre.
-Il n'est inscrit qu'au démarrage de l'API : un Redis qui perd ses données le perd aussi
-(`DEPLOYMENT.md`, « Saturation et pannes »).
+Une tâche planifiée n'existe que là : un Redis qui perd ses données la perd aussi. Elles
+s'inscrivent donc toutes par `JobSchedules` (`infrastructure/queue`), qui les inscrit au
+démarrage puis **vérifie toutes les trente secondes** qu'elles sont dans Redis et à l'heure,
+réinscrit celle qui ne l'est pas, et l'écrit au journal (ADR 0029). Un test parcourt Redis et
+échoue s'il y trouve une tâche inscrite ailleurs.
 
 Ce que les files et leurs exécutants signalent hors de toute requête — connexion à Redis
 perdue, verrou d'une tâche expiré, passage en échec — passe par `QueueErrorLog`
@@ -182,6 +186,24 @@ perdue, verrou d'une tâche expiré, passage en échec — passe par `QueueError
 d'office, chaque exécutant par son traitement (`@OnWorkerEvent`), et un test parcourt
 l'application pour vérifier qu'aucun ne manque. Une même erreur répétée s'écrit une fois par
 période de trente secondes, avec le nombre de répétitions (ADR 0028).
+
+### Arrêt
+
+L'API écoute elle-même `SIGTERM` et `SIGINT` (`bootstrap/shutdown.ts`) — l'écoute de NestJS
+n'est pas activée. À la demande d'arrêt :
+
+1. le serveur HTTP **cesse aussitôt d'accepter** des connexions ;
+2. l'application se ferme dans l'ordre de NestJS : les exécutants de files achèvent leur
+   tâche en cours (`onModuleDestroy`), le serveur HTTP attend ses dernières réponses, puis
+   les files, Redis et la base sont fermés (`onApplicationShutdown`) ;
+3. à l'échéance (`SHUTDOWN_TIMEOUT_MS`, huit secondes par défaut), le processus se termine
+   même si cette fermeture n'a pas abouti — ce qui arrive tant que Redis est injoignable.
+
+Ce dont une requête ou une tâche en cours se sert — la base, Redis, les files — ne se ferme
+donc qu'à la dernière étape : **une ressource nouvelle doit se fermer dans
+`onApplicationShutdown`, non dans `onModuleDestroy`**, qui passe avant les dernières
+réponses. Codes de sortie, lignes écrites, réglages d'hébergement : `DEPLOYMENT.md`,
+« Arrêt de l'API » ; décision : ADR 0029.
 
 ### Deux horloges, un seul port
 

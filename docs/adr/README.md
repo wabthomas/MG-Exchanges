@@ -13,7 +13,7 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0006](0006-validation-zod-contrats.md)                           | Validation par schémas Zod partagés                                                 | Acceptée                              |
 | [0007](0007-representation-des-montants.md)                       | Représentation des montants                                                         | Acceptée                              |
 | [0008](0008-erreurs-rfc-9457.md)                                  | Erreurs normalisées RFC 9457 et codes stables                                       | Acceptée — complétée par 0028         |
-| [0009](0009-boite-d-envoi-transactionnelle.md)                    | Boîte d'envoi transactionnelle sur BullMQ                                           | Acceptée — complétée par 0028         |
+| [0009](0009-boite-d-envoi-transactionnelle.md)                    | Boîte d'envoi transactionnelle sur BullMQ                                           | Acceptée — complétée par 0028 et 0029 |
 | [0010](0010-limitation-de-debit-redis.md)                         | Limitation de débit maison sur Redis                                                | Acceptée                              |
 | [0011](0011-socle-http-configuration-journaux.md)                 | En-têtes natifs, configuration typée, Pino                                          | Acceptée — complétée par 0028         |
 | [0012](0012-fonctionnalites-fermees-par-defaut.md)                | Fonctionnalités réglementées fermées par défaut                                     | Acceptée                              |
@@ -32,4 +32,5 @@ décision n'est jamais réécrite ; si elle change, un nouvel ADR la remplace et
 | [0025](0025-grand-livre-en-partie-double.md)                      | Grand livre en partie double : écritures immuables, règles portées par la base      | Acceptée — complétée par 0026 et 0027 |
 | [0026](0026-transferts-entre-titulaires.md)                       | Transferts entre titulaires : immédiats, idempotents, plafonnés par niveau          | Acceptée — complétée par 0027         |
 | [0027](0027-operations-du-personnel-ajustements-et-gels.md)       | Opérations du personnel : ajustements sous double validation, gel d'un portefeuille | Acceptée                              |
-| [0028](0028-base-saturee-et-erreurs-des-files.md)                 | Base saturée et erreurs des files : `503` avec délai, journaux structurés           | Acceptée                              |
+| [0028](0028-base-saturee-et-erreurs-des-files.md)                 | Base saturée et erreurs des files : `503` avec délai, journaux structurés           | Acceptée — complétée par 0029         |
+| [0029](0029-taches-planifiees-surveillees-arret-borne.md)         | Tâches planifiées surveillées, arrêt borné                                          | Acceptée                              |

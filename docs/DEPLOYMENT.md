@@ -26,37 +26,39 @@ par environnement (`mgx:<APP_ENV>:`).
 
 Référence complète et commentée : [`apps/api/.env.example`](../apps/api/.env.example).
 
-| Variable                      | Obligatoire           | Rôle                                                                                                             |
-| ----------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `APP_ENV`, `NODE_ENV`         | recommandé            | environnement                                                                                                    |
-| `DATABASE_URL`                | oui                   | PostgreSQL, **rôle applicatif**                                                                                  |
-| `DATABASE_MIGRATION_URL`      | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                                       |
-| `SHADOW_DATABASE_URL`         | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production                 |
-| `REDIS_URL`                   | oui                   | Redis (`rediss://` pour TLS)                                                                                     |
-| `QUEUE_REDIS_URL`             | non                   | Redis dédié aux files (politique `noeviction`)                                                                   |
-| `TRUST_PROXY_HOPS`            | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                                 |
-| `CORS_ALLOWED_ORIGINS`        | selon clients         | origines autorisées                                                                                              |
-| `LOG_LEVEL`                   | non                   | `info` par défaut                                                                                                |
-| `AUTH_CODE_HMAC_SECRET`       | oui                   | clé du HMAC des codes à usage unique et des codes de secours (32 caractères au moins) — secret                   |
-| `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder** |
-| `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                             |
-| `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                           |
-| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests), `smtp` ou `none` ; `memory` interdit en staging et en production                |
-| `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                             |
-| `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                          |
-| `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                              |
-| `KYC_STORAGE_DIR`             | pour le KYC           | répertoire (chemin absolu) des pièces de vérification chiffrées — un **volume persistant**                       |
-| `KYC_ENCRYPTION_KEY`          | pour le KYC           | clé maîtresse des pièces (32 octets en base64), distincte de la précédente — secret, **à sauvegarder à part**    |
+| Variable                      | Obligatoire           | Rôle                                                                                                                                |
+| ----------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_ENV`, `NODE_ENV`         | recommandé            | environnement                                                                                                                       |
+| `DATABASE_URL`                | oui                   | PostgreSQL, **rôle applicatif**                                                                                                     |
+| `DATABASE_MIGRATION_URL`      | migrations            | PostgreSQL, **rôle propriétaire** — jamais fournie à l'API                                                                          |
+| `SHADOW_DATABASE_URL`         | développement et CI   | base fantôme jetable de Prisma Migrate (voir `DATABASE.md`) — jamais en staging ni en production                                    |
+| `REDIS_URL`                   | oui                   | Redis (`rediss://` pour TLS)                                                                                                        |
+| `QUEUE_REDIS_URL`             | non                   | Redis dédié aux files (politique `noeviction`)                                                                                      |
+| `TRUST_PROXY_HOPS`            | oui derrière un proxy | nombre de proxys de confiance (1 derrière Nginx)                                                                                    |
+| `CORS_ALLOWED_ORIGINS`        | selon clients         | origines autorisées                                                                                                                 |
+| `LOG_LEVEL`                   | non                   | `info` par défaut                                                                                                                   |
+| `SHUTDOWN_TIMEOUT_MS`         | non                   | durée maximale d'un arrêt, en millisecondes (8 000 par défaut, de 1 000 à 120 000) — inférieure au délai d'arrêt de l'orchestrateur |
+| `AUTH_CODE_HMAC_SECRET`       | oui                   | clé du HMAC des codes à usage unique et des codes de secours (32 caractères au moins) — secret                                      |
+| `AUTH_SECRETS_ENCRYPTION_KEY` | oui                   | clé de chiffrement des secrets de la validation en deux étapes (32 octets en base64) — secret, **à sauvegarder**                    |
+| `AUTH_*_TTL_SECONDS`          | non                   | durées des codes, des jetons d'accès et des sessions                                                                                |
+| `AUTH_PASSWORD_HASH_*`        | non                   | coût d'Argon2id ; jamais inférieur à 19 456 Kio / 2 passes en staging et en production                                              |
+| `NOTIFICATION_DELIVERY`       | non                   | `memory` (développement, tests), `smtp` ou `none` ; `memory` interdit en staging et en production                                   |
+| `SMTP_HOST`, `EMAIL_FROM`     | pour envoyer          | serveur SMTP du prestataire d'e-mail et expéditeur ; les définir active l'envoi réel                                                |
+| `SMTP_USER`, `SMTP_PASSWORD`  | selon prestataire     | identifiants du compte d'envoi — secret                                                                                             |
+| `SMTP_SECURITY`, `SMTP_PORT`  | non                   | `starttls` (587, défaut) ou `tls` (465) ; `none` refusé en staging et en production                                                 |
+| `KYC_STORAGE_DIR`             | pour le KYC           | répertoire (chemin absolu) des pièces de vérification chiffrées — un **volume persistant**                                          |
+| `KYC_ENCRYPTION_KEY`          | pour le KYC           | clé maîtresse des pièces (32 octets en base64), distincte de la précédente — secret, **à sauvegarder à part**                       |
 
 Les secrets sont injectés par le gestionnaire de secrets de l'hébergeur, jamais par un
 fichier présent dans l'image ou le dépôt.
 
 **Redis et BullMQ.** Les files exigent la politique `maxmemory-policy noeviction` et une
 persistance (AOF). Si le même Redis sert plus tard de cache avec éviction, fournir une
-instance distincte via `QUEUE_REDIS_URL`. La persistance n'est pas un confort : les tâches
-planifiées sont inscrites dans Redis au démarrage de l'API, et **un Redis revenu vide ne les
-a plus** — ni relais, ni purge jusqu'au redémarrage de l'API, sans qu'aucune sonde le dise
-(voir « Saturation et pannes »).
+instance distincte via `QUEUE_REDIS_URL`. La persistance n'est pas un confort. L'API
+réinscrit d'elle-même ses tâches planifiées si Redis les perd, mais **elle ne peut pas rendre
+ce que Redis portait d'autre** : les événements déjà remis à la file et pas encore traités —
+leurs messages ne partent pas —, les compteurs de la limitation de débit, les connexions en
+attente de leur seconde étape (voir « Saturation et pannes »).
 
 ## Images
 
@@ -79,11 +81,10 @@ docker build -f infrastructure/docker/api.Dockerfile --target migrator -t mgx-ap
 2. Exécuter les migrations avec l'image `migrator` et `DATABASE_MIGRATION_URL` (rôle propriétaire).
 3. Démarrer la nouvelle version de l'API (`DATABASE_URL`, rôle applicatif).
 4. Attendre `GET /health/ready` = 200 avant d'y diriger du trafic.
-5. Retirer l'ancienne version : à la réception de `SIGTERM`, l'API ferme proprement son
-   serveur HTTP, ses files et ses connexions PostgreSQL et Redis (vérifié sur l'artefact de
-   production). **Sauf si Redis est injoignable à cet instant, ou revient à peine d'une
-   longue coupure** : l'API ne s'arrête alors pas d'elle-même — voir « Saturation et
-   pannes ».
+5. Retirer l'ancienne version : à la réception de `SIGTERM`, l'API cesse d'accepter des
+   connexions, mène à leur terme les requêtes et les tâches de fond en cours, puis ferme ses
+   files et ses connexions PostgreSQL et Redis — en `SHUTDOWN_TIMEOUT_MS` au plus (huit
+   secondes par défaut), que Redis réponde ou non. Voir « Arrêt de l'API ».
 
 Les migrations doivent donc rester compatibles avec la version précédente du code le temps
 de la bascule (schéma « étendre, migrer, contracter »).
@@ -162,7 +163,9 @@ livre », et clôture des demandes d'ajustement échues). Un échec est journali
 (`Account maintenance step failed`), puis le passage (`Background job failed`) — et visible
 dans la file `account-maintenance` ; l'exécution suivante réessaie. Un passage du relais en
 échec, base injoignable par exemple, laisse la même ligne `Background job failed` : le
-suivant a lieu une seconde plus tard.
+suivant a lieu une seconde plus tard. Ces deux tâches n'existent que dans Redis : l'API les
+y inscrit à son démarrage, **puis vérifie toutes les trente secondes qu'elles y sont
+encore**, et les réinscrit sinon (« Saturation et pannes », « Au retour de Redis »).
 
 ## Clôture des comptes et effacement
 
@@ -693,6 +696,15 @@ configuration TLS en phase 9.
 | `GET /health/live`  | redémarrer l'instance si KO        | rien              |
 | `GET /health/ready` | retirer l'instance du trafic si KO | PostgreSQL, Redis |
 
+**La sonde de disponibilité ne regarde pas les tâches planifiées — à dessein.** Elle sert à
+retirer une instance du trafic ; or une instance dont le relais a du retard sert encore ses
+requêtes, et toutes les instances partagent les mêmes tâches : les déclarer indisponibles
+couperait tout le service pour un retard que l'API répare seule en moins d'une minute. Ce
+qui signale une tâche perdue est une ligne du journal (« Au retour de Redis », ci-dessous).
+
+Dès qu'un arrêt est demandé, l'API n'accepte plus de connexion : les deux sondes cessent de
+répondre.
+
 ## Saturation et pannes : ce que l'API répond, ce qu'elle écrit
 
 La saturation est établie par les tests, sur un PostgreSQL réel. Les pannes ont été
@@ -739,46 +751,128 @@ secondes selon l'instant — le temps de ses tentatives de reconnexion.
 `GET /health/ready` répond `503` en deux secondes, `GET /health/live` `200`. Rien n'est
 relayé ; les événements attendent dans la boîte d'envoi, en base.
 
-**Au retour de Redis, deux cas — et la sonde ne les distingue pas.** Ces essais ont relevé
-deux comportements antérieurs à ces retouches, **non corrigés** (`PROJECT_STATUS.md`,
-« Limites connues ») ; celui-ci est le premier.
+**Au retour de Redis : les traitements reprennent d'eux-mêmes, qu'il ait gardé ses données
+ou non.**
 
-- **Redis revient avec ses données** (AOF) : les traitements de fond reprennent d'eux-mêmes.
-  Un événement écrit au retour, après 12 secondes de coupure, est parti moins de vingt
-  secondes plus tard.
+- **Redis revient avec ses données** (AOF) : rien n'est à réparer. Un événement écrit au
+  retour, après 12 secondes de coupure, est parti 16 secondes plus tard — le temps que les
+  exécutants se reconnectent.
 - **Redis revient vide** — persistance absente, volume perdu, bascule vers une instance
-  neuve : **plus rien n'est relayé ni purgé jusqu'au redémarrage de l'API**. Les tâches
-  planifiées ne sont inscrites qu'à son démarrage, et elles ont disparu avec les données.
-  Dans cet état, `GET /health/ready` répond `200`, les requêtes aboutissent, et aucune ligne
-  d'erreur n'est écrite : un événement écrit au retour attendait encore une minute plus
-  tard. Les messages — codes de vérification compris — ne partent plus.
+  neuve : les deux tâches planifiées de l'API, le relais de la boîte d'envoi et la purge,
+  ont disparu avec ses données. **L'API les réinscrit d'elle-même, sans redémarrage** :
+  chaque instance vérifie toutes les trente secondes que ses tâches planifiées sont dans
+  Redis et à l'heure, et réinscrit celle qui ne l'est pas. Même essai : les deux tâches
+  réinscrites 14 à 18 secondes après le retour, l'événement resté en attente parti
+  aussitôt. Compter une minute au plus : trente secondes de vérification, vingt de
+  reconnexion.
 
-Après toute coupure de Redis, vérifier donc que le relais tourne — cette requête doit
-rendre zéro — et, sinon, **redémarrer l'API** :
+Chaque réinscription écrit une ligne de niveau `error`, contexte `JobSchedules` :
+
+| Message                                | Champs                         | `reason`                                                                                               |
+| -------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `Background schedule registered again` | `queue`, `scheduler`, `reason` | `missing` : la tâche n'était plus dans Redis ; `late` : elle y était, avec plus d'une minute de retard |
+
+Ce que cette ligne demande :
+
+- **`missing` : Redis a perdu des données.** Les tâches planifiées sont revenues ; le reste
+  non. Les événements déjà remis à la file `domain-events` et pas encore traités ont
+  disparu — ils sont marqués `PUBLISHED` en base, et leurs messages ne partiront pas — ; les
+  compteurs de la limitation de débit repartent de zéro ; une connexion en attente de sa
+  seconde étape est à refaire. Chercher pourquoi Redis a perdu ses données : persistance,
+  volume, bascule.
+- **`late`, une fois, au retour d'une coupure de Redis de plus d'une minute** : attendu. Le
+  relais a attendu Redis plus d'une minute ; le réinscrire n'a rien changé. Relevé après 75
+  secondes de coupure, données conservées : une ligne, pour le relais, 14 secondes après le
+  retour ; aucune pour la purge, dont l'échéance était à venir.
+- **`late`, qui se répète** — toutes les minutes et demie environ pour le relais : la tâche
+  est inscrite, mais personne ne l'exécute. Lire les lignes `Background queue error` et
+  `Background job failed` voisines, et redémarrer l'instance.
+
+Si la vérification elle-même échoue — Redis injoignable, écriture refusée —, elle écrit
+`Background queue error`, comme toute erreur de file, et recommence trente secondes plus
+tard. Aucune alerte n'est encore branchée sur ces lignes (phase 9).
+
+Pour vérifier que le relais tourne, cette requête doit rendre zéro :
 
 ```sql
 SELECT count(*) FROM outbox_events
 WHERE status = 'PENDING' AND available_at < now() - interval '1 minute';
 ```
 
-**Arrêt pendant une coupure de Redis : l'API ne s'arrête pas d'elle-même.** Second
-comportement relevé, non corrigé lui non plus :
+### Arrêt de l'API
 
-- `SIGTERM` reçu cinq secondes après la perte de Redis : vingt secondes plus tard le
-  processus tourne encore, `GET /health/live` répond `200` et `GET /health/ready` `503` ;
-- `SIGTERM` reçu huit secondes après le retour de Redis d'une coupure de 40 secondes : même
-  attente, `GET /health/ready` répondant cette fois `200` — observée jusqu'à 135 secondes,
-  avant d'y mettre fin ;
-- après une coupure de 12 secondes, ou 30 secondes après le retour d'une coupure de 40,
-  l'arrêt prend moins d'une seconde.
+À la réception de `SIGTERM` ou de `SIGINT`, l'API s'arrête dans l'ordre, et **en un temps
+borné** :
 
-La fermeture des exécutants BullMQ, première étape de l'arrêt, attend une connexion qui ne
-revient pas ; le serveur HTTP, fermé après elle, continue de servir. **Seul `SIGKILL` termine
-alors le processus** : régler le délai d'arrêt de l'orchestrateur en conséquence (dix
-secondes par défaut sous Docker), et retirer l'instance du trafic avant de l'arrêter. Aucune
-donnée n'est en jeu — une transaction interrompue est annulée par PostgreSQL, un événement
-non relayé reste dans la boîte d'envoi, une tâche interrompue est reprise — ; les requêtes en
-cours à cet instant sont coupées, non menées à leur terme.
+1. elle **cesse aussitôt d'accepter des connexions** — une requête nouvelle est refusée par
+   le système, et non servie par une instance en train de fermer ;
+2. elle **mène à leur terme** les requêtes en cours et les tâches de fond en cours ;
+3. elle ferme ses files, Redis et la base, écrit `Shutdown complete`, et se termine par le
+   code **0** ;
+4. si cette fermeture n'a pas abouti après `SHUTDOWN_TIMEOUT_MS` — huit secondes par
+   défaut —, elle écrit une ligne d'erreur et se termine quand même, par le code **1**.
+
+La quatrième règle vaut tant que Redis est injoignable, et quelques secondes encore après
+son retour d'une longue coupure : la fermeture des exécutants de files attend une connexion
+qui ne revient pas. Rien n'est perdu à l'échéance : une transaction interrompue est annulée
+par PostgreSQL, un événement non relayé reste dans la boîte d'envoi, une tâche interrompue
+est reprise. Un second signal reçu pendant l'arrêt y met fin sur-le-champ (code 1).
+
+**Pendant le démarrage.** Tant que l'API s'initialise — connexions à la base et à Redis,
+inscription des tâches —, elle n'a rien à mener à son terme : un signal y met fin
+sur-le-champ, par le code 0. Auparavant, l'arrêt y croisait l'initialisation et se terminait
+le plus souvent par une erreur (code 1, trois essais sur quatre). Le journal n'écrit encore
+rien ; une ligne part sur la sortie d'erreur :
+
+```
+Shutdown requested (SIGTERM) before the application was ready: exiting.
+```
+
+Reste la toute première seconde, celle du chargement du programme : l'API n'y écoute pas
+encore ses signaux. Hors conteneur, le système arrête alors le processus. **Dans un
+conteneur, où l'API est le processus 1, le signal est ignoré** : elle démarre, et
+l'orchestrateur la tue à l'expiration de son délai. Antérieur à ces corrections, non
+corrigé.
+
+Lignes écrites, contexte `Shutdown` :
+
+| Message                                      | Niveau  | Champs                | Code de sortie |
+| -------------------------------------------- | ------- | --------------------- | -------------- |
+| `Shutdown requested`                         | `info`  | `signal`, `timeoutMs` | —              |
+| `Shutdown complete`                          | `info`  | `signal`              | 0              |
+| `Shutdown did not complete in time: exiting` | `error` | `signal`, `timeoutMs` | 1              |
+| `Shutdown failed: exiting`                   | `error` | `signal`, `err`       | 1              |
+| `Second shutdown signal: exiting now`        | `error` | `signal`              | 1              |
+
+Relevé sur l'API compilée, lancée seule contre un PostgreSQL et un Redis réels :
+
+| Arrêt demandé                                       | Avant                                                             | Désormais                                                   |
+| --------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------- |
+| en service normal                                   | environ un dixième de seconde ; code 143, ou 0 dans un conteneur  | de même ; code 0                                            |
+| cinq secondes après la perte de Redis               | tourne et répond encore vingt secondes plus tard ; `SIGKILL` seul | n'accepte plus rien dans la seconde ; terminé à 8 s, code 1 |
+| huit secondes après le retour d'une coupure de 40 s | de même — observé jusqu'à 135 secondes                            | terminé à 8 s, code 1                                       |
+| trente secondes après le retour d'une coupure       | environ une seconde                                               | de même ; code 0                                            |
+| pendant qu'une requête écrit en base                | la requête échoue (`500`) : la base était fermée sous elle        | la requête reçoit sa réponse ; l'arrêt l'attend             |
+
+**À régler côté hébergement.**
+
+- **Le délai d'arrêt de l'orchestrateur doit dépasser `SHUTDOWN_TIMEOUT_MS`** : dix secondes
+  sous Docker — c'est le `stop_grace_period` écrit dans `docker-compose.yml` —, trente par
+  défaut sous Kubernetes. S'il est plus court, `SIGKILL` tombe avant l'échéance : rien n'est
+  perdu non plus, mais les requêtes en cours sont coupées et aucune ligne ne le dit.
+- **Le code de sortie d'un arrêt propre est désormais 0** (il était 143 hors conteneur). Un
+  code 1 à l'arrêt signifie une fermeture coupée à l'échéance : chercher la ligne d'erreur,
+  et l'état de Redis à cet instant.
+- Retirer l'instance du trafic avant de l'arrêter reste la règle : dès le signal, elle
+  refuse les connexions nouvelles.
+
+Dans l'image Docker, l'API est le processus 1 de son conteneur. Ces essais ont été refaits
+dans cette position — sans Docker, par un espace de processus séparé (`unshare`) : arrêt en
+un dixième de seconde environ, code 0 ; Redis arrêté, fin à huit secondes, code 1 ; signal
+reçu 1,2 ou 1,3 seconde après le lancement, pendant l'initialisation : fin en un tiers de
+seconde, code 0 ; signal reçu 0,3 ou 0,7 seconde après le lancement : ignoré, comme avant ces
+corrections. **Sous Docker même, l'arrêt n'est pas mesuré** : l'intégration continue arrête
+la pile sans relever ni sa durée ni son code de sortie.
 
 ## Intégration continue
 

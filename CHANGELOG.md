@@ -3,6 +3,80 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Socle : tâches planifiées surveillées, arrêt borné
+
+**Deux corrections du socle** (ADR 0029) — les deux comportements que les essais de panne
+des retouches précédentes avaient relevés sans les corriger — **et une troisième**, trouvée
+en reprenant l'arrêt. Ni migration, ni dépendance nouvelle, ni route nouvelle : rien ne
+change pour un client de l'API.
+
+### Corrigé
+
+- **Un Redis revenu vide ne laisse plus l'API sans relais ni purge.** Les tâches planifiées
+  n'existent que dans Redis, et l'API ne les y inscrivait qu'à son démarrage : Redis relancé
+  sans ses données, plus aucun événement ne partait — codes de vérification compris —
+  jusqu'au redémarrage de l'API, sans qu'aucune sonde ni aucune ligne le dise. Chaque
+  instance vérifie désormais toutes les trente secondes que ses tâches planifiées sont dans
+  Redis et à l'heure, et réinscrit celle qui ne l'est pas. Essai sur l'API compilée : les
+  deux tâches réinscrites 14 à 18 secondes après le retour de Redis, l'événement resté en
+  attente parti aussitôt.
+- **L'API s'arrête en un temps borné, que Redis réponde ou non.** Tant que Redis était
+  injoignable — et quelques secondes encore après son retour d'une longue coupure —, elle
+  ne s'arrêtait pas d'elle-même et continuait de répondre ; seul `SIGKILL` y mettait fin.
+  Au signal, elle cesse désormais aussitôt d'accepter des connexions, ferme ce qu'elle peut,
+  et se termine au plus tard après `SHUTDOWN_TIMEOUT_MS` (huit secondes par défaut).
+- **Une requête en cours à l'instant de l'arrêt reçoit sa réponse.** La base était fermée
+  avant que le serveur HTTP ait fini de répondre : une requête qui écrivait à cet instant
+  échouait (`500`, transaction annulée). La base se ferme désormais à la dernière étape,
+  après les requêtes et les tâches de fond en cours.
+
+### Ajouté
+
+- `SHUTDOWN_TIMEOUT_MS` : durée maximale d'un arrêt, en millisecondes — 8 000 par défaut,
+  de 1 000 à 120 000.
+- **Ligne `Background schedule registered again`** (niveau `error`, contexte
+  `JobSchedules`), champs `queue`, `scheduler`, `reason` : `missing` — la tâche n'était plus
+  dans Redis, qui a donc perdu des données — ou `late` — elle avait plus d'une minute de
+  retard.
+- **Lignes de l'arrêt** (contexte `Shutdown`) : `Shutdown requested`, `Shutdown complete`,
+  et, au niveau `error`, `Shutdown did not complete in time: exiting`,
+  `Shutdown failed: exiting`, `Second shutdown signal: exiting now`.
+- `docker-compose.yml` : `stop_grace_period: 10s` pour l'API — le délai par défaut de
+  Docker, désormais écrit, parce que celui de l'API doit lui rester inférieur.
+- Tests : Redis vidé sous l'application, qui réinscrit ses tâches et relaie de nouveau ; un
+  test parcourt Redis et échoue si une tâche planifiée n'est pas surveillée ; l'arrêt sur
+  l'application réelle à l'écoute d'un port — connexion refusée dès la demande, requête et
+  tâche de fond en cours menées à leur terme, échéance, codes de sortie.
+- ADR 0029. `DEPLOYMENT.md` : « Au retour de Redis », « Arrêt de l'API ».
+
+### Modifié — à prendre en compte pour l'exploitation
+
+- **Un arrêt propre se termine par le code 0** ; il se terminait par le signal reçu (143)
+  hors conteneur, et déjà par 0 dans un conteneur. **Un code 1 à l'arrêt** signifie une
+  fermeture coupée à l'échéance : aucune donnée n'est en jeu.
+- **Un signal reçu pendant l'initialisation**, avant que l'API n'écoute, met fin au
+  processus sur-le-champ : code 0, une ligne sur la sortie d'erreur. Auparavant, l'arrêt y
+  croisait l'initialisation et se terminait le plus souvent par une erreur (code 1).
+- **Dès le signal, l'API refuse les connexions nouvelles** : les deux sondes cessent de
+  répondre. Retirer l'instance du trafic avant de l'arrêter.
+- **Le délai d'arrêt de l'orchestrateur doit dépasser `SHUTDOWN_TIMEOUT_MS`.**
+- Un second signal pendant l'arrêt y met fin sur-le-champ.
+
+### Non fait
+
+- **La sonde de disponibilité ne dit rien des tâches planifiées**, contrairement à ce qui
+  était proposé : elle retirerait du trafic toutes les instances à la fois, pour un retard
+  que l'API répare seule en moins d'une minute (ADR 0029, premier choix à confirmer).
+- **Aucun test automatique n'envoie un vrai signal à un vrai processus** : l'arrêt réel est
+  éprouvé à la main, sur l'API compilée — y compris en processus 1, sa position dans
+  l'image Docker. Sous Docker même, sa durée et son code de sortie ne sont pas mesurés.
+- **Pendant la première seconde après son lancement** — le chargement du programme —, l'API
+  n'écoute pas encore ses signaux : dans un conteneur, un arrêt demandé à cet instant est
+  ignoré, et l'orchestrateur tue le processus à l'expiration de son délai. Antérieur à ces
+  corrections.
+- **Pendant une coupure de Redis, une requête ordinaire répond toujours `500`** après une à
+  neuf secondes : inchangé.
+
 ## [Non publié] — Socle : base saturée, erreurs des files de tâches de fond
 
 **Deux retouches du socle** (ADR 0028), relevées en contrôlant les tests du lot 3 de la
@@ -44,7 +118,7 @@ ni dépendance nouvelle, ni route nouvelle.
 - ADR 0028. `DEPLOYMENT.md`, « Saturation et pannes » : ce que l'API répond et écrit, relevé
   en arrêtant Redis puis la base sous l'API compilée.
 
-### Constaté, non corrigé
+### Constaté, non corrigé ici — corrigé depuis (section précédente)
 
 Relevé par ces essais de panne ; antérieur à ces retouches (`PROJECT_STATUS.md`, « Problèmes
 identifiés ») :
