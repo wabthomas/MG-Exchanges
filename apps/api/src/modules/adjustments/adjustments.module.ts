@@ -7,6 +7,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { OutboxModule } from '../outbox/outbox.module.js';
 import { SystemSettingsModule } from '../system-settings/system-settings.module.js';
 import { AdjustmentExpiry } from './application/adjustment-expiry.js';
+import { AdjustmentLedgerCheck } from './application/adjustment-ledger-check.js';
 import { AdjustmentNoticeDispatcher } from './application/adjustment-notice.dispatcher.js';
 import { AdjustmentRepository } from './application/adjustment.repository.js';
 import { AdjustmentService } from './application/adjustment.service.js';
@@ -23,10 +24,11 @@ import { AdminAdjustmentsController } from './presentation/admin-adjustments.con
  * deux personnes distinctes, dont aucune n'est le titulaire, et la preuve de celle qui
  * approuve. La fonctionnalité est fermée par défaut (`manualAdjustments`).
  *
- * Le module s'appuie sur le grand livre (écritures, actifs, soldes) et sur l'identité (comptes,
- * preuve du titulaire, maintenance périodique) ; ni l'un ni l'autre ne dépend de lui. Les
- * règles essentielles sont aussi imposées par la base (voir la migration
- * `staff_ledger_operations`).
+ * Le module s'appuie sur le grand livre (écritures, actifs, soldes, vérification périodique) et
+ * sur l'identité (comptes, preuve du titulaire, maintenance périodique) ; ni l'un ni l'autre ne
+ * dépend de lui. Les règles essentielles sont aussi imposées par la base (voir la migration
+ * `staff_ledger_operations`) ; la vérification périodique relit celles qui lient un ajustement
+ * approuvé à son écriture.
  */
 @Module({
   imports: [
@@ -43,6 +45,7 @@ import { AdminAdjustmentsController } from './presentation/admin-adjustments.con
     AdjustmentService,
     AdjustmentNoticeDispatcher,
     AdjustmentExpiry,
+    AdjustmentLedgerCheck,
   ],
 })
 export class AdjustmentsModule {}

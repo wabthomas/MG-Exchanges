@@ -7,6 +7,7 @@ import type pg from 'pg';
 
 import { AppError } from '../../src/common/errors/app-error.js';
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
+import { LedgerVerification } from '../../src/modules/ledger/application/ledger-verification.js';
 import { AdjustmentNoticeDispatcher } from '../../src/modules/adjustments/application/adjustment-notice.dispatcher.js';
 import { AdjustmentService } from '../../src/modules/adjustments/application/adjustment.service.js';
 import { AccountClosureService } from '../../src/modules/identity/application/account-closure.service.js';
@@ -1969,6 +1970,19 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
         where: { userId: holder.id },
       });
       expect(record.legalRetentionUntil).not.toBeNull();
+    });
+  });
+
+  describe('vérification du grand livre', () => {
+    it('après toutes les opérations de ce fichier, la vérification horaire ne relève rien', async () => {
+      // Les trois contrôles — grand livre, transferts, ajustements — relisent tout ce que les
+      // tests de ce fichier ont écrit par les services : une opération réelle ne produit
+      // aucune anomalie.
+      expect(
+        await prisma.ledgerAdjustment.count({ where: { status: 'APPROVED' } }),
+      ).toBeGreaterThan(0);
+      const { entries } = await asApp(ledgerSize);
+      expect(await testApp.app.get(LedgerVerification).run()).toBe(entries);
     });
   });
 });

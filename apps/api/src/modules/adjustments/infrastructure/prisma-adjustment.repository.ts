@@ -1,4 +1,8 @@
-import type { LedgerAdjustmentDirection, LedgerAdjustmentStatus } from '@mgx/contracts';
+import {
+  LEDGER_ADJUSTMENT_ENTRY_KINDS,
+  type LedgerAdjustmentDirection,
+  type LedgerAdjustmentStatus,
+} from '@mgx/contracts';
 import { Injectable } from '@nestjs/common';
 
 import { Prisma } from '../../../generated/prisma/client.js';
@@ -8,8 +12,14 @@ import {
   sqlStateOf,
 } from '../../../infrastructure/database/database-errors.js';
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
+import type { LedgerAnomaly } from '../../ledger/application/ledger.repository.js';
+import {
+  type PlatformAccountType,
+  WALLET_ACCOUNT_TYPE,
+} from '../../ledger/domain/ledger-account.js';
 import { HolderClosedError } from '../../ledger/domain/ledger-errors.js';
 import {
+  type AdjustmentAnomalyKind,
   type AdjustmentApproval,
   type AdjustmentClosure,
   type AdjustmentFilter,
@@ -22,6 +32,9 @@ import {
 
 /** SQLSTATE levé par la base lorsqu'une règle des opérations du personnel est enfreinte. */
 export const STAFF_OPERATION_RULE_VIOLATION = 'MGX11';
+
+/** Compte de la plateforme sur lequel passe la seconde ligne d'un ajustement. */
+const CUSTODY_ACCOUNT_TYPE = 'platform_custody' satisfies PlatformAccountType;
 
 interface AdjustmentRow {
   id: string;
@@ -202,5 +215,70 @@ export class PrismaAdjustmentRepository extends AdjustmentRepository {
       SET "status" = 'EXPIRED'
       WHERE "status" = 'PENDING' AND "expires_at" <= clock_timestamp()
     `;
+  }
+
+  async findEntryAnomalies(
+    db: DbClient,
+    limit: number,
+  ): Promise<LedgerAnomaly<AdjustmentAnomalyKind>[]> {
+    const { CREDIT, DEBIT } = LEDGER_ADJUSTMENT_ENTRY_KINDS;
+    // Une seule instruction : une approbation et son écriture sont validées ensemble, et se
+    // lisent donc ensemble. Les deux contrôles relisent, clause pour clause, les deux règles que
+    // la migration « staff_ledger_operations » fait respecter à l'écriture.
+    const rows = await db.$queryRaw<{ kind: AdjustmentAnomalyKind; subject: string }[]>(Prisma.sql`
+      (
+        -- Règle « ledger_adjustments_entry_matches » : l'écriture que désigne un ajustement
+        -- approuvé est du type de son sens, et se compose de deux lignes — l'une sur les fonds
+        -- disponibles du titulaire, dans le sens de l'ajustement ; l'autre, de sens inverse,
+        -- sur le compte de conservation de la plateforme ; toutes deux de son montant, dans
+        -- son actif.
+        SELECT 'ADJUSTMENT_ENTRY_MISMATCH' AS "kind", j."id"::text AS "subject"
+        FROM "ledger_adjustments" AS j
+        LEFT JOIN "ledger_entries" AS e ON e."id" = j."entry_id"
+        WHERE j."status" = 'APPROVED'
+          AND (
+            e."kind" IS DISTINCT FROM
+              (CASE j."direction" WHEN 'CREDIT' THEN ${CREDIT}::text ELSE ${DEBIT}::text END)
+            OR (SELECT count(*) FROM "ledger_postings" AS p WHERE p."entry_id" = j."entry_id") <> 2
+            OR NOT EXISTS (
+              SELECT 1
+              FROM "ledger_postings" AS p
+              JOIN "ledger_accounts" AS a ON a."id" = p."account_id"
+              WHERE p."entry_id" = j."entry_id"
+                AND p."side" = j."direction"
+                AND p."amount" = j."amount"
+                AND p."asset_code" = j."asset_code"
+                AND a."type_key" = ${WALLET_ACCOUNT_TYPE}::text
+                AND a."user_id" = j."user_id"
+            )
+            OR NOT EXISTS (
+              SELECT 1
+              FROM "ledger_postings" AS p
+              JOIN "ledger_accounts" AS a ON a."id" = p."account_id"
+              WHERE p."entry_id" = j."entry_id"
+                AND p."side" <> j."direction"
+                AND p."amount" = j."amount"
+                AND p."asset_code" = j."asset_code"
+                AND a."type_key" = ${CUSTODY_ACCOUNT_TYPE}::text
+                AND a."user_id" IS NULL
+            )
+          )
+      )
+      UNION ALL
+      (
+        -- Règle « ledger_entries_adjustment_recorded » : une écriture d'ajustement n'existe pas
+        -- sans son ajustement approuvé.
+        SELECT 'ENTRY_WITHOUT_ADJUSTMENT', e."id"::text
+        FROM "ledger_entries" AS e
+        WHERE e."kind" IN (${CREDIT}::text, ${DEBIT}::text)
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "ledger_adjustments" AS j
+            WHERE j."entry_id" = e."id" AND j."status" = 'APPROVED'
+          )
+      )
+      LIMIT ${limit}
+    `);
+    return rows.map((row) => ({ kind: row.kind, subject: row.subject }));
   }
 }

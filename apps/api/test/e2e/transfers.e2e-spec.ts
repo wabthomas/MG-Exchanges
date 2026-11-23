@@ -19,6 +19,7 @@ import { type Asset, defineAsset, Money } from '@mgx/shared';
 import request from 'supertest';
 
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
+import { LedgerVerification } from '../../src/modules/ledger/application/ledger-verification.js';
 import { LedgerService } from '../../src/modules/ledger/application/ledger.service.js';
 import { platformAccount, userAccount } from '../../src/modules/ledger/domain/ledger-account.js';
 import { SystemSettingsService } from '../../src/modules/system-settings/application/system-settings.service.js';
@@ -1144,6 +1145,17 @@ describe('Transferts entre titulaires — bout en bout', () => {
         expect(codeOf(refused)).toBe('RECIPIENT_UNAVAILABLE');
         expect((await walletsOf(staying))['USD']).toBe('60.00');
       });
+    });
+  });
+
+  describe('vérification du grand livre', () => {
+    it('après toutes les opérations de ce fichier, la vérification horaire ne relève rien', async () => {
+      // Les trois contrôles — grand livre, transferts, ajustements — relisent tout ce que les
+      // tests de ce fichier ont écrit par les routes de l'API : une opération réelle ne produit
+      // aucune anomalie.
+      expect(await prisma.transfer.count()).toBeGreaterThan(0);
+      const { entries } = await asApp(ledgerSize);
+      expect(await testApp.app.get(LedgerVerification).run()).toBe(entries);
     });
   });
 });

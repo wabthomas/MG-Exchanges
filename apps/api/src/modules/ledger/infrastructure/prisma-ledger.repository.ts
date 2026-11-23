@@ -460,7 +460,7 @@ export class PrismaLedgerRepository extends LedgerRepository {
     return rows[0] ?? { accounts: 0, entries: 0, postings: 0 };
   }
 
-  async findAnomalies(db: DbClient, limit: number): Promise<LedgerAnomaly[]> {
+  async findAnomalies(db: DbClient, limit: number): Promise<LedgerAnomaly<LedgerAnomalyKind>[]> {
     // Une seule instruction : toutes les vérifications lisent le même état du grand livre, même
     // si des écritures sont passées pendant ce temps.
     const rows = await db.$queryRaw<{ kind: LedgerAnomalyKind; subject: string }[]>(Prisma.sql`
@@ -532,6 +532,15 @@ export class PrismaLedgerRepository extends LedgerRepository {
         FROM "ledger_accounts" AS a
         GROUP BY a."asset_code"
         HAVING sum(CASE a."normal_side" WHEN 'DEBIT' THEN a."balance" ELSE -a."balance" END) <> 0
+      )
+      UNION ALL
+      (
+        -- Une écriture est d'un type que la base connaît : la liste qu'elle consulte elle-même
+        -- à l'écriture (règle « ledger_entries_kind_known »), non celle du code — une migration
+        -- qui ajoute un type précède la version qui le connaît.
+        SELECT 'ENTRY_KIND_UNKNOWN', e."id"::text
+        FROM "ledger_entries" AS e
+        WHERE NOT EXISTS (SELECT 1 FROM "ledger_entry_kinds" AS k WHERE k."key" = e."kind")
       )
       LIMIT ${limit}
     `);

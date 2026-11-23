@@ -1,15 +1,23 @@
-import { kycVerifiedLevelSchema, type KycVerifiedLevel, type UserStatus } from '@mgx/contracts';
+import {
+  INTERNAL_TRANSFER_ENTRY_KIND,
+  kycVerifiedLevelSchema,
+  type KycVerifiedLevel,
+  type UserStatus,
+} from '@mgx/contracts';
 import { Injectable } from '@nestjs/common';
 
 import { Prisma } from '../../../generated/prisma/client.js';
 import { sqlStateOf } from '../../../infrastructure/database/database-errors.js';
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
+import type { LedgerAnomaly } from '../../ledger/application/ledger.repository.js';
+import { WALLET_ACCOUNT_TYPE } from '../../ledger/domain/ledger-account.js';
 import {
   type Allowance,
   LimitChangeDeniedError,
   type LimitRecord,
   type NewLimit,
   type NewTransfer,
+  type TransferAnomalyKind,
   type TransferPage,
   type TransferRecord,
   TransferRefusedByDatabaseError,
@@ -354,5 +362,62 @@ export class PrismaTransferRepository extends TransferRepository {
       }
       throw error;
     }
+  }
+
+  // --- Vérification ---
+
+  async findEntryAnomalies(
+    db: DbClient,
+    limit: number,
+  ): Promise<LedgerAnomaly<TransferAnomalyKind>[]> {
+    // Une seule instruction : un transfert et son écriture sont validés ensemble, et se lisent
+    // donc ensemble. Les deux contrôles relisent, clause pour clause, les deux règles que la
+    // migration « internal_transfers » fait respecter à l'écriture.
+    const rows = await db.$queryRaw<{ kind: TransferAnomalyKind; subject: string }[]>(Prisma.sql`
+      (
+        -- Règle « transfers_entry_matches » : l'écriture que désigne un transfert est une
+        -- écriture de transfert, et se compose de deux lignes — l'une débite les fonds
+        -- disponibles de l'émetteur, l'autre crédite ceux du destinataire, du montant du
+        -- transfert, dans son actif.
+        SELECT 'TRANSFER_ENTRY_MISMATCH' AS "kind", t."id"::text AS "subject"
+        FROM "transfers" AS t
+        LEFT JOIN "ledger_entries" AS e ON e."id" = t."entry_id"
+        WHERE e."kind" IS DISTINCT FROM ${INTERNAL_TRANSFER_ENTRY_KIND}::text
+           OR (SELECT count(*) FROM "ledger_postings" AS p WHERE p."entry_id" = t."entry_id") <> 2
+           OR NOT EXISTS (
+             SELECT 1
+             FROM "ledger_postings" AS p
+             JOIN "ledger_accounts" AS a ON a."id" = p."account_id"
+             WHERE p."entry_id" = t."entry_id"
+               AND p."side" = 'DEBIT'
+               AND p."amount" = t."amount"
+               AND p."asset_code" = t."asset_code"
+               AND a."type_key" = ${WALLET_ACCOUNT_TYPE}::text
+               AND a."user_id" = t."sender_id"
+           )
+           OR NOT EXISTS (
+             SELECT 1
+             FROM "ledger_postings" AS p
+             JOIN "ledger_accounts" AS a ON a."id" = p."account_id"
+             WHERE p."entry_id" = t."entry_id"
+               AND p."side" = 'CREDIT'
+               AND p."amount" = t."amount"
+               AND p."asset_code" = t."asset_code"
+               AND a."type_key" = ${WALLET_ACCOUNT_TYPE}::text
+               AND a."user_id" = t."recipient_id"
+           )
+      )
+      UNION ALL
+      (
+        -- Règle « ledger_entries_transfer_recorded » : une écriture de transfert n'existe pas
+        -- sans son transfert.
+        SELECT 'ENTRY_WITHOUT_TRANSFER', e."id"::text
+        FROM "ledger_entries" AS e
+        WHERE e."kind" = ${INTERNAL_TRANSFER_ENTRY_KIND}::text
+          AND NOT EXISTS (SELECT 1 FROM "transfers" AS t WHERE t."entry_id" = e."id")
+      )
+      LIMIT ${limit}
+    `);
+    return rows.map((row) => ({ kind: row.kind, subject: row.subject }));
   }
 }

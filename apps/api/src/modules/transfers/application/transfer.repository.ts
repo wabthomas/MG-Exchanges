@@ -1,6 +1,7 @@
 import type { KycVerifiedLevel, UserStatus } from '@mgx/contracts';
 
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
+import type { LedgerAnomaly } from '../../ledger/application/ledger.repository.js';
 import type { TransferCeilings, TransferUsage } from '../domain/transfer-policy.js';
 
 /** Transfert tel que la base l'a conservé. Le montant est un entier d'unités minimales de l'actif. */
@@ -80,6 +81,19 @@ export class LimitChangeDeniedError extends Error {
     this.name = 'LimitChangeDeniedError';
   }
 }
+
+/**
+ * Ce que la relecture des transferts peut trouver. Aucune de ces anomalies ne peut naître d'un
+ * transfert normal — la base les refuse : en trouver une signale une altération.
+ */
+export type TransferAnomalyKind =
+  /**
+   * L'écriture que désigne un transfert n'est pas la sienne : son type, ses deux lignes, leur
+   * montant, leur actif ou leurs comptes. Sujet : le transfert.
+   */
+  | 'TRANSFER_ENTRY_MISMATCH'
+  /** Une écriture de transfert n'est désignée par aucun transfert. Sujet : l'écriture. */
+  | 'ENTRY_WITHOUT_TRANSFER';
 
 /**
  * Accès aux transferts et à leurs plafonds. Les montants y circulent en `bigint` d'unités
@@ -164,4 +178,15 @@ export abstract class TransferRepository {
     tx: DbClient,
     limit: NewLimit,
   ): Promise<{ readonly before: LimitRecord | null; readonly after: LimitRecord }>;
+
+  // --- Vérification ---
+
+  /**
+   * Relit **tous** les transferts et leurs écritures, et rend au plus `limit` anomalies : ce
+   * que la base refuse à l'écriture, relu après coup.
+   */
+  abstract findEntryAnomalies(
+    db: DbClient,
+    limit: number,
+  ): Promise<LedgerAnomaly<TransferAnomalyKind>[]>;
 }

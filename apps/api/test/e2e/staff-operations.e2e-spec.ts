@@ -18,6 +18,7 @@ import {
 import request from 'supertest';
 
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
+import { LedgerVerification } from '../../src/modules/ledger/application/ledger-verification.js';
 import { SystemSettingsService } from '../../src/modules/system-settings/application/system-settings.service.js';
 import {
   backgroundWorkDone,
@@ -1249,6 +1250,19 @@ describe('Opérations du personnel — bout en bout', () => {
         await openAdjustments().expect(200);
       }
       expect((await walletsOf(alice))['USD']).toEqual({ available: '0.00', frozen: false });
+    });
+  });
+
+  describe('vérification du grand livre', () => {
+    it('après toutes les opérations de ce fichier, la vérification horaire ne relève rien', async () => {
+      // Les trois contrôles — grand livre, transferts, ajustements — relisent tout ce que les
+      // tests de ce fichier ont écrit par les routes de l'API : une opération réelle ne produit
+      // aucune anomalie.
+      expect(
+        await prisma.ledgerAdjustment.count({ where: { status: 'APPROVED' } }),
+      ).toBeGreaterThan(0);
+      const { entries } = await asApp(ledgerSize);
+      expect(await testApp.app.get(LedgerVerification).run()).toBe(entries);
     });
   });
 });

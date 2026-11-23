@@ -7,6 +7,7 @@ import type pg from 'pg';
 
 import { AppError } from '../../src/common/errors/app-error.js';
 import { PrismaService } from '../../src/infrastructure/database/prisma.service.js';
+import { LedgerVerification } from '../../src/modules/ledger/application/ledger-verification.js';
 import { RedisRateLimiter } from '../../src/infrastructure/rate-limit/redis-rate-limiter.js';
 import { AccountClosureService } from '../../src/modules/identity/application/account-closure.service.js';
 import { PasswordHasher } from '../../src/modules/identity/application/password-hasher.js';
@@ -2008,6 +2009,17 @@ describe('Transferts entre titulaires — service (PostgreSQL réel)', () => {
       expect((await prisma.user.findUniqueOrThrow({ where: { id: alice.id } })).status).toBe(
         'CLOSED',
       );
+    });
+  });
+
+  describe('vérification du grand livre', () => {
+    it('après toutes les opérations de ce fichier, la vérification horaire ne relève rien', async () => {
+      // Les trois contrôles — grand livre, transferts, ajustements — relisent tout ce que les
+      // tests de ce fichier ont écrit par le service : une opération réelle ne produit
+      // aucune anomalie.
+      expect(await prisma.transfer.count()).toBeGreaterThan(0);
+      const { entries } = await asApp(ledgerSize);
+      expect(await testApp.app.get(LedgerVerification).run()).toBe(entries);
     });
   });
 });

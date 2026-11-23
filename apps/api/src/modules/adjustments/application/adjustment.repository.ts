@@ -1,6 +1,7 @@
 import type { LedgerAdjustmentDirection, LedgerAdjustmentStatus } from '@mgx/contracts';
 
 import type { DbClient } from '../../../infrastructure/database/prisma.service.js';
+import type { LedgerAnomaly } from '../../ledger/application/ledger.repository.js';
 
 /** Ajustement tel que la base l'a conservé. Le montant est un entier d'unités minimales de l'actif. */
 export interface AdjustmentRecord {
@@ -79,6 +80,21 @@ export class AdjustmentRefusedByDatabaseError extends Error {
 }
 
 /**
+ * Ce que la relecture des ajustements peut trouver. Aucune de ces anomalies ne peut naître d'un
+ * ajustement normal — la base les refuse : en trouver une signale une altération.
+ */
+export type AdjustmentAnomalyKind =
+  /**
+   * L'écriture que désigne un ajustement approuvé n'est pas la sienne : son type, ses deux
+   * lignes, leur montant, leur actif ou leurs comptes. Sujet : l'ajustement.
+   */
+  | 'ADJUSTMENT_ENTRY_MISMATCH'
+  /**
+   * Une écriture d'ajustement n'est désignée par aucun ajustement approuvé. Sujet : l'écriture.
+   */
+  | 'ENTRY_WITHOUT_ADJUSTMENT';
+
+/**
  * Port de persistance des ajustements manuels.
  *
  * Il ne passe aucune écriture : l'écriture d'un ajustement approuvé passe par le grand livre,
@@ -135,4 +151,13 @@ export abstract class AdjustmentRepository {
    * @returns leur nombre.
    */
   abstract expireOverdue(db: DbClient): Promise<number>;
+
+  /**
+   * Relit **tous** les ajustements approuvés et leurs écritures, et rend au plus `limit`
+   * anomalies : ce que la base refuse à l'écriture, relu après coup.
+   */
+  abstract findEntryAnomalies(
+    db: DbClient,
+    limit: number,
+  ): Promise<LedgerAnomaly<AdjustmentAnomalyKind>[]>;
 }

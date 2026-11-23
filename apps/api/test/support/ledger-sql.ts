@@ -221,15 +221,24 @@ export async function ledgerSize(db: pg.Client): Promise<{ entries: number; post
   return rows[0]!;
 }
 
+/** Tables du grand livre lui-même. */
+export const LEDGER_TABLES = ['ledger_accounts', 'ledger_entries', 'ledger_postings'] as const;
+
+/** Tables des opérations qui passent des écritures : leurs règles lient chacune à la sienne. */
+export const OPERATION_TABLES = ['transfers', 'ledger_adjustments'] as const;
+
 /**
  * Altère le grand livre comme seul le propriétaire du schéma peut le faire : les règles sont
  * neutralisées le temps de `work`, puis rétablies. À l'usage des tests de la vérification.
+ *
+ * `tables` : les tables dont les règles sont neutralisées — par défaut, celles du grand livre.
+ * Les clés étrangères et les contraintes, elles, restent en vigueur.
  */
 export async function tamperWithLedger(
   owner: pg.Client,
   work: (owner: pg.Client) => Promise<void>,
+  tables: readonly string[] = LEDGER_TABLES,
 ): Promise<void> {
-  const tables = ['ledger_accounts', 'ledger_entries', 'ledger_postings'];
   await owner.query('BEGIN');
   try {
     for (const table of tables) {

@@ -8,6 +8,7 @@ import { NotificationsModule } from '../notifications/notifications.module.js';
 import { OutboxModule } from '../outbox/outbox.module.js';
 import { SystemSettingsModule } from '../system-settings/system-settings.module.js';
 import { TransferAccountData } from './application/transfer-account-data.js';
+import { TransferLedgerCheck } from './application/transfer-ledger-check.js';
 import { TransferLimitsService } from './application/transfer-limits.service.js';
 import { TransferNoticeDispatcher } from './application/transfer-notice.dispatcher.js';
 import { TransferRepository } from './application/transfer.repository.js';
@@ -25,9 +26,11 @@ import { TransferController } from './presentation/transfer.controller.js';
  * actif. La fonctionnalité est fermée par défaut (`internalTransfers`), et rien ne part tant
  * qu'aucun plafond n'est fixé.
  *
- * Le module s'appuie sur le grand livre (écritures, actifs, soldes) et sur l'identité (comptes,
- * preuve du titulaire, clôture, copie des données) ; ni l'un ni l'autre ne dépend de lui. Les
- * règles essentielles sont aussi imposées par la base (voir la migration `internal_transfers`).
+ * Le module s'appuie sur le grand livre (écritures, actifs, soldes, vérification périodique) et
+ * sur l'identité (comptes, preuve du titulaire, clôture, copie des données) ; ni l'un ni l'autre
+ * ne dépend de lui. Les règles essentielles sont aussi imposées par la base (voir la migration
+ * `internal_transfers`) ; la vérification périodique relit celles qui lient un transfert à son
+ * écriture.
  */
 @Module({
   imports: [
@@ -46,6 +49,7 @@ import { TransferController } from './presentation/transfer.controller.js';
     TransferLimitsService,
     TransferNoticeDispatcher,
     TransferAccountData,
+    TransferLedgerCheck,
   ],
 })
 export class TransfersModule {}

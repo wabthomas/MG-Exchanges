@@ -126,7 +126,7 @@ export interface BalanceTotal {
 }
 
 /**
- * Ce qu'une vérification du grand livre peut trouver. Aucune de ces anomalies ne peut naître
+ * Ce que le grand livre peut trouver en se relisant. Aucune de ces anomalies ne peut naître
  * d'une écriture normale — la base les refuse : en trouver une signale une altération.
  */
 export type LedgerAnomalyKind =
@@ -139,11 +139,21 @@ export type LedgerAnomalyKind =
   /** Une écriture n'a pas toutes ses lignes, ou ses débits et ses crédits diffèrent. */
   | 'ENTRY_UNSOUND'
   /** Dans un actif, les soldes de sens débit et de sens crédit ne s'égalent pas. */
-  | 'ASSET_UNBALANCED';
+  | 'ASSET_UNBALANCED'
+  /** Une écriture est d'un type que la base ne connaît pas (`ledger_entry_kinds`). */
+  | 'ENTRY_KIND_UNKNOWN';
 
-export interface LedgerAnomaly {
-  readonly kind: LedgerAnomalyKind;
-  /** Identifiant du compte, de la ligne ou de l'écriture — ou code de l'actif. */
+/**
+ * Une anomalie relevée par la vérification : sa nature, et ce qu'elle désigne. Les natures du
+ * grand livre sont celles de `LedgerAnomalyKind` ; un module qui passe des écritures y ajoute
+ * les siennes (voir `LedgerCheckRegistry`).
+ */
+export interface LedgerAnomaly<Kind extends string = string> {
+  readonly kind: Kind;
+  /**
+   * Identifiant de ce que l'anomalie désigne — un compte, une ligne, une écriture, une
+   * opération — ou code de l'actif. Jamais un montant.
+   */
   readonly subject: string;
 }
 
@@ -249,5 +259,5 @@ export abstract class LedgerRepository {
   abstract counts(db: DbClient): Promise<LedgerCounts>;
 
   /** Relit tout le grand livre ; rend au plus `limit` anomalies. */
-  abstract findAnomalies(db: DbClient, limit: number): Promise<LedgerAnomaly[]>;
+  abstract findAnomalies(db: DbClient, limit: number): Promise<LedgerAnomaly<LedgerAnomalyKind>[]>;
 }

@@ -5,6 +5,7 @@ import { IdentityModule } from '../identity/identity.module.js';
 import { SystemSettingsModule } from '../system-settings/system-settings.module.js';
 import { LedgerAccountData } from './application/ledger-account-data.js';
 import { LedgerAdministrationService } from './application/ledger-administration.service.js';
+import { LedgerCheckRegistry } from './application/ledger-check.registry.js';
 import { LedgerReader } from './application/ledger-reader.js';
 import { LedgerVerification } from './application/ledger-verification.js';
 import { LedgerRepository } from './application/ledger.repository.js';
@@ -23,7 +24,8 @@ import { WalletController } from './presentation/wallet.controller.js';
  *
  * C'est le socle des opérations financières — et lui seul : **aucune de ses routes ne déplace
  * de fonds**. Le module expose aux modules qui portent ces opérations `LedgerService`, par qui
- * passe toute écriture, et `LedgerReader`, pour ce qu'elles lisent avant d'écrire ; il offre au
+ * passe toute écriture, `LedgerReader`, pour ce qu'elles lisent avant d'écrire, et
+ * `LedgerCheckRegistry`, où chacun inscrit le contrôle de ses propres écritures ; il offre au
  * titulaire la lecture de ses portefeuilles, et au back-office celle des comptes, des écritures
  * et de la balance, l'enregistrement des actifs, et le gel d'un portefeuille — qui arrête toute
  * écriture sur lui, quelle que soit l'opération.
@@ -43,9 +45,10 @@ import { WalletController } from './presentation/wallet.controller.js';
     WalletService,
     WalletFreezeService,
     LedgerAdministrationService,
+    LedgerCheckRegistry,
     LedgerVerification,
     LedgerAccountData,
   ],
-  exports: [LedgerService, LedgerReader],
+  exports: [LedgerService, LedgerReader, LedgerCheckRegistry],
 })
 export class LedgerModule {}
