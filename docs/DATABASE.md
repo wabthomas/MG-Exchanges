@@ -5,16 +5,16 @@ les migrations Prisma (`apps/api/prisma/`).
 
 ## Conventions
 
-| Sujet          | Règle                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------- |
-| Nommage        | tables au pluriel et colonnes en `snake_case` ; modèles Prisma en `PascalCase`               |
-| Clés primaires | UUID v7 générés par la base (`uuidv7()`), ordonnés dans le temps                             |
-| Horodatages    | `timestamptz(6)`, toujours en UTC                                                            |
-| Montants       | `NUMERIC(38,0)` en unités minimales de l'actif — jamais `float`, `real` ni `money` (phase 3) |
-| Énumérations   | types `ENUM` PostgreSQL pour les ensembles fermés et stables                                 |
-| JSON           | `jsonb`, réservé aux contenus sans schéma relationnel (métadonnées, charges utiles)          |
-| Intégrité      | portée par la base : `NOT NULL`, `CHECK`, clés étrangères, unicité, déclencheurs             |
-| Suppression    | pas de suppression physique des données financières ou d'audit                               |
+| Sujet          | Règle                                                                               |
+| -------------- | ----------------------------------------------------------------------------------- |
+| Nommage        | tables au pluriel et colonnes en `snake_case` ; modèles Prisma en `PascalCase`      |
+| Clés primaires | UUID v7 générés par la base (`uuidv7()`), ordonnés dans le temps                    |
+| Horodatages    | `timestamptz(6)`, toujours en UTC                                                   |
+| Montants       | `NUMERIC(38,0)` en unités minimales de l'actif — jamais `float`, `real` ni `money`  |
+| Énumérations   | types `ENUM` PostgreSQL pour les ensembles fermés et stables                        |
+| JSON           | `jsonb`, réservé aux contenus sans schéma relationnel (métadonnées, charges utiles) |
+| Intégrité      | portée par la base : `NOT NULL`, `CHECK`, clés étrangères, unicité, déclencheurs    |
+| Suppression    | pas de suppression physique des données financières ou d'audit                      |
 
 ## Rôles et privilèges
 
@@ -41,8 +41,31 @@ attribution (`user_roles`) ne change que de deux façons : l'outil d'amorçage e
 commande, exécuté avec le rôle propriétaire ; ou l'**approbation d'une demande de changement
 de rôle**, que la base applique elle-même (voir `role_change_requests`). L'API n'écrit donc
 jamais directement une attribution : chacune résulte d'une demande approuvée, qui en reste la
-trace ineffaçable. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
+trace ineffaçable. De même, une version des conditions d'utilisation **sans auteur** ne
+s'écrit qu'avec le rôle propriétaire (outil `terms:publish`) : l'API, elle, doit désigner un
+membre du personnel habilité, que la base vérifie. La base vérifie la qualité des deux intervenants que l'API lui désigne ;
 elle ne peut pas vérifier que ce sont bien eux qui agissent (limite décrite dans l'ADR 0018).
+
+Sur le **grand livre**, le rôle applicatif ne peut qu'**ajouter** : il lit le plan de comptes
+(`ledger_account_types`) et la liste des types d'écriture (`ledger_entry_kinds`) sans pouvoir
+les écrire ; il ajoute des actifs, des écritures et des lignes sans pouvoir les modifier ni
+les supprimer. Il garde `UPDATE` sur `ledger_accounts`
+— c'est ce privilège qui permet de verrouiller un compte (`FOR UPDATE`), et c'est sous son
+nom que la base met le solde à jour lorsqu'il passe une ligne —, mais un solde écrit
+directement n'est jamais validé (voir « Tables (phase 3 — grand livre) »). Un actif **sans
+auteur** ne s'enregistre qu'avec le rôle propriétaire.
+
+Sur les **transferts**, de même : le rôle applicatif **ajoute** des transferts sans pouvoir
+les modifier ni les supprimer ; il fixe et remplace des plafonds (`INSERT`, `UPDATE` sur
+`transfer_limits`) sans pouvoir en supprimer. Des plafonds **sans auteur** ne se fixent
+qu'avec le rôle propriétaire.
+
+Sur les **opérations du personnel** : le rôle applicatif dépose une demande d'ajustement et
+en écrit la décision, pose un gel et en écrit la levée (`INSERT`, `UPDATE` sur
+`ledger_adjustments` et `wallet_freezes`), sans pouvoir supprimer ni l'une ni l'autre. Ce
+qu'il peut écrire dans une décision ou une levée est borné par la base : une fois, sans
+toucher aux termes, par un membre du personnel qu'elle vérifie. **Ici, le rôle propriétaire
+n'a pas de chemin à part** : ni ajustement, ni gel sans auteur habilité.
 
 En développement, `DATABASE_MIGRATION_URL` peut être omise : `DATABASE_URL` est alors
 utilisée pour les migrations.
@@ -110,16 +133,16 @@ sert la file du relais.
 
 ### `users` — comptes
 
-| Colonne                      | Type           | Notes                                                              |
-| ---------------------------- | -------------- | ------------------------------------------------------------------ |
-| `id`                         | `uuid`         | UUID v7                                                            |
-| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                           |
-| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`            |
-| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion |
-| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement               |
-| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                             |
-| `locale`                     | `varchar(10)`  | langue des messages                                                |
-| `terms_accepted_at`          | `timestamptz`  | acceptation des conditions d'utilisation                           |
+| Colonne                      | Type           | Notes                                                                                                                                                                                                    |
+| ---------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                         | `uuid`         | UUID v7                                                                                                                                                                                                  |
+| `account_type`               | `account_type` | `INDIVIDUAL`, `BUSINESS`                                                                                                                                                                                 |
+| `status`                     | `user_status`  | `PENDING_VERIFICATION`, `ACTIVE`, `SUSPENDED`, `CLOSED`                                                                                                                                                  |
+| `email`, `email_verified_at` |                | adresse normalisée (minuscules), unique : identifiant de connexion                                                                                                                                       |
+| `phone`, `phone_verified_at` |                | format E.164 ; unique **une fois vérifié** seulement                                                                                                                                                     |
+| `country_code`               | `char(2)`      | pays de résidence déclaré (ISO 3166-1)                                                                                                                                                                   |
+| `locale`                     | `varchar(10)`  | langue des messages                                                                                                                                                                                      |
+| `registered_at`              | `timestamptz`  | date de la demande d'inscription — c'est elle que lit la purge des inscriptions jamais vérifiées. (Avant la migration `terms_of_use` : `terms_accepted_at` ; les acceptations ont désormais leur table.) |
 
 Contraintes : adresse normalisée et bien formée, téléphone E.164, code pays en majuscules,
 **un compte `ACTIVE` a toujours une adresse vérifiée**. Un compte n'est jamais supprimé :
@@ -138,10 +161,20 @@ un compte, est supprimée après 7 jours avec son secret et ses codes.
   (`account_closures`), **sans rôle**, et une fois supprimés son secret, son second facteur,
   ses codes, ses sessions et son profil (`MGX04`) ; **clôturé, il ne se modifie plus**
   (`MGX05`) ;
+- déclencheur `users_closure_leaves_no_terms_acceptance` (fonction
+  `mgx_forbid_closure_with_terms_acceptance()`) : il ne se clôt pas davantage en gardant une
+  acceptation des conditions d'utilisation (`MGX04`) ;
+- déclencheur `users_closure_leaves_no_funds` (fonction `mgx_forbid_closure_with_funds()`) :
+  il ne se clôt pas tant qu'un de ses comptes du grand livre **détient des fonds**, dans
+  quelque actif que ce soit (`MGX04`) ;
+- déclencheur `users_closure_leaves_no_freeze` (fonction
+  `mgx_forbid_closure_with_frozen_wallet()`) : il ne se clôt pas tant qu'**un de ses
+  portefeuilles est gelé** (`MGX04`) ;
 - déclencheurs `<table>_account_open` (fonction `mgx_forbid_closed_account_rows()`) sur
   `user_credentials`, `user_totp_credentials`, `user_recovery_codes`, `user_sessions`,
-  `verification_challenges`, `user_profiles`, `user_roles` et `kyc_cases` : **rien ne s'ajoute
-  à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
+  `verification_challenges`, `user_profiles`, `user_roles`, `kyc_cases`,
+  `terms_acceptances`, `ledger_accounts`, `ledger_adjustments` et `wallet_freezes` : **rien ne
+  s'ajoute à un compte clôturé** (`MGX05`). La fonction verrouille la ligne du compte en
   `FOR KEY SHARE` ; la clôture la verrouille en `FOR UPDATE`. Les deux s'excluent : une ligne
   est écrite avant la clôture — qui l'efface, ou échoue — ou attend la clôture et est
   refusée. Le verrou est le plus faible qui convienne : il ne gêne aucune autre écriture du
@@ -159,7 +192,8 @@ valeur — un mot de passe en clair ne peut pas y être écrit, même par erreur
 deux sont identiques, rôle par rôle. `roles` contient les rôles système : `super_admin`
 (toutes les permissions), `support` (`users.read`, `users.suspend`,
 `users.revoke_sessions`) et `compliance` (`users.read`, `users.close`, `kyc.read`,
-`kyc.review`, `kyc.revoke`). `user_roles` attribue un rôle à un compte (`granted_by` : auteur
+`kyc.review`, `kyc.revoke`, `wallet_freezes.read`, `wallet_freezes.create`). `user_roles`
+attribue un rôle à un compte (`granted_by` : auteur
 de la demande approuvée, `NULL` pour l'amorçage). Tables en lecture seule pour le rôle
 applicatif (voir « Rôles et privilèges »).
 
@@ -267,10 +301,73 @@ Une ligne par compte clôturé, écrite dans la transaction de la clôture.
     et les dossiers de vérification du compte effacés ;
   - elle ne se supprime pas ; la table ne se vide pas (`account_closures_no_truncate`) ; le
     rôle applicatif n'a ni `DELETE` ni `TRUNCATE` ;
+- déclencheur `account_closures_ledger_retention` (fonction
+  `mgx_enforce_closure_ledger_retention()`), erreur `MGX04` : dès lors qu'**une écriture a
+  été passée** sur un compte du grand livre du titulaire, `legal_retention_until` vaut **au
+  moins dix ans** après la clôture, comptés de la même façon ; il s'exécute après
+  `account_closures_enforce` (ordre alphabétique des noms), qui a verrouillé le compte ;
 - déclencheur de contrainte **différé** `account_closures_applied` (fonction
   `mgx_check_closure_applied()`), vérifié à la validation de la transaction : **une clôture est
   entière ou n'est pas** — une trace n'existe que pour un compte clôturé, et un compte
   clôturé n'a plus de dossier de vérification en préparation, en attente ou en vigueur.
+
+### `terms_versions`, `terms_acceptances` — conditions d'utilisation
+
+Les versions publiées des conditions d'utilisation, et qui a accepté laquelle (ADR 0024).
+
+| `terms_versions`                          | Notes                                                                                            |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `number`                                  | clé primaire : 1, 2, 3…, **sans trou** ; la version en vigueur est la plus grande                |
+| `requires_acceptance`                     | la règle de la version : `true`, chaque compte doit l'accepter ; `false`, elle est signalée      |
+| `summary_fr`, `body_fr`, `body_fr_sha256` | résumé, texte et empreinte SHA-256 (hexadécimal) du texte encodé en UTF-8 — le français fait foi |
+| `summary_en`, `body_en`, `body_en_sha256` | traduction anglaise : entière, ou absente (`NULL`)                                               |
+| `published_by`                            | le membre du personnel qui a publié ; `NULL` : publiée par l'outil d'exploitation                |
+| `published_at`                            | **heure de la base**, lue après le verrou de publication : elle croît avec le numéro             |
+
+| `terms_acceptances`         | Notes                                                    |
+| --------------------------- | -------------------------------------------------------- |
+| `user_id`, `version_number` | clé primaire : une acceptation par compte et par version |
+| `accepted_at`               | **heure de la base** au moment de l'écriture             |
+
+- contraintes de `terms_versions` : `number >= 1` ; **la version 1 exige d'être acceptée**
+  (`terms_versions_first_requires_acceptance_check` — nul n'a pu accepter un texte qui
+  n'existait pas) ; textes bornés (résumé 1 000 caractères, texte 200 000), non blancs, sans
+  caractère de contrôle autre que saut de ligne, retour chariot et tabulation, sans marque
+  d'ordre des octets en tête (`terms_versions_fr_text_check`, `…_en_text_check`, fonction
+  `mgx_is_terms_text()`) ; **l'empreinte conservée est celle du texte conservé**
+  (`…_fr_digest_check`, `…_en_digest_check`) : un texte altéré entre l'API et la base ne se
+  publie pas ;
+- déclencheur `terms_versions_enforce` (fonction `mgx_enforce_terms_version()`) :
+  - une publication à la fois (verrou consultatif de transaction) ; **seul le numéro suivant
+    se publie** — ni doublon, ni trou, ni retour en arrière (`MGX07`) ;
+  - **qui publie** : un compte **actif détenant `terms.publish`**, relu au moment de publier
+    (`MGX06`) ; sans auteur (`published_by` `NULL`), seulement le **rôle propriétaire** de la
+    table — celui de l'outil `terms:publish`, jamais celui de l'API (`MGX06`) ;
+  - l'heure de publication est celle de la base, quelle que soit celle qu'on lui donne ;
+- **une version publiée ne change plus** : ni `UPDATE`, ni `DELETE`, ni `TRUNCATE`
+  (déclencheurs `terms_versions_immutable_row`, `…_immutable_truncate`, erreur `MGX01`) — même
+  pour le propriétaire du schéma ; le rôle applicatif n'en a d'ailleurs pas le privilège ;
+- déclencheur `terms_acceptances_enforce` (fonction `mgx_enforce_terms_acceptance()`) :
+  - **on n'accepte que la version en vigueur** (`MGX07`) ; n'accepte qu'un compte en cours
+    d'inscription ou actif (`MGX06`) ; l'heure est celle de la base ;
+  - **une acceptation est une preuve** : elle ne s'efface qu'avec le compte — inscription
+    jamais vérifiée (purgée, ou remplacée par une nouvelle inscription), ou clôture **dont la
+    trace est déjà écrite** (`account_closures`) ; dans tout autre cas : `MGX06` ;
+- elle ne se modifie pas et la table ne se vide pas (`terms_acceptances_no_update`,
+  `…_no_truncate`, `MGX01`) ; le rôle applicatif n'a ni `UPDATE` ni `TRUNCATE` ;
+- `terms_acceptances_account_open` : rien ne s'ajoute à un compte clôturé (`MGX05`), comme
+  pour ses autres lignes ; ce déclencheur s'exécute avant `terms_acceptances_enforce` (ordre
+  alphabétique des noms) ;
+- les quatre fonctions ont un **chemin de recherche figé** sur le schéma de l'application,
+  `pg_temp` en dernier : une table temporaire homonyme (`users`, `terms_versions`…) placée par
+  une session ne peut pas répondre à la place des vraies ;
+- index : `terms_acceptances (version_number)` — décompte des acceptations d'une version ;
+- clés étrangères `ON DELETE RESTRICT` : supprimer une inscription jamais vérifiée exige
+  d'effacer d'abord son acceptation.
+
+La règle « ce compte doit-il accepter ? » n'est pas stockée : elle se calcule à chaque requête
+(une lecture, `PrismaTermsRepository.standingOf`) — le compte est ouvert, une version exigeant
+l'acceptation existe, et la dernière version qu'il a acceptée lui est antérieure.
 
 ## Tables (phase 2 — vérification d'identité)
 
@@ -348,76 +445,700 @@ Supprimer la ligne rend le fichier définitivement illisible.
   qu'un dossier n'est jamais déposé sans une pièce en cours de retrait ;
 - le rôle applicatif n'a pas le privilège `UPDATE` sur cette table.
 
+## Tables (phase 3 — grand livre)
+
+Grand livre **en partie double** (ADR 0025). Toute variation d'un solde est une **écriture** :
+un en-tête (`ledger_entries`) et au moins deux **lignes** (`ledger_postings`), dont les débits
+égalent les crédits, actif par actif. Une écriture ne se modifie ni ne s'efface : une erreur
+se corrige par une écriture inverse. Le solde d'un compte (`ledger_accounts.balance`) n'est
+que le reflet de sa dernière ligne.
+
+**Deux opérations passent des écritures à ce jour** : le transfert entre titulaires (voir
+« Tables (phase 3 — transferts) ») et l'ajustement du personnel, sous double validation —
+la seule par laquelle des fonds entrent dans un portefeuille ou en sortent (voir « Tables
+(phase 3 — opérations du personnel) »). **La base n'en admet aucune autre** : elle tient la
+liste des types d'écriture (`ledger_entry_kinds`), refuse toute écriture d'un autre type, et
+ne valide une écriture d'un type connu qu'avec l'opération dont elle est la trace.
+
+### `assets` — actifs tenus par la plateforme
+
+| Colonne         | Type          | Notes                                                                               |
+| --------------- | ------------- | ----------------------------------------------------------------------------------- |
+| `code`          | `varchar(12)` | clé primaire : `USD`, `CDF`, `BTC`… — une majuscule, puis majuscules ou chiffres    |
+| `name`          | `varchar(64)` | libellé, sur une ligne                                                              |
+| `kind`          | `asset_kind`  | `FIAT`, `CRYPTO`                                                                    |
+| `scale`         | `smallint`    | nombre de décimales de l'unité minimale : 0 à 18                                    |
+| `registered_by` | `uuid`        | le membre du personnel qui a enregistré l'actif ; `NULL` : enregistré hors de l'API |
+| `registered_at` | `timestamptz` | **heure de la base**, quelle que soit celle qu'on lui fournit                       |
+
+- Le catalogue est **une donnée, pas du code** : aucun actif n'est créé par migration. Il
+  s'enregistre par le back-office (`POST /admin/ledger/assets`).
+- contraintes : `assets_code_format_check` (`^[A-Z][A-Z0-9]{1,11}$`), `assets_scale_check`
+  (0 à 18 : un montant est un entier d'au plus 38 chiffres ; au-delà de 18 décimales il ne
+  resterait plus de place pour sa partie entière), `assets_name_check` (non vide, sans espace
+  en tête ni en fin, sans caractère de contrôle) ;
+- déclencheur `assets_enforce` (fonction `mgx_enforce_asset()`), erreur `MGX08` : **seul
+  l'enregistre un compte actif détenant `ledger.manage_assets`**, relu au moment d'écrire ;
+  sans auteur, seulement le **rôle propriétaire** de la table — jamais celui de l'API ;
+- **un actif enregistré ne change plus** : ni `UPDATE`, ni `DELETE`, ni `TRUNCATE`
+  (déclencheurs `assets_immutable_row`, `assets_immutable_truncate`, erreur `MGX01`), même
+  pour le propriétaire du schéma — tous les montants s'expriment dans son unité minimale, et
+  changer son nombre de décimales changerait leur valeur. Le rôle applicatif n'a que
+  `SELECT` et `INSERT`.
+
+### `ledger_account_types` — plan de comptes
+
+| `key`              | `owner`    | `normal_side` | Rôle                                                                                                                     |
+| ------------------ | ---------- | ------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `user_available`   | `USER`     | `CREDIT`      | fonds dont un titulaire dispose                                                                                          |
+| `platform_custody` | `PLATFORM` | `DEBIT`       | fonds conservés hors du grand livre pour le compte des titulaires (banque, monnaie mobile, conservation de cryptoactifs) |
+| `platform_fees`    | `PLATFORM` | `CREDIT`      | frais gagnés par la plateforme                                                                                           |
+
+- `normal_side` est le sens qui **augmente** le solde. Les avoirs des titulaires sont une
+  dette de la plateforme envers eux : un crédit les augmente. Ce qu'elle conserve pour eux
+  est un actif : un débit l'augmente.
+- Le plan **ne change que par migration**, et s'étendra avec les opérations ; il est recopié
+  de `@mgx/contracts` (`LEDGER_ACCOUNT_TYPES`), et un test vérifie que les deux sont
+  identiques. Le rôle applicatif n'a que `SELECT`.
+- contrainte `ledger_account_types_key_format_check` ; un type **ne se modifie ni ne se
+  retire** (déclencheurs `ledger_account_types_immutable_row`, `…_immutable_truncate`,
+  `MGX01`) : son sens est recopié sur chaque compte à son ouverture.
+
+### `ledger_entry_kinds` — types d'écriture
+
+| `key`               | Opération                                               | Ce qui lie l'écriture à son opération                                              |
+| ------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `transfer.internal` | transfert entre deux titulaires                         | `ledger_entries_transfer_recorded`, `transfers_entry_matches` (`MGX10`)            |
+| `adjustment.credit` | crédit manuel d'un portefeuille, sous double validation | `ledger_entries_adjustment_recorded`, `ledger_adjustments_entry_matches` (`MGX11`) |
+| `adjustment.debit`  | débit manuel d'un portefeuille, sous double validation  | les mêmes                                                                          |
+
+Deux colonnes : `key` (`varchar(64)`, clé primaire) et `description` (`varchar(255)`).
+
+- **Une écriture d'un type absent de cette liste est refusée** (`MGX13`) — déclencheur
+  `ledger_entries_kind_known` (fonction `mgx_check_ledger_entry_kind()`), dès l'insertion de
+  l'en-tête, quels que soient le rôle qui écrit, l'auteur que l'écriture désigne et ses
+  lignes. Jusqu'à la migration `ledger_entry_kinds`, la base ne vérifiait d'une écriture que
+  l'arithmétique : une écriture équilibrée d'un type quelconque créditait un portefeuille
+  depuis `platform_custody`, ou déplaçait des fonds d'un portefeuille à un autre hors des
+  règles des transferts.
+- Le contrôle a lieu **à l'insertion de l'en-tête, et là seulement**. Il suffit parce qu'une
+  écriture ne change pas de type après coup — elle ne se modifie pas, pas même dans la
+  transaction qui l'écrit (`ledger_entries_immutable_row`, et aucun privilège `UPDATE` pour
+  le rôle applicatif) — et qu'un type ne se retire pas de la liste. Un test l'éprouve sous le
+  rôle applicatif, le propriétaire et le superutilisateur.
+- **Chaque type de la liste est lié à son opération** par les règles de la migration qui a
+  créé cette opération (colonne de droite) : une écriture `transfer.internal` n'existe pas
+  sans son transfert, une écriture `adjustment.credit` ou `adjustment.debit` pas sans son
+  ajustement approuvé. Avec la règle précédente, il s'ensuit que **plus aucune écriture ne
+  déplace de fonds hors d'un transfert ou d'un ajustement approuvé**. Un test relit, dans la
+  base, les contrôles de fin de transaction posés sur `ledger_entries` : chaque type de la
+  liste y est nommé, et aucun autre.
+- La liste **ne change que par migration**, et s'étendra avec les opérations ; elle est
+  recopiée de `@mgx/contracts` (`LEDGER_ENTRY_KINDS`), et un test vérifie que les deux sont
+  identiques. **Ajouter un type, c'est écrire dans la même migration la règle qui le lie à
+  son opération** : un type connu de la base sans règle rouvrirait le chemin que cette liste
+  ferme.
+- contrainte `ledger_entry_kinds_key_format_check` (le format du type d'une écriture) ;
+  déclencheur `ledger_entry_kinds_enforce` (fonction `mgx_enforce_ledger_entry_kind()`,
+  `MGX13`) : **seul le rôle propriétaire de la table y ajoute un type** — le rôle applicatif
+  n'a que `SELECT`, et ne pourrait rien y ajouter même si `INSERT` lui était rendu par
+  erreur ; un type **ne se modifie ni ne se retire** (déclencheurs
+  `ledger_entry_kinds_immutable_row`, `…_immutable_truncate`, `MGX01`), même par le
+  propriétaire : des écritures le portent, et des règles le nomment.
+- Il n'y a **pas de clé étrangère** de `ledger_entries.kind` vers cette table : la règle est
+  un déclencheur, comme toutes celles du grand livre, et **vaut pour ce qui s'écrit après la
+  migration**. Une écriture passée auparavant sous un autre type n'est pas réexaminée — elle
+  ne se modifie ni ne s'efface, pas même par le propriétaire — et reste dans le grand livre ;
+  `DEPLOYMENT.md` donne la requête qui les recense.
+- Les tests qui éprouvent le grand livre lui-même passent des écritures de types d'essai
+  (`test.deposit`, `test.transfer`…) : chacun les déclare d'abord, avec le rôle propriétaire,
+  dans sa propre base jetable (`registerEntryKindsInSql`). La base modèle des tests n'en
+  connaît aucun, et `ledger-entry-kinds-schema.spec.ts` s'exécute sur une base telle que les
+  migrations la laissent.
+
+### `ledger_accounts` — comptes
+
+| Colonne         | Type            | Notes                                                                                 |
+| --------------- | --------------- | ------------------------------------------------------------------------------------- |
+| `id`            | `uuid`          | UUID v7 : croît avec l'heure d'ouverture                                              |
+| `type_key`      | `varchar(64)`   | type du plan de comptes                                                               |
+| `asset_code`    | `varchar(12)`   | actif dans lequel le compte est tenu                                                  |
+| `user_id`       | `uuid`          | titulaire ; `NULL` pour un compte de la plateforme                                    |
+| `normal_side`   | `ledger_side`   | recopié du type par la base                                                           |
+| `balance`       | `numeric(38,0)` | solde en unités minimales, exprimé dans le sens normal du compte : **jamais négatif** |
+| `posting_count` | `bigint`        | nombre de lignes passées sur le compte                                                |
+| `created_at`    | `timestamptz`   | **heure de la base**                                                                  |
+
+- Un compte est ouvert par la première écriture qui le touche — ou, vide, par le gel de son
+  portefeuille : un titulaire sans compte dans un actif n'y détient rien.
+- index uniques partiels : `ledger_accounts_user_key` — `(user_id, asset_code, type_key)`
+  pour les comptes de titulaires — et `ledger_accounts_platform_key` —
+  `(asset_code, type_key)` pour ceux de la plateforme : **un seul compte par type et par
+  actif**, pour chaque titulaire comme pour la plateforme ;
+- contraintes : `ledger_accounts_balance_check` (`balance >= 0` : **aucun compte ne devient
+  négatif**, celui d'un titulaire comme celui de la plateforme),
+  `ledger_accounts_posting_count_check`, `ledger_accounts_empty_check` (sans ligne, pas de
+  solde) ;
+- déclencheur `ledger_accounts_enforce` (fonction `mgx_enforce_ledger_account()`), erreur
+  `MGX08` :
+  - **à l'ouverture** : un compte de titulaire appartient à un titulaire, un compte de la
+    plateforme à personne ; le titulaire est **actif ou suspendu** — une inscription jamais
+    vérifiée peut être purgée, elle ne détient donc pas de fonds ; le compte **s'ouvre vide** ;
+    son sens et sa date sont fixés par la base ;
+  - **ensuite** : il ne change ni de type, ni d'actif, ni de titulaire, ni de sens ;
+- déclencheur `ledger_accounts_account_open` : aucun compte ne s'ouvre pour un titulaire
+  clôturé (`MGX05`) ; il retient le titulaire (`FOR KEY SHARE`) jusqu'à la fin de la
+  transaction, et s'exécute avant `ledger_accounts_enforce` ;
+- un compte **ne se supprime pas** et la table ne se vide pas (`ledger_accounts_no_delete`,
+  `ledger_accounts_no_truncate`, `MGX01`) ; le rôle applicatif n'a ni `DELETE` ni `TRUNCATE` ;
+- déclencheur de contrainte **différé** `ledger_accounts_balance_proven` (fonction
+  `mgx_check_ledger_account_balance()`), vérifié à la validation de toute transaction qui a
+  modifié un compte : **son solde et son nombre de lignes sont ceux de sa dernière ligne**,
+  et aucune ligne ne porte un rang plus élevé. Un solde écrit directement, sans la ligne qui
+  le justifie, n'est donc jamais validé — quel que soit le rôle (`MGX08`).
+
+### `ledger_entries` — écritures (en-tête)
+
+| Colonne                  | Type               | Notes                                                                                    |
+| ------------------------ | ------------------ | ---------------------------------------------------------------------------------------- |
+| `id`                     | `uuid`             | UUID v7                                                                                  |
+| `idempotency_key`        | `varchar(160)`     | **unique** : la même opération ne s'écrit qu'une fois                                    |
+| `kind`                   | `varchar(64)`      | type de l'écriture — l'opération qui l'a produite : l'un de ceux de `ledger_entry_kinds` |
+| `posting_count`          | `smallint`         | nombre de lignes que l'écriture **déclare** : 2 à 100                                    |
+| `actor_type`, `actor_id` | `audit_actor_type` | qui l'a passée : `USER`, `SERVICE` (avec identifiant) ou `SYSTEM` (sans)                 |
+| `request_id`             | `varchar(128)`     | requête à l'origine de l'écriture, si elle en a une                                      |
+| `metadata`               | `jsonb`            | références de l'opération : un objet, 4 096 octets au plus                               |
+| `posted_at`              | `timestamptz`      | **heure de la base** (déclencheur `ledger_entries_stamp`)                                |
+
+- contraintes : `ledger_entries_idempotency_key_format_check` (8 à 160 caractères : lettres,
+  chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un chiffre),
+  `ledger_entries_kind_format_check` (minuscules, segments séparés par des points),
+  `ledger_entries_posting_count_check`, `ledger_entries_actor_id_check`,
+  `ledger_entries_metadata_check` ;
+- déclencheur `ledger_entries_kind_known` (fonction `mgx_check_ledger_entry_kind()`), erreur
+  `MGX13` : **le type de l'écriture est l'un de ceux que la base connaît** (voir
+  `ledger_entry_kinds`). Il s'exécute après l'insertion de l'en-tête : un type mal formé est
+  d'abord refusé par `ledger_entries_kind_format_check` ;
+- **une écriture ne se modifie ni ne s'efface** (déclencheurs `ledger_entries_immutable_row`,
+  `ledger_entries_immutable_truncate`, `MGX01`), même pour le propriétaire du schéma ; le
+  rôle applicatif n'a que `SELECT` et `INSERT`.
+
+### `ledger_postings` — lignes d'écriture
+
+| Colonne            | Type            | Notes                                                                          |
+| ------------------ | --------------- | ------------------------------------------------------------------------------ |
+| `id`               | `uuid`          | UUID v7                                                                        |
+| `entry_id`         | `uuid`          | l'écriture                                                                     |
+| `line_number`      | `smallint`      | rang dans l'écriture : 1, 2, 3… — unique par écriture                          |
+| `account_id`       | `uuid`          | le compte                                                                      |
+| `asset_code`       | `varchar(12)`   | l'actif — **celui du compte**                                                  |
+| `side`             | `ledger_side`   | `DEBIT`, `CREDIT`                                                              |
+| `amount`           | `numeric(38,0)` | unités minimales, **strictement positif**                                      |
+| `account_sequence` | `bigint`        | rang de la ligne sur son compte : 1, 2, 3… sans trou — **calculé par la base** |
+| `balance_after`    | `numeric(38,0)` | solde du compte juste après la ligne — **calculé par la base**                 |
+
+- index uniques : `(entry_id, line_number)`, `(account_id, account_sequence)` — ce dernier
+  sert aussi les relevés d'un compte, du plus récent au plus ancien ;
+- contraintes : `ledger_postings_amount_check`, `ledger_postings_line_number_check`,
+  `ledger_postings_account_sequence_check`, `ledger_postings_balance_after_check` ;
+- déclencheur `ledger_postings_apply` (fonction `mgx_apply_ledger_posting()`) — **c'est lui
+  qui passe la ligne sur son compte** :
+  - il **verrouille le compte** (`FOR UPDATE`) jusqu'à la fin de la transaction : une ligne à
+    la fois par compte, la suivante part du solde que celle-ci a laissé ;
+  - la ligne est dans l'actif de son compte (`MGX08`) ;
+  - le titulaire du compte n'est pas clôturé (`MGX05`) — il est retenu (`FOR KEY SHARE`)
+    jusqu'à la fin de la transaction : une clôture attend la ligne, ou la ligne attend la
+    clôture et est refusée ;
+  - le solde du compte est bien celui de sa dernière ligne ; sinon le compte a été altéré,
+    et **plus rien ne s'y écrit** tant qu'il n'a pas été examiné (`MGX08`) ;
+  - le solde qui résulte de la ligne **n'est pas négatif** (`MGX09`, « fonds
+    insuffisants ») — contrôle fait ligne après ligne : un découvert, même passager au sein
+    d'une écriture, est refusé ;
+  - il calcule `account_sequence` et `balance_after` — ce que l'appelant fournit est
+    ignoré — et met à jour le compte ;
+- déclencheur `ledger_postings_frozen_wallet` (fonction
+  `mgx_forbid_frozen_wallet_posting()`), exécuté après le précédent — donc **sous le verrou
+  du compte** : aucune ligne ne passe sur un compte dont le titulaire a son portefeuille gelé
+  dans cet actif (`MGX12`), **quelle que soit l'opération**, y compris celles qui restent à
+  écrire. Seules passent les écritures de type `adjustment.credit` et `adjustment.debit`
+  (voir `wallet_freezes`) ;
+- **une ligne ne se modifie ni ne s'efface** (déclencheurs `ledger_postings_immutable_row`,
+  `ledger_postings_immutable_truncate`, `MGX01`) ; le rôle applicatif n'a que `SELECT` et
+  `INSERT` ;
+- déclencheurs de contrainte **différés** `ledger_entries_sound` et
+  `ledger_postings_entry_sound` (fonction `mgx_check_ledger_entry()`), vérifiés à la
+  validation de la transaction, pour l'en-tête comme pour chaque ligne — **une écriture est
+  entière et équilibrée, ou n'est pas** (`MGX08`) :
+  - elle a exactement le nombre de lignes qu'elle déclare, numérotées 1, 2, 3… ;
+  - ses lignes portent sur **deux comptes au moins** ;
+  - **pour chaque actif, le total de ses débits égale celui de ses crédits** ;
+  - plus rien ne s'y ajoute ensuite : une ligne ajoutée à une écriture déjà validée la
+    rendrait incomplète, et est donc refusée.
+
+**Chemin de recherche figé.** Les huit fonctions de la migration `ledger` ne résolvent les
+noms que dans le schéma de l'application (`search_path = <schéma>, pg_temp`) : une table
+temporaire homonyme placée par une session ne peut ni habiliter un intrus, ni créer de fonds.
+Il en va de même des deux fonctions de la migration `ledger_entry_kinds` : une table
+temporaire nommée `ledger_entry_kinds` ne fait connaître aucun type, et n'en fait pas de son
+propriétaire celui de la liste.
+
+**Écritures simultanées.** Deux écritures qui touchent un même compte passent l'une après
+l'autre, la seconde à partir du solde laissé par la première. L'application verrouille
+d'abord les titulaires, puis les comptes, toujours dans le même ordre (voir
+`ARCHITECTURE.md`) ; la base, elle, garantit le résultat quel que soit l'ordre choisi par le
+code qui écrit — au pire, PostgreSQL annule l'une de deux transactions qui s'interbloquent.
+
+**Vérification périodique.** L'étape `verify-ledger` de la tâche horaire relit tout le grand
+livre, en trois contrôles — une instruction chacun, qui lit donc un seul état de la base :
+
+- celui du **grand livre** recalcule ce que ces règles garantissent — solde de chaque
+  compte, enchaînement des lignes, actif des lignes, écritures entières et équilibrées,
+  équilibre de chaque actif — et vérifie que **chaque écriture est d'un type que la base
+  connaît** : la liste `ledger_entry_kinds`, celle que la base consulte à l'écriture, non
+  celle du code ;
+- celui des **transferts** relit les deux règles qui lient un transfert à son écriture
+  (`transfers_entry_matches`, `ledger_entries_transfer_recorded`) ;
+- celui des **ajustements** relit les deux règles qui lient un ajustement approuvé à la
+  sienne (`ledger_adjustments_entry_matches`, `ledger_entries_adjustment_recorded`).
+
+Chaque contrôle reprend, clause pour clause, la règle que la base applique à l'écriture : ce
+qu'elle refuse alors est ce qu'il relève après coup. Une anomalie ne peut venir que d'une
+altération faite hors de ces règles (déclencheurs désactivés par le propriétaire du schéma,
+restauration partielle) ou d'une écriture passée avant que la règle n'existe : elle est
+journalisée, inscrite au journal d'audit (`ledger.verification_failed`), et **rien n'est
+corrigé automatiquement**. Les anomalies, et ce que chacune désigne, sont listées dans
+`DEPLOYMENT.md`.
+
+**Ce qu'elle ne relit pas** : ce qui dépendait du moment de l'opération — plafonds et niveau
+de vérification à l'heure d'un transfert, permissions de ceux qui ont demandé et approuvé un
+ajustement, gel alors en vigueur. Et un type ajouté à `ledger_entry_kinds` par le
+propriétaire, hors d'une migration, est pour elle un type connu.
+
+## Tables (phase 3 — transferts)
+
+Transferts de fonds entre deux titulaires (ADR 0026). Un transfert est **une ligne et une
+écriture** : la ligne (`transfers`) dit qui a envoyé quoi à qui, sous quelle clé et à quel
+niveau de vérification ; l'écriture du grand livre déplace les fonds. L'une ne va pas sans
+l'autre, et la base le vérifie. Les plafonds (`transfer_limits`) sont **des données** : aucun
+n'est créé par migration.
+
+### `transfer_limits` — plafonds par actif et par niveau de vérification
+
+| Colonne            | Type            | Notes                                                                 |
+| ------------------ | --------------- | --------------------------------------------------------------------- |
+| `asset_code`       | `varchar(12)`   | l'actif — clé primaire avec `kyc_level`                               |
+| `kyc_level`        | `smallint`      | niveau de vérification : 0 (aucun dossier accepté) à 3                |
+| `per_transfer_max` | `numeric(38,0)` | plafond d'un transfert, en unités minimales ; **zéro : niveau fermé** |
+| `daily_max`        | `numeric(38,0)` | plafond des envois sur 24 heures glissantes                           |
+| `monthly_max`      | `numeric(38,0)` | plafond des envois sur 31 jours glissants                             |
+| `set_by`           | `uuid`          | le membre du personnel qui les a fixés ; `NULL` : fixés hors de l'API |
+| `set_at`           | `timestamptz`   | **heure de la base**, à chaque modification                           |
+
+- **Pas de ligne, pas de transfert** : un niveau sans plafonds dans un actif n'y envoie ni
+  n'y reçoit rien. Un niveau est **ouvert** si sa ligne existe et que `per_transfer_max > 0`.
+- contraintes : `transfer_limits_kyc_level_check` (0 à 3), `transfer_limits_amounts_check`
+  (`0 ≤ per_transfer_max ≤ daily_max ≤ monthly_max`) ;
+- déclencheur `transfer_limits_enforce` (fonction `mgx_enforce_transfer_limit()`), erreur
+  `MGX10` : **seul les fixe un compte actif détenant `transfer_limits.write`**, relu au
+  moment d'écrire ; sans auteur, seulement le **rôle propriétaire** de la table — jamais
+  celui de l'API. Une ligne ne change ni d'actif, ni de niveau ;
+- **des plafonds ne se suppriment pas** (déclencheurs `transfer_limits_no_delete`,
+  `transfer_limits_no_truncate`, erreur `MGX01`) : refermer un niveau, c'est ramener ses trois
+  montants à zéro — la ligne reste, et dit qui l'a décidé. Le rôle applicatif n'a que
+  `SELECT`, `INSERT` et `UPDATE` ;
+- la ligne ne garde que les plafonds **en vigueur** : leur historique — valeurs remplacées,
+  auteur, justification — est dans `audit_logs` (`transfer_limit.set`).
+
+### `transfers` — transferts entre titulaires
+
+| Colonne           | Type            | Notes                                                                       |
+| ----------------- | --------------- | --------------------------------------------------------------------------- |
+| `id`              | `uuid`          | UUID v7                                                                     |
+| `sender_id`       | `uuid`          | le compte qui envoie                                                        |
+| `recipient_id`    | `uuid`          | le compte qui reçoit — **un autre**                                         |
+| `asset_code`      | `varchar(12)`   | l'actif                                                                     |
+| `amount`          | `numeric(38,0)` | unités minimales, **strictement positif**                                   |
+| `entry_id`        | `uuid`          | l'écriture du grand livre qui le réalise — **unique**                       |
+| `idempotency_key` | `varchar(128)`  | la clé fournie par le client — **unique par émetteur**                      |
+| `request_digest`  | `bytea`         | empreinte SHA-256 de la requête (destinataire, actif, montant)              |
+| `sender_level`    | `smallint`      | niveau de vérification de l'émetteur **à cet instant** : celui des plafonds |
+| `created_at`      | `timestamptz`   | **heure de la base** — c'est elle que comptent les fenêtres de 24 h et 31 j |
+
+- index : `(sender_id, idempotency_key)` unique — **la même requête ne s'exécute qu'une
+  fois** ; `entry_id` unique ; `(sender_id, asset_code, created_at)` pour les cumuls ;
+  `(sender_id, id)` et `(recipient_id, id)` pour les listes ;
+- contraintes : `transfers_amount_check`, `transfers_parties_check` (émetteur ≠ destinataire),
+  `transfers_sender_level_check` (0 à 3), `transfers_idempotency_key_format_check` (16 à 128
+  caractères : lettres, chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un
+  chiffre — le format du contrat), `transfers_request_digest_check` (32 octets) ;
+- déclencheur `transfers_enforce` (fonction `mgx_enforce_transfer()`), erreur `MGX10` —
+  **les plafonds sont imposés ici, quel que soit le code qui écrit** :
+  - il **verrouille l'émetteur** (`FOR NO KEY UPDATE`) jusqu'à la fin de la transaction : un
+    transfert à la fois par émetteur, le suivant compte celui-ci dans ses cumuls. Ce verrou
+    exclut aussi la suspension et la clôture du compte, mais pas celui qu'une écriture prend
+    sur ses titulaires (`FOR KEY SHARE`) : deux transferts croisés ne s'interbloquent pas ;
+  - l'émetteur et le destinataire sont **actifs** — le destinataire est retenu
+    (`FOR KEY SHARE`) jusqu'à la fin de la transaction ;
+  - `sender_level` est bien le niveau de vérification de l'émetteur, **recalculé par la
+    base** ;
+  - ce niveau est **ouvert** dans l'actif ;
+  - le montant ne dépasse pas le plafond par transfert ; ajouté aux envois des 24 dernières
+    heures, il ne dépasse pas `daily_max` ; ajouté à ceux des 744 dernières heures (31
+    jours), il ne dépasse pas `monthly_max` — bornes incluses ;
+  - le niveau de vérification du **destinataire** est ouvert dans l'actif, lui aussi ;
+  - il fixe `created_at` — ce que l'appelant fournit est ignoré ;
+- **un transfert ne se modifie ni ne s'efface** (déclencheurs `transfers_immutable_row`,
+  `transfers_immutable_truncate`, `MGX01`), même pour le propriétaire du schéma : c'est sur
+  lui que se comptent les plafonds. Le rôle applicatif n'a que `SELECT` et `INSERT` ;
+- déclencheur de contrainte **différé** `transfers_entry_matches` (fonction
+  `mgx_check_transfer_entry()`), vérifié à la validation de la transaction — **l'écriture
+  désignée est bien celle du transfert** (`MGX10`) : de type `transfer.internal`, **deux
+  lignes exactement**, l'une au débit du compte `user_available` de l'émetteur, l'autre au
+  crédit de celui du destinataire, chacune du montant du transfert, dans son actif. Chaque
+  ligne est vérifiée pour elle-même ; leur ordre est indifférent ;
+- déclencheur de contrainte **différé** `ledger_entries_transfer_recorded` (fonction
+  `mgx_check_transfer_recorded()`), posé sur `ledger_entries` — réciproquement, **une
+  écriture de type `transfer.internal` n'existe pas sans son transfert** (`MGX10`) : aucun
+  mouvement de ce type n'échappe aux plafonds.
+
+Ces deux règles valent à l'écriture ; la vérification périodique du grand livre les relit
+sur tous les transferts (voir « Vérification périodique »).
+
+**Niveau de vérification.** `mgx_verified_level(uuid)` rend le plus haut niveau dont tous les
+précédents sont acceptés : un niveau 2 accepté ne compte pas tant que le niveau 1 ne l'est
+pas — ou ne l'est plus. C'est la règle de l'application (`verifiedLevelOf`) ; un test vérifie
+que les deux s'accordent sur toutes les combinaisons.
+
+**Cumuls.** `mgx_transfer_usage(uuid, varchar)` rend, pour un émetteur et un actif, la somme
+de ses envois des 24 dernières heures et des 744 dernières heures, **à l'horloge de la
+base**. Les durées sont comptées en heures : elles ne dépendent d'aucun fuseau horaire, ni
+de la longueur des mois. L'application lit ses cumuls par la même fonction : ce qu'elle
+annonce au titulaire est ce que la base comptera.
+
+**Ce que la base ne vérifie pas** : le solde — c'est l'affaire du grand livre, qui refuse
+tout découvert (`MGX09`) ; et l'idempotence au-delà de l'unicité de la clé — comparer
+l'empreinte d'une requête renvoyée à celle d'origine est fait par l'application.
+
+**Chemin de recherche figé.** Les six fonctions de la migration `internal_transfers` ne
+résolvent les noms que dans le schéma de l'application (`search_path = <schéma>, pg_temp`).
+
+## Tables (phase 3 — opérations du personnel)
+
+Ce que le personnel fait des portefeuilles (ADR 0027) : les **ajuster** — crédit ou débit,
+sous double validation — et les **geler**. Un ajustement approuvé est **une ligne et une
+écriture**, comme un transfert : la ligne (`ledger_adjustments`) dit qui a demandé quoi, qui
+l'a décidé et pourquoi ; l'écriture du grand livre déplace les fonds. L'une ne va pas sans
+l'autre, et la base le vérifie. Un gel (`wallet_freezes`) ne passe aucune écriture : il les
+arrête.
+
+### `ledger_adjustments` — ajustements manuels sous double validation
+
+| Colonne         | Type                       | Notes                                                                     |
+| --------------- | -------------------------- | ------------------------------------------------------------------------- |
+| `id`            | `uuid`                     | UUID v7                                                                   |
+| `user_id`       | `uuid`                     | le titulaire du portefeuille                                              |
+| `asset_code`    | `varchar(12)`              | l'actif                                                                   |
+| `direction`     | `ledger_side`              | vu du portefeuille : `CREDIT`, des fonds y entrent ; `DEBIT`, en sortent  |
+| `amount`        | `numeric(38,0)`            | unités minimales, **strictement positif**                                 |
+| `reason`        | `varchar(500)`             | justification de la demande — interne, jamais montrée au titulaire        |
+| `status`        | `ledger_adjustment_status` | `PENDING`, `APPROVED`, `REJECTED`, `CANCELLED`, `EXPIRED`                 |
+| `requested_by`  | `uuid`                     | l'auteur de la demande — **un autre que le titulaire**                    |
+| `requested_at`  | `timestamptz`              | **heure de la base**                                                      |
+| `expires_at`    | `timestamptz`              | échéance, **fixée par la base** : 72 heures après la demande              |
+| `decided_by`    | `uuid`                     | l'auteur de la décision ; `NULL` pour une demande en attente ou échue     |
+| `decided_at`    | `timestamptz`              | **heure de la base**                                                      |
+| `decision_note` | `varchar(500)`             | note de la décision ; obligatoire pour un refus                           |
+| `entry_id`      | `uuid`                     | l'écriture qui réalise l'ajustement — **unique** ; `NULL` sauf `APPROVED` |
+
+- index : `entry_id` unique ; `(status, id)` et `(user_id, id)` pour les listes ; index
+  unique partiel `ledger_adjustments_pending_key` — `(user_id, asset_code, direction, amount)`
+  pour les demandes en attente : **une seule demande identique à la fois**, de sorte qu'une
+  demande déposée deux fois par erreur ne peut pas être approuvée deux fois ;
+- contraintes : `ledger_adjustments_amount_check`, `…_reason_not_blank_check`,
+  `…_decision_note_not_blank_check`, `…_expiry_check` ; `…_not_self_requested_check` (nul ne
+  demande l'ajustement de son propre portefeuille) ; `…_decision_check` (une demande en
+  attente n'a ni décision ni écriture ; une demande échue n'a été décidée par personne ;
+  seule une demande approuvée désigne une écriture) ; `…_four_eyes_check` (**l'approbation et
+  le refus viennent d'un autre que l'auteur de la demande, et que le titulaire**) ;
+  `…_cancelled_by_requester_check` (seul l'auteur retire sa demande) ;
+  `…_rejection_note_check` (un refus est motivé) ;
+- déclencheur `ledger_adjustments_enforce` (fonction `mgx_enforce_ledger_adjustment()`),
+  erreur `MGX11` — **la double validation est imposée ici, quel que soit le code qui
+  écrit** :
+  - **à la demande** : elle naît en attente ; son auteur est un compte actif détenant
+    `adjustments.request` ; le titulaire est actif ou suspendu ; la base fixe
+    `requested_at` et `expires_at` — ce que l'appelant fournit est ignoré ;
+  - **ensuite** : une demande se décide **une seule fois**, et ses termes — titulaire,
+    actif, sens, montant, raison, auteur, heures — ne changent jamais ; la base fixe
+    `decided_at` ;
+  - **approuver ou refuser** revient à un compte actif détenant `adjustments.approve` ;
+  - **approuver** exige en outre que la demande ne soit pas échue, et que son auteur
+    détienne **toujours** `adjustments.request` : la demande d'un compte suspendu depuis, ou
+    privé de son rôle, ne s'approuve plus ;
+  - une demande n'**échoit** qu'une fois son échéance passée ;
+- déclencheur `ledger_adjustments_account_open` : aucune demande ne vise un compte clôturé
+  (`MGX05`) ; il s'exécute avant le précédent ;
+- **une demande ne s'efface pas** (déclencheurs `ledger_adjustments_no_delete`,
+  `ledger_adjustments_no_truncate`, `MGX01`) : elle est la trace de la décision. Le rôle
+  applicatif n'a que `SELECT`, `INSERT` et `UPDATE` ;
+- déclencheur de contrainte **différé** `ledger_adjustments_entry_matches` (fonction
+  `mgx_check_adjustment_entry()`), vérifié à la validation de la transaction — **l'écriture
+  désignée est bien celle de l'ajustement** (`MGX11`) : de type `adjustment.credit` ou
+  `adjustment.debit` selon le sens, **deux lignes exactement**, l'une sur le compte
+  `user_available` du titulaire, dans le sens de l'ajustement, l'autre, de sens inverse, sur
+  le compte `platform_custody`, chacune du montant de l'ajustement, dans son actif. Chaque
+  ligne est vérifiée pour elle-même ; leur ordre est indifférent ;
+- déclencheur de contrainte **différé** `ledger_entries_adjustment_recorded` (fonction
+  `mgx_check_adjustment_recorded()`), posé sur `ledger_entries` — réciproquement, **une
+  écriture de type `adjustment.credit` ou `adjustment.debit` n'existe pas sans son ajustement
+  approuvé** (`MGX11`) : aucun crédit, aucun débit de ce type n'échappe à la double
+  validation.
+
+Ces deux règles valent à l'écriture ; la vérification périodique du grand livre les relit
+sur tous les ajustements approuvés (voir « Vérification périodique »).
+
+**Ce que la base ne vérifie pas** : que les deux intervenants sont bien ceux qui agissent —
+c'est l'API qui les lui désigne (limite décrite dans l'ADR 0018) — ; et le solde, qui est
+l'affaire du grand livre (`MGX09`).
+
+**Les écritures d'un autre type ne sont plus un chemin.** Jusqu'à la migration
+`ledger_entry_kinds`, une écriture équilibrée de type quelconque, qui créditait un
+portefeuille depuis `platform_custody`, était validée sous le rôle de l'API si elle n'était
+pas de type `adjustment.*`. La base refuse désormais toute écriture dont le type n'est pas
+dans sa liste (`MGX13`, voir `ledger_entry_kinds`) : sous le rôle de l'API, des fonds
+n'entrent dans un portefeuille et n'en sortent que par un ajustement approuvé, et ne passent
+d'un portefeuille à un autre que par un transfert (ADR 0030).
+
+**Ce qui reste hors de portée de la base** : qui détient les identifiants du rôle de l'API
+peut encore écrire l'opération **entière** — un ajustement, sa demande et son approbation, en
+y désignant deux membres du personnel habilités ; un transfert entre deux comptes actifs,
+dans les plafonds. La base vérifie les règles de l'opération, non que ses auteurs y ont
+consenti ; chacune de ces opérations laisse sa ligne, ineffaçable, qui les nomme. Et le rôle
+propriétaire, celui des migrations, peut ajouter un type à la liste ou lever une règle.
+
+### `wallet_freezes` — gels de portefeuilles
+
+| Colonne       | Type           | Notes                                                              |
+| ------------- | -------------- | ------------------------------------------------------------------ |
+| `id`          | `uuid`         | UUID v7                                                            |
+| `user_id`     | `uuid`         | le titulaire du portefeuille                                       |
+| `asset_code`  | `varchar(12)`  | l'actif : un gel vaut pour un portefeuille, pas pour le compte     |
+| `reason`      | `varchar(500)` | justification du gel — interne, jamais montrée au titulaire        |
+| `frozen_by`   | `uuid`         | l'auteur du gel — **un autre que le titulaire**                    |
+| `frozen_at`   | `timestamptz`  | **heure de la base**, une fois obtenus les verrous du portefeuille |
+| `lifted_by`   | `uuid`         | l'auteur de la levée ; `NULL` tant que le gel est en vigueur       |
+| `lifted_at`   | `timestamptz`  | **heure de la base**                                               |
+| `lift_reason` | `varchar(500)` | justification de la levée                                          |
+
+- index : `(user_id, id)` pour les listes ; index unique partiel
+  `wallet_freezes_in_force_key` — `(user_id, asset_code)` pour les gels non levés : **un seul
+  gel en vigueur par portefeuille** ; c'est aussi par lui que chaque ligne d'écriture cherche
+  le gel de son portefeuille ;
+- contraintes : `wallet_freezes_reason_not_blank_check`, `…_lift_reason_not_blank_check` ;
+  `…_not_self_frozen_check`, `…_not_self_lifted_check` (nul ne gèle son propre portefeuille,
+  ni n'en lève le gel) ; `…_lift_check` (une levée est entière : son auteur, son heure, sa
+  raison) ;
+- déclencheur `wallet_freezes_enforce` (fonction `mgx_enforce_wallet_freeze()`), erreur
+  `MGX11` :
+  - **au gel** : il naît en vigueur ; son auteur est un compte actif détenant
+    `wallet_freezes.create` ; le titulaire est actif ou suspendu ;
+  - il **verrouille le titulaire** (`FOR NO KEY UPDATE`, le verrou qu'un transfert prend sur
+    son émetteur), puis **ses comptes dans l'actif** (`FOR UPDATE`) — après avoir ouvert,
+    vide, le compte `user_available` s'il ne l'était pas : il y a ainsi toujours un verrou à
+    prendre. **Toute écriture en cours sur le portefeuille s'achève avant le gel ; toute
+    écriture qui le suit attend, puis le voit** ;
+  - il fixe `frozen_at` une fois ces verrous obtenus — ce que l'appelant fournit est
+    ignoré ;
+  - **à la levée** : une seule fois, par un compte actif détenant `wallet_freezes.lift` ; les
+    termes du gel ne changent jamais ; la base fixe `lifted_at` ;
+- déclencheur `wallet_freezes_account_open` : aucun gel ne vise un compte clôturé (`MGX05`) ;
+- **un gel ne s'efface pas** (déclencheurs `wallet_freezes_no_delete`,
+  `wallet_freezes_no_truncate`, `MGX01`) : levé, il reste la trace de ce qui a été décidé.
+  Le rôle applicatif n'a que `SELECT`, `INSERT` et `UPDATE`.
+
+**Ce qu'un gel arrête.** Toute ligne d'écriture sur un compte du titulaire dans l'actif
+(`ledger_postings_frozen_wallet`, `MGX12`) — débit comme crédit, quelle que soit
+l'opération : la règle est posée sur le grand livre lui-même, et vaut d'office pour les
+opérations qui restent à écrire. **Ce qu'il laisse passer** : les seules écritures
+d'ajustement, qui exigent deux personnes — c'est par elles que des fonds quittent un
+portefeuille gelé. Un test vérifie que la liste de ces types est la même dans la base et
+dans le code.
+
+**Chemin de recherche figé.** Les sept fonctions de la migration `staff_ledger_operations`
+ne résolvent les noms que dans le schéma de l'application
+(`search_path = <schéma>, pg_temp`) : une table temporaire homonyme ne peut ni habiliter un
+intrus, ni dégeler un portefeuille. La qualité d'un membre du personnel y est lue par une
+seule fonction, `mgx_holds_permission(uuid, text)` : compte actif, et permission détenue
+**à cet instant**.
+
 ## Éléments écrits à la main dans les migrations
 
 Prisma ne modélise ni les contraintes `CHECK`, ni les index partiels, ni les déclencheurs.
 Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** :
 
-| Objet                                                                                                                                                                                                                                                                                  | Table                                                    |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `system_settings_key_format_check`, `system_settings_version_check`                                                                                                                                                                                                                    | `system_settings`                                        |
-| `audit_logs_actor_id_check`, `audit_logs_action_format_check`, `audit_logs_metadata_is_object_check`                                                                                                                                                                                   | `audit_logs`                                             |
-| fonction `mgx_forbid_mutation()` ; déclencheurs `audit_logs_append_only_row`, `audit_logs_append_only_truncate`                                                                                                                                                                        | `audit_logs`                                             |
-| retrait des privilèges `UPDATE`, `DELETE`, `TRUNCATE` aux rôles non propriétaires                                                                                                                                                                                                      | `audit_logs`                                             |
-| `outbox_events_attempts_check`, `outbox_events_published_at_check`, `outbox_events_event_type_format_check`                                                                                                                                                                            | `outbox_events`                                          |
-| index partiel `outbox_events_pending_idx`                                                                                                                                                                                                                                              | `outbox_events`                                          |
-| retrait de tout privilège aux rôles non propriétaires                                                                                                                                                                                                                                  | `_prisma_migrations`                                     |
-| `users_email_normalized_check`, `users_phone_format_check`, `users_country_code_check`, `users_active_requires_verified_email_check`, `users_phone_verified_requires_phone_check`                                                                                                      | `users`                                                  |
-| index unique partiel `users_verified_phone_key`                                                                                                                                                                                                                                        | `users`                                                  |
-| `user_credentials_password_hash_format_check`                                                                                                                                                                                                                                          | `user_credentials`                                       |
-| `permissions_key_format_check`, `roles_key_format_check`                                                                                                                                                                                                                               | `permissions`, `roles`                                   |
-| `verification_challenges_attempts_check`, `…_code_hash_length_check`, `…_single_outcome_check`, `…_expiry_check`                                                                                                                                                                       | `verification_challenges`                                |
-| index unique partiel `verification_challenges_active_key`                                                                                                                                                                                                                              | `verification_challenges`                                |
-| `user_sessions_revocation_check`, `user_sessions_expiry_check`                                                                                                                                                                                                                         | `user_sessions`                                          |
-| `session_tokens_hash_length_check`                                                                                                                                                                                                                                                     | `session_tokens`                                         |
-| données initiales : catalogue des permissions, rôle `super_admin`                                                                                                                                                                                                                      | `permissions`, `roles`, `role_permissions`               |
-| retrait des privilèges d'écriture aux rôles non propriétaires                                                                                                                                                                                                                          | `permissions`, `roles`, `role_permissions`, `user_roles` |
-| `user_totp_credentials_ciphertext_format_check`, `user_totp_credentials_last_used_step_check`                                                                                                                                                                                          | `user_totp_credentials`                                  |
-| `user_recovery_codes_hash_length_check`                                                                                                                                                                                                                                                | `user_recovery_codes`                                    |
-| `user_profiles_names_not_blank_check`, `user_profiles_date_of_birth_check`                                                                                                                                                                                                             | `user_profiles`                                          |
-| `user_sessions_device_fingerprint_length_check`                                                                                                                                                                                                                                        | `user_sessions`                                          |
-| `role_change_requests_reason_not_blank_check`, `…_expiry_check`, `…_not_self_requested_check`, `…_decision_check`, `…_four_eyes_check`, `…_cancelled_by_requester_check`                                                                                                               | `role_change_requests`                                   |
-| index unique partiel `role_change_requests_pending_key`                                                                                                                                                                                                                                | `role_change_requests`                                   |
-| fonction `mgx_enforce_role_change()` (`SECURITY DEFINER`, `search_path` figé, `EXECUTE` retiré à `PUBLIC`) ; déclencheur `role_change_requests_enforce`                                                                                                                                | `role_change_requests`, `user_roles`                     |
-| déclencheurs `role_change_requests_no_delete`, `role_change_requests_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                      | `role_change_requests`                                   |
-| index partiel `users_pending_registration_idx` (purge des inscriptions jamais vérifiées)                                                                                                                                                                                               | `users`                                                  |
-| données initiales : permissions du back-office, rôle `support`                                                                                                                                                                                                                         | `permissions`, `roles`, `role_permissions`               |
-| `kyc_cases_level_check`, `…_lists_not_null_check`, `…_lifecycle_check`, `…_rejection_check`, `…_decision_note_check`, `…_revocation_reason_check`, `…_not_self_decided_check`, `…_not_self_revoked_check`, `…_identity_fields_check`, `…_address_fields_check`, `…_funds_fields_check` | `kyc_cases`                                              |
-| index uniques partiels `kyc_cases_open_key`, `kyc_cases_approved_key`, `kyc_cases_verified_document_key`                                                                                                                                                                               | `kyc_cases`                                              |
-| fonction `mgx_enforce_kyc_case()` (`search_path` figé) ; déclencheurs `kyc_cases_enforce`, `kyc_cases_no_truncate`                                                                                                                                                                     | `kyc_cases`                                              |
-| `kyc_documents_content_type_check`, `…_selfie_is_image_check`, `…_byte_size_check`, `…_sha256_check`, `…_wrapped_key_check`, `…_storage_key_check`                                                                                                                                     | `kyc_documents`                                          |
-| index unique partiel `kyc_documents_single_kind_key`                                                                                                                                                                                                                                   | `kyc_documents`                                          |
-| fonction `mgx_enforce_kyc_document()` (`search_path` figé) ; déclencheurs `kyc_documents_enforce`, `kyc_documents_no_truncate`                                                                                                                                                         | `kyc_documents`                                          |
-| retrait de `TRUNCATE` (et de `UPDATE` sur `kyc_documents`) aux rôles non propriétaires                                                                                                                                                                                                 | `kyc_cases`, `kyc_documents`                             |
-| données initiales : permissions `kyc.read`, `kyc.review`, `kyc.revoke`, rôle `compliance`                                                                                                                                                                                              | `permissions`, `roles`, `role_permissions`               |
-| valeur `ACCOUNT_CLOSED` du type `kyc_case_status` (migration séparée : PostgreSQL interdit d'utiliser une valeur dans la transaction qui l'ajoute)                                                                                                                                     | `kyc_cases`                                              |
-| `users_closed_is_anonymous_check`, `users_reserved_email_domain_check` ; fonction `mgx_enforce_user_closure()`, déclencheur `users_enforce_closure`                                                                                                                                    | `users`                                                  |
-| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                      | huit tables rattachées à un compte (voir `users`)        |
-| `account_closures_author_check`, `…_email_check`, `…_phone_check`, `…_schedule_check`, `…_erasure_check`                                                                                                                                                                               | `account_closures`                                       |
-| fonctions `mgx_enforce_account_closure()`, `mgx_check_closure_applied()` ; déclencheurs `account_closures_enforce`, `account_closures_no_truncate`, déclencheur de contrainte différé `account_closures_applied` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires       | `account_closures`                                       |
-| fonction `mgx_kyc_case_erasable()` ; `kyc_cases_lifecycle_check`, `mgx_enforce_kyc_case()` et `mgx_enforce_kyc_document()` **remplacées** (fin d'une vérification à la clôture, effacement)                                                                                            | `kyc_cases`, `kyc_documents`                             |
-| données initiales : permission `users.close`, attribuée à `super_admin` et `compliance`                                                                                                                                                                                                | `permissions`, `role_permissions`, `roles`               |
+| Objet                                                                                                                                                                                                                                                                                                                                                              | Table                                                    |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| `system_settings_key_format_check`, `system_settings_version_check`                                                                                                                                                                                                                                                                                                | `system_settings`                                        |
+| `audit_logs_actor_id_check`, `audit_logs_action_format_check`, `audit_logs_metadata_is_object_check`                                                                                                                                                                                                                                                               | `audit_logs`                                             |
+| fonction `mgx_forbid_mutation()` ; déclencheurs `audit_logs_append_only_row`, `audit_logs_append_only_truncate`                                                                                                                                                                                                                                                    | `audit_logs`                                             |
+| retrait des privilèges `UPDATE`, `DELETE`, `TRUNCATE` aux rôles non propriétaires                                                                                                                                                                                                                                                                                  | `audit_logs`                                             |
+| `outbox_events_attempts_check`, `outbox_events_published_at_check`, `outbox_events_event_type_format_check`                                                                                                                                                                                                                                                        | `outbox_events`                                          |
+| index partiel `outbox_events_pending_idx`                                                                                                                                                                                                                                                                                                                          | `outbox_events`                                          |
+| retrait de tout privilège aux rôles non propriétaires                                                                                                                                                                                                                                                                                                              | `_prisma_migrations`                                     |
+| `users_email_normalized_check`, `users_phone_format_check`, `users_country_code_check`, `users_active_requires_verified_email_check`, `users_phone_verified_requires_phone_check`                                                                                                                                                                                  | `users`                                                  |
+| index unique partiel `users_verified_phone_key`                                                                                                                                                                                                                                                                                                                    | `users`                                                  |
+| `user_credentials_password_hash_format_check`                                                                                                                                                                                                                                                                                                                      | `user_credentials`                                       |
+| `permissions_key_format_check`, `roles_key_format_check`                                                                                                                                                                                                                                                                                                           | `permissions`, `roles`                                   |
+| `verification_challenges_attempts_check`, `…_code_hash_length_check`, `…_single_outcome_check`, `…_expiry_check`                                                                                                                                                                                                                                                   | `verification_challenges`                                |
+| index unique partiel `verification_challenges_active_key`                                                                                                                                                                                                                                                                                                          | `verification_challenges`                                |
+| `user_sessions_revocation_check`, `user_sessions_expiry_check`                                                                                                                                                                                                                                                                                                     | `user_sessions`                                          |
+| `session_tokens_hash_length_check`                                                                                                                                                                                                                                                                                                                                 | `session_tokens`                                         |
+| données initiales : catalogue des permissions, rôle `super_admin`                                                                                                                                                                                                                                                                                                  | `permissions`, `roles`, `role_permissions`               |
+| retrait des privilèges d'écriture aux rôles non propriétaires                                                                                                                                                                                                                                                                                                      | `permissions`, `roles`, `role_permissions`, `user_roles` |
+| `user_totp_credentials_ciphertext_format_check`, `user_totp_credentials_last_used_step_check`                                                                                                                                                                                                                                                                      | `user_totp_credentials`                                  |
+| `user_recovery_codes_hash_length_check`                                                                                                                                                                                                                                                                                                                            | `user_recovery_codes`                                    |
+| `user_profiles_names_not_blank_check`, `user_profiles_date_of_birth_check`                                                                                                                                                                                                                                                                                         | `user_profiles`                                          |
+| `user_sessions_device_fingerprint_length_check`                                                                                                                                                                                                                                                                                                                    | `user_sessions`                                          |
+| `role_change_requests_reason_not_blank_check`, `…_expiry_check`, `…_not_self_requested_check`, `…_decision_check`, `…_four_eyes_check`, `…_cancelled_by_requester_check`                                                                                                                                                                                           | `role_change_requests`                                   |
+| index unique partiel `role_change_requests_pending_key`                                                                                                                                                                                                                                                                                                            | `role_change_requests`                                   |
+| fonction `mgx_enforce_role_change()` (`SECURITY DEFINER`, `search_path` figé, `EXECUTE` retiré à `PUBLIC`) ; déclencheur `role_change_requests_enforce`                                                                                                                                                                                                            | `role_change_requests`, `user_roles`                     |
+| déclencheurs `role_change_requests_no_delete`, `role_change_requests_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                                                                                                  | `role_change_requests`                                   |
+| index partiel `users_pending_registration_idx` (purge des inscriptions jamais vérifiées)                                                                                                                                                                                                                                                                           | `users`                                                  |
+| données initiales : permissions du back-office, rôle `support`                                                                                                                                                                                                                                                                                                     | `permissions`, `roles`, `role_permissions`               |
+| `kyc_cases_level_check`, `…_lists_not_null_check`, `…_lifecycle_check`, `…_rejection_check`, `…_decision_note_check`, `…_revocation_reason_check`, `…_not_self_decided_check`, `…_not_self_revoked_check`, `…_identity_fields_check`, `…_address_fields_check`, `…_funds_fields_check`                                                                             | `kyc_cases`                                              |
+| index uniques partiels `kyc_cases_open_key`, `kyc_cases_approved_key`, `kyc_cases_verified_document_key`                                                                                                                                                                                                                                                           | `kyc_cases`                                              |
+| fonction `mgx_enforce_kyc_case()` (`search_path` figé) ; déclencheurs `kyc_cases_enforce`, `kyc_cases_no_truncate`                                                                                                                                                                                                                                                 | `kyc_cases`                                              |
+| `kyc_documents_content_type_check`, `…_selfie_is_image_check`, `…_byte_size_check`, `…_sha256_check`, `…_wrapped_key_check`, `…_storage_key_check`                                                                                                                                                                                                                 | `kyc_documents`                                          |
+| index unique partiel `kyc_documents_single_kind_key`                                                                                                                                                                                                                                                                                                               | `kyc_documents`                                          |
+| fonction `mgx_enforce_kyc_document()` (`search_path` figé) ; déclencheurs `kyc_documents_enforce`, `kyc_documents_no_truncate`                                                                                                                                                                                                                                     | `kyc_documents`                                          |
+| retrait de `TRUNCATE` (et de `UPDATE` sur `kyc_documents`) aux rôles non propriétaires                                                                                                                                                                                                                                                                             | `kyc_cases`, `kyc_documents`                             |
+| données initiales : permissions `kyc.read`, `kyc.review`, `kyc.revoke`, rôle `compliance`                                                                                                                                                                                                                                                                          | `permissions`, `roles`, `role_permissions`               |
+| valeur `ACCOUNT_CLOSED` du type `kyc_case_status` (migration séparée : PostgreSQL interdit d'utiliser une valeur dans la transaction qui l'ajoute)                                                                                                                                                                                                                 | `kyc_cases`                                              |
+| `users_closed_is_anonymous_check`, `users_reserved_email_domain_check` ; fonction `mgx_enforce_user_closure()`, déclencheur `users_enforce_closure`                                                                                                                                                                                                                | `users`                                                  |
+| fonction `mgx_forbid_closed_account_rows()` ; déclencheurs `<table>_account_open`                                                                                                                                                                                                                                                                                  | dix tables rattachées à un compte (voir `users`)         |
+| `account_closures_author_check`, `…_email_check`, `…_phone_check`, `…_schedule_check`, `…_erasure_check`                                                                                                                                                                                                                                                           | `account_closures`                                       |
+| fonctions `mgx_enforce_account_closure()`, `mgx_check_closure_applied()` ; déclencheurs `account_closures_enforce`, `account_closures_no_truncate`, déclencheur de contrainte différé `account_closures_applied` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                   | `account_closures`                                       |
+| fonction `mgx_kyc_case_erasable()` ; `kyc_cases_lifecycle_check`, `mgx_enforce_kyc_case()` et `mgx_enforce_kyc_document()` **remplacées** (fin d'une vérification à la clôture, effacement)                                                                                                                                                                        | `kyc_cases`, `kyc_documents`                             |
+| données initiales : permission `users.close`, attribuée à `super_admin` et `compliance`                                                                                                                                                                                                                                                                            | `permissions`, `role_permissions`, `roles`               |
+| colonne `terms_accepted_at` **renommée** `registered_at` (`RENAME COLUMN`, sans perte : Prisma proposerait de la supprimer puis de la recréer)                                                                                                                                                                                                                     | `users`                                                  |
+| fonction `mgx_is_terms_text()` ; `terms_versions_number_check`, `…_first_requires_acceptance_check`, `…_fr_text_check`, `…_en_text_check`, `…_fr_digest_check`, `…_en_digest_check`                                                                                                                                                                                | `terms_versions`                                         |
+| fonction `mgx_enforce_terms_version()` ; déclencheurs `terms_versions_enforce`, `terms_versions_immutable_row`, `terms_versions_immutable_truncate` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                      | `terms_versions`                                         |
+| fonction `mgx_enforce_terms_acceptance()` ; déclencheurs `terms_acceptances_account_open`, `terms_acceptances_enforce`, `terms_acceptances_no_update`, `terms_acceptances_no_truncate` ; retrait de `UPDATE` et `TRUNCATE` aux rôles non propriétaires                                                                                                             | `terms_acceptances`                                      |
+| fonction `mgx_forbid_closure_with_terms_acceptance()` ; déclencheur `users_closure_leaves_no_terms_acceptance`                                                                                                                                                                                                                                                     | `users`                                                  |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des quatre fonctions de la migration `terms_of_use`                                                                                                                                                                                                                                                   | —                                                        |
+| données initiales : permission `terms.publish`, attribuée à `super_admin`                                                                                                                                                                                                                                                                                          | `permissions`, `role_permissions`                        |
+| types `asset_kind`, `ledger_side`, `ledger_account_owner` (modélisés par Prisma) ; `assets_code_format_check`, `assets_scale_check`, `assets_name_check`                                                                                                                                                                                                           | `assets`                                                 |
+| fonction `mgx_enforce_asset()` ; déclencheurs `assets_enforce`, `assets_immutable_row`, `assets_immutable_truncate` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                                                      | `assets`                                                 |
+| `ledger_account_types_key_format_check` ; déclencheurs `ledger_account_types_immutable_row`, `ledger_account_types_immutable_truncate` ; retrait de tout privilège d'écriture aux rôles non propriétaires ; données initiales : plan de comptes                                                                                                                    | `ledger_account_types`                                   |
+| index uniques partiels `ledger_accounts_user_key`, `ledger_accounts_platform_key` ; `ledger_accounts_balance_check`, `…_posting_count_check`, `…_empty_check`                                                                                                                                                                                                      | `ledger_accounts`                                        |
+| fonctions `mgx_enforce_ledger_account()`, `mgx_check_ledger_account_balance()` ; déclencheurs `ledger_accounts_account_open`, `ledger_accounts_enforce`, `ledger_accounts_no_delete`, `ledger_accounts_no_truncate`, déclencheur de contrainte différé `ledger_accounts_balance_proven` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires            | `ledger_accounts`                                        |
+| `ledger_entries_idempotency_key_format_check`, `…_kind_format_check`, `…_posting_count_check`, `…_actor_id_check`, `…_metadata_check`                                                                                                                                                                                                                              | `ledger_entries`                                         |
+| fonction `mgx_stamp_ledger_entry()` ; déclencheurs `ledger_entries_stamp`, `ledger_entries_immutable_row`, `ledger_entries_immutable_truncate`, déclencheur de contrainte différé `ledger_entries_sound` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                 | `ledger_entries`                                         |
+| `ledger_postings_amount_check`, `…_line_number_check`, `…_account_sequence_check`, `…_balance_after_check`                                                                                                                                                                                                                                                         | `ledger_postings`                                        |
+| fonctions `mgx_apply_ledger_posting()`, `mgx_check_ledger_entry()` ; déclencheurs `ledger_postings_apply`, `ledger_postings_immutable_row`, `ledger_postings_immutable_truncate`, déclencheur de contrainte différé `ledger_postings_entry_sound` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                        | `ledger_postings`                                        |
+| fonction `mgx_forbid_closure_with_funds()` ; déclencheur `users_closure_leaves_no_funds`                                                                                                                                                                                                                                                                           | `users`                                                  |
+| fonction `mgx_enforce_closure_ledger_retention()` ; déclencheur `account_closures_ledger_retention`                                                                                                                                                                                                                                                                | `account_closures`                                       |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des huit fonctions de la migration `ledger`                                                                                                                                                                                                                                                           | —                                                        |
+| données initiales : permissions `ledger.read` et `ledger.manage_assets`, attribuées à `super_admin`                                                                                                                                                                                                                                                                | `permissions`, `role_permissions`                        |
+| fonction `mgx_verified_level()` (niveau de vérification d'un compte, tel que la base le calcule)                                                                                                                                                                                                                                                                   | `kyc_cases`                                              |
+| `transfer_limits_kyc_level_check`, `transfer_limits_amounts_check`                                                                                                                                                                                                                                                                                                 | `transfer_limits`                                        |
+| fonction `mgx_enforce_transfer_limit()` ; déclencheurs `transfer_limits_enforce`, `transfer_limits_no_delete`, `transfer_limits_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                                                       | `transfer_limits`                                        |
+| `transfers_amount_check`, `…_parties_check`, `…_sender_level_check`, `…_idempotency_key_format_check`, `…_request_digest_check`                                                                                                                                                                                                                                    | `transfers`                                              |
+| fonctions `mgx_transfer_usage()`, `mgx_enforce_transfer()`, `mgx_check_transfer_entry()` ; déclencheurs `transfers_enforce`, `transfers_immutable_row`, `transfers_immutable_truncate`, déclencheur de contrainte différé `transfers_entry_matches` ; retrait de `UPDATE`, `DELETE` et `TRUNCATE` aux rôles non propriétaires                                      | `transfers`                                              |
+| fonction `mgx_check_transfer_recorded()` ; déclencheur de contrainte différé `ledger_entries_transfer_recorded`                                                                                                                                                                                                                                                    | `ledger_entries`                                         |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des six fonctions de la migration `internal_transfers`                                                                                                                                                                                                                                                | —                                                        |
+| données initiales : permissions `transfer_limits.read` et `transfer_limits.write`, attribuées à `super_admin`                                                                                                                                                                                                                                                      | `permissions`, `role_permissions`                        |
+| fonction `mgx_holds_permission()` (qualité d'un membre du personnel : compte actif, permission détenue à cet instant)                                                                                                                                                                                                                                              | `users`, `user_roles`                                    |
+| `ledger_adjustments_amount_check`, `…_reason_not_blank_check`, `…_decision_note_not_blank_check`, `…_expiry_check`, `…_not_self_requested_check`, `…_decision_check`, `…_four_eyes_check`, `…_cancelled_by_requester_check`, `…_rejection_note_check` ; index unique partiel `ledger_adjustments_pending_key`                                                      | `ledger_adjustments`                                     |
+| fonctions `mgx_enforce_ledger_adjustment()`, `mgx_check_adjustment_entry()` ; déclencheurs `ledger_adjustments_account_open`, `ledger_adjustments_enforce`, `ledger_adjustments_no_delete`, `ledger_adjustments_no_truncate`, déclencheur de contrainte différé `ledger_adjustments_entry_matches` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires | `ledger_adjustments`                                     |
+| fonction `mgx_check_adjustment_recorded()` ; déclencheur de contrainte différé `ledger_entries_adjustment_recorded`                                                                                                                                                                                                                                                | `ledger_entries`                                         |
+| `wallet_freezes_reason_not_blank_check`, `…_lift_reason_not_blank_check`, `…_not_self_frozen_check`, `…_not_self_lifted_check`, `…_lift_check` ; index unique partiel `wallet_freezes_in_force_key`                                                                                                                                                                | `wallet_freezes`                                         |
+| fonction `mgx_enforce_wallet_freeze()` ; déclencheurs `wallet_freezes_account_open`, `wallet_freezes_enforce`, `wallet_freezes_no_delete`, `wallet_freezes_no_truncate` ; retrait de `DELETE` et `TRUNCATE` aux rôles non propriétaires                                                                                                                            | `wallet_freezes`                                         |
+| fonction `mgx_forbid_frozen_wallet_posting()` ; déclencheur `ledger_postings_frozen_wallet`                                                                                                                                                                                                                                                                        | `ledger_postings`                                        |
+| fonction `mgx_forbid_closure_with_frozen_wallet()` ; déclencheur `users_closure_leaves_no_freeze`                                                                                                                                                                                                                                                                  | `users`                                                  |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des sept fonctions de la migration `staff_ledger_operations`                                                                                                                                                                                                                                          | —                                                        |
+| données initiales : permissions `adjustments.read`, `adjustments.request`, `adjustments.approve`, `wallet_freezes.read`, `wallet_freezes.create` et `wallet_freezes.lift`, attribuées à `super_admin` ; les deux premières des gels, à `compliance` aussi                                                                                                          | `permissions`, `role_permissions`                        |
+| `ledger_entry_kinds_key_format_check` ; fonction `mgx_enforce_ledger_entry_kind()` ; déclencheurs `ledger_entry_kinds_enforce`, `ledger_entry_kinds_immutable_row`, `ledger_entry_kinds_immutable_truncate` ; retrait de tout privilège d'écriture aux rôles non propriétaires ; données initiales : les trois types d'écriture                                    | `ledger_entry_kinds`                                     |
+| fonction `mgx_check_ledger_entry_kind()` ; déclencheur `ledger_entries_kind_known`                                                                                                                                                                                                                                                                                 | `ledger_entries`                                         |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des deux fonctions de la migration `ledger_entry_kinds`                                                                                                                                                                                                                                               | —                                                        |
 
 Leur présence et leur effet sont vérifiés par les tests d'intégration
 `database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
-`back-office-schema.spec.ts`, `kyc-schema.spec.ts` et `account-closure-schema.spec.ts` (dans
+`back-office-schema.spec.ts`, `kyc-schema.spec.ts`, `account-closure-schema.spec.ts`,
+`terms-schema.spec.ts`, `ledger-schema.spec.ts`, `transfers-schema.spec.ts`,
+`staff-operations-schema.spec.ts` et `ledger-entry-kinds-schema.spec.ts` (dans
 `apps/api/test/integration/`).
 
 **Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
 
-| Code    | Signification                                                   |
-| ------- | --------------------------------------------------------------- |
-| `MGX01` | modification ou suppression interdite d'une table en ajout seul |
-| `MGX02` | règle de la double validation d'un changement de rôle enfreinte |
-| `MGX03` | règle du parcours d'un dossier de vérification enfreinte        |
-| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte        |
-| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`    |
+| Code    | Signification                                                                                                                                                                                                                                                           |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MGX01` | modification ou suppression interdite d'une table en ajout seul                                                                                                                                                                                                         |
+| `MGX02` | règle de la double validation d'un changement de rôle enfreinte                                                                                                                                                                                                         |
+| `MGX03` | règle du parcours d'un dossier de vérification enfreinte                                                                                                                                                                                                                |
+| `MGX04` | règle de la clôture d'un compte ou de sa trace enfreinte                                                                                                                                                                                                                |
+| `MGX05` | écriture sur un compte clôturé — l'API répond `409 CONFLICT`                                                                                                                                                                                                            |
+| `MGX06` | règle des conditions d'utilisation enfreinte : auteur non habilité à publier, compte qui ne peut pas accepter, acceptation effacée hors des cas permis                                                                                                                  |
+| `MGX07` | numéro de version qui n'est pas — ou plus — celui attendu : à la publication, le suivant ; à l'acceptation, celui en vigueur                                                                                                                                            |
+| `MGX08` | règle du grand livre enfreinte : écriture incomplète ou déséquilibrée, ligne dans un autre actif que son compte, solde qui n'est pas celui de la dernière ligne, compte ouvert à qui ne peut pas détenir de fonds, actif enregistré sans y être habilité                |
+| `MGX09` | fonds insuffisants : la ligne rendrait négatif le solde d'un compte                                                                                                                                                                                                     |
+| `MGX10` | règle des transferts enfreinte : plafonds fixés sans y être habilité, partie qui n'est pas active, niveau de vérification erroné ou non ouvert dans l'actif, plafond dépassé, transfert sans son écriture — ou écriture de transfert sans son transfert                 |
+| `MGX11` | règle des opérations du personnel enfreinte : demande ou décision par qui n'y est pas habilité, demande déjà décidée, échue ou aux termes modifiés, ajustement sans son écriture — ou écriture d'ajustement sans son ajustement approuvé —, gel posé ou levé sans droit |
+| `MGX12` | portefeuille gelé : la ligne passerait sur un compte dont le titulaire a son portefeuille gelé dans cet actif                                                                                                                                                           |
+| `MGX13` | type d'écriture inconnu de la base : écriture d'un type absent de `ledger_entry_kinds` — ou type ajouté à cette liste par un autre rôle que le propriétaire de la table                                                                                                 |
 
 `MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
 une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
 soucier. Les autres sont interceptés par le dépôt (_repository_) du module concerné : les
 contrôles du service auraient dû écarter le cas, de sorte que la réponse est un `409 CONFLICT`
-et l'incident est journalisé.
+et l'incident est journalisé. `MGX07`, lui, est un cas **attendu** — une version publiée
+entre la lecture et l'écriture : l'API répond `409 TERMS_VERSION_NOT_CURRENT` (acceptation,
+inscription) ou `409 CONFLICT` (publication), et le client recommence avec la version en
+vigueur. `MGX06` à la publication signifie que l'auteur a perdu son droit entre le contrôle de
+l'API et l'écriture : `403 FORBIDDEN`.
+
+Pour le grand livre, le dépôt traduit le refus d'une instruction en erreur du domaine, que
+l'opération appelante traduira à son tour pour son utilisateur : `MGX09` devient
+`InsufficientFundsError` et `MGX05` `HolderClosedError` — deux cas **attendus** —, `MGX08`
+`LedgerIntegrityError`, un défaut. `MGX12` devient `WalletFrozenError`, un cas attendu lui
+aussi. `MGX13` devient `LedgerIntegrityError` comme `MGX08` : le type d'une écriture est une
+constante de l'opération qui la passe, jamais une donnée reçue — un type inconnu de la base
+est un défaut du code, et le service ne le contrôle pas d'avance. Pour le reste,
+`LedgerService` fait les mêmes contrôles avant d'écrire : la base n'est atteinte que si deux
+requêtes se croisent, ou si le code est fautif. Un refus
+prononcé **à la validation de la transaction** (écriture incomplète, solde non justifié)
+n'est pas traduit : c'est toujours un défaut du code, et l'erreur de la base remonte telle
+quelle. À l'enregistrement d'un actif, `MGX08` signifie que l'auteur a perdu son droit entre
+le contrôle de l'API et l'écriture : `403 FORBIDDEN`.
+
+Pour les transferts, `TransferService` fait les mêmes contrôles que `mgx_enforce_transfer()`,
+dans le même ordre, sous le même verrou de l'émetteur : la base n'est atteinte que si l'état
+d'un compte change entre ces contrôles et l'écriture — un dossier de vérification retiré, des
+plafonds abaissés, un destinataire suspendu. `MGX10` à l'écriture d'un transfert devient
+`TransferRefusedByDatabaseError`, et l'API répond `409 CONFLICT` : rien n'est écrit, et la
+requête, renvoyée, est examinée dans l'état nouveau. `MGX10` à l'écriture de plafonds
+(`LimitChangeDeniedError`) signifie que l'auteur a perdu son droit entre le contrôle de l'API
+et l'écriture : `403 FORBIDDEN`. Un refus prononcé à la validation de la transaction — un
+transfert et son écriture qui ne s'accordent pas — est un défaut du code, et n'est pas
+traduit.
+
+Pour les opérations du personnel, les services font les mêmes contrôles que
+`mgx_enforce_ledger_adjustment()` et `mgx_enforce_wallet_freeze()` : la base n'est atteinte
+que si l'état change entre ces contrôles et l'écriture — une demande qui échoit, un
+intervenant suspendu ou privé de son rôle — ou si l'appelant a désigné quelqu'un qui n'a pas
+le droit. `MGX11` à l'approbation devient `AdjustmentRefusedByDatabaseError`, et l'API
+répond `409 CONFLICT` : rien n'est écrit, la demande reste en attente, et le refus est
+inscrit au journal d'audit. `MGX11` à la demande, au refus, au retrait, au gel ou à la levée
+signifie que l'auteur n'a pas — ou plus — le droit : `403 FORBIDDEN`. Un refus prononcé à la
+validation de la transaction — un ajustement et son écriture qui ne s'accordent pas — est un
+défaut du code, et n'est pas traduit.
+
+**Transactions qui se croisent.** `40001` (conflit de sérialisation) et `40P01`
+(interblocage) ne sont pas des défauts : PostgreSQL a annulé une transaction pour laisser
+passer l'autre, et rien n'a été écrit. `UnitOfWork.run(work, { retry })` relance alors la
+transaction entière ; sans cette option, ou une fois les tentatives épuisées, l'API répond
+`409 CONFLICT`. Une erreur levée à la validation (`COMMIT`) n'a pas la même forme, côté
+Prisma, qu'une erreur levée par une instruction : `sqlStateOf` lit les deux.
 
 ## Migrations
 
@@ -457,20 +1178,28 @@ production, où seule `pnpm db:migrate:deploy` s'exécute.
 
 ## Conservation des données
 
-| Table                        | Règle actuelle                                                                                                                                                                                                                                                  |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `audit_logs`                 | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                                                                                                                                                                                |
-| `outbox_events`              | événements **publiés** : supprimés **30 jours** après leur publication. Événements en attente ou abandonnés (`DEAD`) : conservés jusqu'à leur traitement                                                                                                        |
-| `system_settings`            | historique complet des changements dans `audit_logs`                                                                                                                                                                                                            |
-| `users`, `user_credentials`  | conservés tant que le compte est ouvert. **Inscription jamais vérifiée : supprimée après 7 jours.** **Compte clôturé** : secret supprimé à la clôture ; la ligne `users` reste, sans adresse ni numéro                                                          |
-| `account_closures`           | trace conservée indéfiniment ; son adresse et son numéro sont **effacés à l'échéance** : 30 jours après la clôture, ou au terme de la conservation légale (dix ans) si des dossiers de vérification sont conservés                                              |
-| `user_sessions`              | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte                                                                                                                                                                |
-| `session_tokens`             | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                                                                                                                                                                    |
-| `verification_challenges`    | supprimés **7 jours** après leur expiration                                                                                                                                                                                                                     |
-| `user_totp_credentials`      | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                                                                  |
-| `role_change_requests`       | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                                                         |
-| `user_profiles`              | conservés tant que le compte est ouvert ; **supprimés à la clôture**, comme les sessions, les codes et le second facteur                                                                                                                                        |
-| `kyc_cases`, `kyc_documents` | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces |
+| Table                                                  | Règle actuelle                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audit_logs`                                           | conservation illimitée ; la durée légale sera fixée avec la conformité (phase 8)                                                                                                                                                                                                                                                                                                          |
+| `outbox_events`                                        | événements **publiés** : supprimés **30 jours** après leur publication. Événements en attente ou abandonnés (`DEAD`) : conservés jusqu'à leur traitement                                                                                                                                                                                                                                  |
+| `system_settings`                                      | historique complet des changements dans `audit_logs`                                                                                                                                                                                                                                                                                                                                      |
+| `users`, `user_credentials`                            | conservés tant que le compte est ouvert. **Inscription jamais vérifiée : supprimée après 7 jours.** **Compte clôturé** : secret supprimé à la clôture ; la ligne `users` reste, sans adresse ni numéro                                                                                                                                                                                    |
+| `account_closures`                                     | trace conservée indéfiniment ; son adresse et son numéro sont **effacés à l'échéance** : 30 jours après la clôture, ou au terme de la conservation légale (dix ans) si des dossiers de vérification sont conservés **ou si une écriture a été passée sur un compte du titulaire**                                                                                                         |
+| `user_sessions`                                        | supprimées **90 jours** après leur échéance d'inactivité — sauf la plus récente de chaque compte                                                                                                                                                                                                                                                                                          |
+| `session_tokens`                                       | paires renouvelées supprimées après 24 heures ; les autres avec leur session                                                                                                                                                                                                                                                                                                              |
+| `verification_challenges`                              | supprimés **7 jours** après leur expiration                                                                                                                                                                                                                                                                                                                                               |
+| `user_totp_credentials`                                | enrôlement jamais confirmé : supprimé après **24 heures** ; second facteur en place : conservé                                                                                                                                                                                                                                                                                            |
+| `role_change_requests`                                 | conservées indéfiniment (trace des décisions) ; les demandes échues passent à `EXPIRED`                                                                                                                                                                                                                                                                                                   |
+| `user_profiles`                                        | conservés tant que le compte est ouvert ; **supprimés à la clôture**, comme les sessions, les codes et le second facteur                                                                                                                                                                                                                                                                  |
+| `terms_versions`                                       | conservées **indéfiniment** : une version publiée ne se modifie ni ne se retire                                                                                                                                                                                                                                                                                                           |
+| `terms_acceptances`                                    | conservées tant que le compte est ouvert ; **supprimées à la clôture** et avec une inscription jamais vérifiée. La trace de chaque acceptation (version, empreinte du texte, date, adresse IP) reste dans `audit_logs`                                                                                                                                                                    |
+| `kyc_cases`, `kyc_documents`                           | dossier **jamais déposé** : effacé avec ses pièces après **30 jours** sans changement. Dossier déposé : conservé tant que le compte est ouvert. **À la clôture** : effacé s'il n'a jamais été examiné ; sinon conservé **dix ans**, puis effacé avec ses pièces                                                                                                                           |
+| `assets`, `ledger_account_types`                       | conservés **indéfiniment** : un actif enregistré et un type de compte ne se modifient ni ne se retirent                                                                                                                                                                                                                                                                                   |
+| `ledger_accounts`, `ledger_entries`, `ledger_postings` | conservés **indéfiniment** : une écriture a toujours deux côtés, l'effacer déséquilibrerait le grand livre. **Après la clôture d'un compte**, ses comptes et leurs lignes restent, rattachés à une ligne `users` qui ne porte plus aucun identifiant ; l'adresse et le numéro gardés par `account_closures` permettent de les rattacher à une personne pendant dix ans, puis sont effacés |
+| `transfers`                                            | conservés **indéfiniment**, comme les écritures qu'ils désignent : un transfert ne se modifie ni ne s'efface. **Après la clôture d'un compte**, ses transferts restent, rattachés à une ligne `users` qui ne porte plus aucun identifiant : l'autre partie n'en voit plus l'adresse                                                                                                       |
+| `transfer_limits`                                      | conservés **indéfiniment** : des plafonds se remplacent, ils ne se suppriment pas. L'historique des valeurs est dans `audit_logs`                                                                                                                                                                                                                                                         |
+| `ledger_adjustments`                                   | conservés **indéfiniment** : une demande d'ajustement, décidée ou non, ne s'efface pas — elle est la trace de la décision, et de sa justification. **Après la clôture d'un compte**, elles restent, rattachées à une ligne `users` qui ne porte plus aucun identifiant. Les demandes échues passent à `EXPIRED`                                                                           |
+| `wallet_freezes`                                       | conservés **indéfiniment** : un gel levé reste, avec sa justification et celle de sa levée                                                                                                                                                                                                                                                                                                |
 
 La purge est une tâche planifiée toutes les heures (`AccountMaintenanceService`, file
 `account-maintenance`), bornée à 500 lignes par catégorie et par exécution — 200 comptes pour
@@ -495,6 +1224,7 @@ par un conseil juridique avant l'ouverture au public.
 
 ## Tables à venir
 
-Le modèle cible (vérification des entreprises, portefeuilles, grand livre en partie double,
-échanges, paiements, blockchain, P2P, séquestre, risque, support…) sera introduit phase par phase,
-chaque table arrivant avec le module qui l'utilise, ses contraintes et ses tests.
+Le modèle cible (vérification des entreprises, réservations de fonds, dépôts et retraits,
+échanges, paiements, blockchain, P2P, séquestre, risque, support…) sera introduit
+phase par phase, chaque table arrivant avec le module qui l'utilise, ses contraintes et ses
+tests. Le plan de comptes s'étendra avec elles.

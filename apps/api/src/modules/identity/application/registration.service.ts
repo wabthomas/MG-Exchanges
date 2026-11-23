@@ -17,6 +17,8 @@ import { isRegistrationCountry } from '../domain/registration-policy.js';
 import type { ClientContext } from './client-context.js';
 import { PasswordHasher } from './password-hasher.js';
 import { assertAcceptablePassword } from './password-rules.js';
+import { TermsService, translateRefusal } from './terms.service.js';
+import type { TermsVersionHeader } from './terms.repository.js';
 import { EmailAlreadyTakenError, UserRepository } from './user.repository.js';
 import { invalidCodeError, VerificationService } from './verification.service.js';
 
@@ -32,6 +34,9 @@ import { invalidCodeError, VerificationService } from './verification.service.js
  * nouvelle inscription à la même adresse **remplace** entièrement la précédente. Un tiers ne
  * peut donc pas préparer un compte à l'adresse d'autrui — avec son mot de passe, son numéro —
  * et attendre que le titulaire de l'adresse l'active pour lui.
+ *
+ * S'inscrire, c'est accepter la version en vigueur des conditions d'utilisation : la demande
+ * désigne le numéro de la version lue, et l'acceptation est enregistrée avec le compte.
  */
 @Injectable()
 export class RegistrationService {
@@ -43,6 +48,7 @@ export class RegistrationService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly outbox: OutboxService,
+    private readonly terms: TermsService,
   ) {}
 
   async register(request: RegisterRequest, client: ClientContext): Promise<VerificationPending> {
@@ -61,18 +67,28 @@ export class RegistrationService {
       });
     }
     this.verification.assertDeliveryAvailable();
+    // Comme les contrôles précédents, celui-ci ne dépend que de la demande : il ne dit rien de
+    // l'existence d'un compte.
+    const terms = await this.terms.assertCurrent(request.acceptedTermsVersion);
 
     // Calculée avant toute lecture : le coût est le même que l'adresse soit déjà prise ou non.
     const passwordHash = await this.hasher.hash(request.password);
 
+    const attempt = (): Promise<void> =>
+      this.unitOfWork.run((tx) => this.createOrSignal(tx, request, passwordHash, terms, client));
     try {
-      await this.unitOfWork.run((tx) => this.createOrSignal(tx, request, passwordHash, client));
-    } catch (error) {
-      if (!(error instanceof EmailAlreadyTakenError)) {
-        throw error;
+      try {
+        await attempt();
+      } catch (error) {
+        if (!(error instanceof EmailAlreadyTakenError)) {
+          throw error;
+        }
+        // Deux inscriptions simultanées avec la même adresse : le compte existe désormais.
+        await attempt();
       }
-      // Deux inscriptions simultanées avec la même adresse : le compte existe désormais.
-      await this.unitOfWork.run((tx) => this.createOrSignal(tx, request, passwordHash, client));
+    } catch (error) {
+      // Une nouvelle version des conditions a été publiée pendant l'inscription.
+      throw translateRefusal(error);
     }
     return this.pending();
   }
@@ -160,6 +176,7 @@ export class RegistrationService {
     tx: DbClient,
     request: RegisterRequest,
     passwordHash: string,
+    terms: TermsVersionHeader,
     client: ClientContext,
   ): Promise<void> {
     const existing = await this.users.findByEmail(tx, request.email);
@@ -173,7 +190,7 @@ export class RegistrationService {
         accountType: 'INDIVIDUAL',
         status: 'PENDING_VERIFICATION',
         emailVerifiedAt: null,
-        termsAcceptedAt: new Date(),
+        registeredAt: new Date(),
         passwordHash,
       });
       await this.verification.request(tx, user, 'EMAIL_VERIFICATION', client);
@@ -185,6 +202,7 @@ export class RegistrationService {
         ...client,
         metadata: { countryCode: user.countryCode, accountType: user.accountType },
       });
+      await this.terms.recordAcceptance(tx, user.id, terms, client);
       return;
     }
 
@@ -196,7 +214,7 @@ export class RegistrationService {
         phone: request.phone ?? null,
         countryCode: request.countryCode,
         locale: request.locale ?? 'fr',
-        termsAcceptedAt: new Date(),
+        registeredAt: new Date(),
         passwordHash,
       });
       if (replaced) {
@@ -209,12 +227,20 @@ export class RegistrationService {
           ...client,
           metadata: { countryCode: request.countryCode },
         });
+        // L'acceptation du précédent demandeur ne vaut pas pour celui-ci.
+        await this.terms.discardAcceptances(tx, existing.id);
+        await this.terms.recordAcceptance(tx, existing.id, terms, client);
         return;
       }
     }
 
     // L'adresse appartient déjà à un compte : rien n'est créé et le mot de passe proposé est
     // ignoré. Seul le titulaire de la boîte aux lettres en est informé.
+    //
+    // Aucune acceptation n'est écrite ici — la base l'aurait refusée si une version venait
+    // d'être publiée. La demande est alors refusée de la même façon qu'avec une adresse libre :
+    // la réponse ne dit rien de l'existence du compte.
+    await this.terms.assertStillCurrent(tx, terms);
     await this.audit.record(tx, {
       actor: { type: 'SYSTEM' },
       action: 'user.registration_rejected',

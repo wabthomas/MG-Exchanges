@@ -24,7 +24,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { CurrentUser } from '../../../common/auth/auth.decorators.js';
+import { AllowBeforeTermsAcceptance, CurrentUser } from '../../../common/auth/auth.decorators.js';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import {
   ApiProblemResponses,
@@ -42,6 +42,7 @@ import { MfaService } from '../application/mfa.service.js';
 @ApiTags('Two-step verification')
 @ApiBearerAuth()
 @AllowDuringMaintenance()
+@AllowBeforeTermsAcceptance()
 @Controller({ path: 'me/mfa', version: '1' })
 export class MfaController {
   constructor(private readonly mfa: MfaService) {}

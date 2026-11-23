@@ -16,6 +16,7 @@ import { z } from 'zod';
 
 import { kycVerifiedLevelSchema } from './kyc-levels.js';
 import { permissionKeySchema } from './permissions.js';
+import { termsVersionNumberSchema } from './terms.js';
 
 export const ACCOUNT_TYPES = ['INDIVIDUAL', 'BUSINESS'] as const;
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
@@ -39,8 +40,11 @@ export const registerRequestSchema = z.strictObject({
   /** Pays de résidence. */
   countryCode: countryCodeSchema,
   locale: localeSchema.optional(),
-  /** Acceptation explicite des conditions d'utilisation. */
-  acceptTerms: z.literal(true, { error: 'The terms of service must be accepted.' }),
+  /**
+   * Acceptation explicite des conditions d'utilisation : le numéro de la version que la
+   * personne a eue sous les yeux (`GET /terms/current`). Ce doit être la version en vigueur.
+   */
+  acceptedTermsVersion: termsVersionNumberSchema,
 });
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 
@@ -122,6 +126,11 @@ export const currentUserSchema = z.object({
   secondFactorEnabled: z.boolean(),
   /** Niveau de vérification d'identité atteint : de `0` (aucun) à `3`. */
   verificationLevel: kycVerifiedLevelSchema,
+  /**
+   * Vrai si le compte doit accepter la version en vigueur des conditions d'utilisation avant
+   * de continuer (voir `GET /me/terms`).
+   */
+  termsAcceptanceRequired: z.boolean(),
   createdAt: isoDateTimeSchema,
 });
 export type CurrentUser = z.infer<typeof currentUserSchema>;

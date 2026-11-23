@@ -15,7 +15,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { CurrentUser } from '../../../common/auth/auth.decorators.js';
+import { AllowBeforeTermsAcceptance, CurrentUser } from '../../../common/auth/auth.decorators.js';
 import type { AuthenticatedUser } from '../../../common/auth/authenticated-user.js';
 import { ApiProblemResponses, toOpenApiSchema } from '../../../common/http/openapi.js';
 import { ReqContext, type RequestContext } from '../../../common/http/request-context.js';
@@ -23,8 +23,14 @@ import { AllowDuringMaintenance } from '../../system-settings/presentation/acces
 import { AccountService } from '../application/account.service.js';
 import { SessionService } from '../application/session.service.js';
 
+/**
+ * Le compte et ses sessions. Reste ouvert à un compte qui doit encore accepter les conditions
+ * d'utilisation : il doit pouvoir voir où il en est, et fermer une session qu'il ne reconnaît
+ * pas.
+ */
 @ApiTags('Account')
 @ApiBearerAuth()
+@AllowBeforeTermsAcceptance()
 @Controller({ path: 'me', version: '1' })
 export class MeController {
   constructor(
@@ -36,7 +42,10 @@ export class MeController {
   @AllowDuringMaintenance()
   @ApiOperation({
     summary: 'Current account',
-    description: 'The signed-in account, with its back-office roles and permissions if any.',
+    description:
+      'The signed-in account, with its back-office roles and permissions if any. ' +
+      '`termsAcceptanceRequired` tells whether the account must accept the terms of use in ' +
+      'force before continuing (see `GET /me/terms`).',
   })
   @ApiOkResponse({ schema: toOpenApiSchema(currentUserSchema) })
   @ApiProblemResponses(401, 429)

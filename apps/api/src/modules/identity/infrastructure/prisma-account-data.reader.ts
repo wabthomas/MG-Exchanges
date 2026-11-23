@@ -20,7 +20,6 @@ export class PrismaAccountDataReader extends AccountDataReader {
         accountType: true,
         status: true,
         createdAt: true,
-        termsAcceptedAt: true,
       },
     });
     if (account === null) {

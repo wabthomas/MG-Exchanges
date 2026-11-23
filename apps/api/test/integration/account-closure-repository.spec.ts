@@ -11,9 +11,11 @@ import {
   type NewClosure,
 } from '../../src/modules/identity/application/account-closure.repository.js';
 import { PrismaAccountClosureRepository } from '../../src/modules/identity/infrastructure/prisma-account-closure.repository.js';
+import { PrismaTermsRepository } from '../../src/modules/identity/infrastructure/prisma-terms.repository.js';
 import { PrismaUserRepository } from '../../src/modules/identity/infrastructure/prisma-user.repository.js';
 import { moveErasureTerm } from '../support/account-closure.js';
 import { addDocument, insertCase, reject, submit } from '../support/kyc-sql.js';
+import { publishTermsAsOperator } from '../support/terms.js';
 import {
   createTestDatabase,
   type TestDatabase,
@@ -38,13 +40,17 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
   let owner: PrismaClient;
   /** Agent de conformité, nommé comme le fait l'outil d'amorçage : par le propriétaire. */
   let officer: string;
+  /** Version des conditions d'utilisation en vigueur, que les comptes « complets » ont acceptée. */
+  let termsVersion: number;
   const repository = new PrismaAccountClosureRepository();
   const users = new PrismaUserRepository();
+  const terms = new PrismaTermsRepository();
 
   beforeAll(async () => {
     database = await createTestDatabase();
     app = new PrismaClient({ adapter: new PrismaPg({ connectionString: database.appUrl }) });
     owner = new PrismaClient({ adapter: new PrismaPg({ connectionString: database.ownerUrl }) });
+    termsVersion = (await publishTermsAsOperator(database)).number;
     officer = await createUser();
     await grant(officer, 'compliance');
   });
@@ -75,12 +81,13 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
         email: options.email ?? `closure-repository${String(sequence)}@example.cd`,
         countryCode: 'CD',
         status: options.status ?? 'ACTIVE',
-        termsAcceptedAt: now,
+        registeredAt: now,
         emailVerifiedAt: now,
         ...(options.phone === undefined ? {} : { phone: options.phone, phoneVerifiedAt: now }),
         credential: { create: { passwordHash: ARGON2_HASH } },
         ...(full
           ? {
+              termsAcceptances: { create: { versionNumber: termsVersion } },
               profile: { create: { givenName: 'Jean', city: 'Goma' } },
               totp: {
                 create: {
@@ -165,6 +172,7 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
       recoveryCodes: await app.userRecoveryCode.count(where),
       challenges: await app.verificationChallenge.count(where),
       profiles: await app.userProfile.count(where),
+      termsAcceptances: await app.termsAcceptance.count(where),
       sessions: await app.userSession.count(where),
       tokens: await app.sessionToken.count({ where: { session: { userId } } }),
     };
@@ -175,6 +183,7 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
     recoveryCodes: 0,
     challenges: 0,
     profiles: 0,
+    termsAcceptances: 0,
     sessions: 0,
     tokens: 0,
   };
@@ -290,8 +299,15 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
         recoveryCodes: 3,
         challenges: 1,
         profiles: 1,
+        termsAcceptances: 1,
         sessions: 2,
         tokens: 2,
+      });
+      // Ouvert, le compte a accepté la version en vigueur.
+      expect(await terms.standingOf(app, userId)).toMatchObject({
+        accountOpen: true,
+        latestRequired: termsVersion,
+        lastAccepted: { versionNumber: termsVersion },
       });
       const closure = await closureOf(userId);
 
@@ -302,6 +318,13 @@ describe('Clôture des comptes — port de persistance (PostgreSQL réel)', () =
 
       expect(closedSessions).toBe(2);
       expect(await counts(userId)).toEqual(NOTHING);
+      // Clôturé, il n'a plus d'acceptation — et plus rien à accepter : il n'est plus ouvert.
+      expect(await terms.standingOf(app, userId)).toMatchObject({
+        accountOpen: false,
+        latestRequired: termsVersion,
+        lastAccepted: null,
+      });
+      expect((await terms.standingOf(app, UNKNOWN_ID)).accountOpen).toBe(false);
       expect(await app.user.findUniqueOrThrow({ where: { id: userId } })).toMatchObject({
         status: 'CLOSED',
         email: `closed-${userId}@closed.invalid`,

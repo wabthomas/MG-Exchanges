@@ -32,7 +32,7 @@ const registration = (email: string, overrides: Record<string, unknown> = {}) =>
   email,
   password: PASSWORD,
   countryCode: 'CD',
-  acceptTerms: true,
+  acceptedTermsVersion: 1,
   ...overrides,
 });
 
@@ -86,7 +86,7 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
         accountType: 'INDIVIDUAL',
         locale: 'fr',
       });
-      expect(user.termsAcceptedAt.getTime()).toBeGreaterThan(Date.now() - 10_000);
+      expect(user.registeredAt.getTime()).toBeGreaterThan(Date.now() - 10_000);
 
       const message = await nextMessage(testApp, email);
       expect(message).toMatchObject({ channel: 'EMAIL', template: 'email_verification_code' });
@@ -139,10 +139,13 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
       const user = await prisma.user.findUniqueOrThrow({ where: { email } });
       const actions = await prisma.auditLog.findMany({
         where: { actorId: user.id },
-        orderBy: { occurredAt: 'asc' },
+        // Deux entrées d'une même transaction portent la même heure : leur rang les départage.
+        orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
       });
       expect(actions.map((entry) => entry.action)).toEqual([
         'user.registered',
+        // S'inscrire, c'est accepter la version en vigueur des conditions d'utilisation.
+        'terms.accepted',
         'session.login_denied',
         'user.email_verified',
         // Le second essai du même code, refusé.
@@ -161,7 +164,14 @@ describe('Inscription et vérification de l’adresse e-mail — bout en bout', 
       ['mot de passe très courant', { password: 'password123' }, 'password'],
       ['mot de passe répétitif', { password: 'aaaaaaaaaaaa' }, 'password'],
       ['mot de passe trop court', { password: 'court' }, 'password'],
-      ['conditions non acceptées', { acceptTerms: false }, 'acceptTerms'],
+      [
+        'version des conditions absente',
+        { acceptedTermsVersion: undefined },
+        'acceptedTermsVersion',
+      ],
+      ['version des conditions mal formée', { acceptedTermsVersion: '1' }, 'acceptedTermsVersion'],
+      // Une case cochée ne dit pas quel texte a été accepté.
+      ['ancienne case à cocher', { acceptTerms: true }, ''],
       ['téléphone mal formé', { phone: '0812345678' }, 'phone'],
       ['code pays mal formé', { countryCode: 'Congo' }, 'countryCode'],
       ['propriété inconnue', { role: 'super_admin' }, ''],

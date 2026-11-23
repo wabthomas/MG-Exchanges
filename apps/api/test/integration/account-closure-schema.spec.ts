@@ -20,6 +20,7 @@ import {
   revoke,
   submitted,
 } from '../support/kyc-sql.js';
+import { acceptTermsInSql, insertTermsVersion } from '../support/terms-sql.js';
 import {
   createTestDatabase,
   sqlState,
@@ -86,6 +87,8 @@ const ROWS: Record<string, (db: pg.Client, userId: string) => Promise<unknown>> 
       [userId],
     ),
   kyc_cases: (db, userId) => insertCase(db, userId, 1),
+  // L'acceptation de la version en vigueur des conditions d'utilisation.
+  terms_acceptances: (db, userId) => acceptTermsInSql(db, userId),
 };
 
 describe('Clôture d’un compte — règles portées par la base de données', () => {
@@ -99,6 +102,8 @@ describe('Clôture d’un compte — règles portées par la base de données', 
   beforeAll(async () => {
     database = await createTestDatabase();
     await asOwner(async (db) => {
+      // Une version des conditions d'utilisation, pour qu'un compte puisse l'accepter.
+      await insertTermsVersion(db);
       claire = await insertStaff(db, 'compliance');
       david = await insertStaff(db, 'compliance');
       support = await insertStaff(db, 'support');
@@ -124,7 +129,7 @@ describe('Clôture d’un compte — règles portées par la base de données', 
     const row: Record<string, unknown> = {
       email: `closure${String(sequence)}@example.cd`,
       country_code: 'CD',
-      terms_accepted_at: new Date(),
+      registered_at: new Date(),
       status: 'ACTIVE',
       email_verified_at: new Date(),
       ...overrides,
@@ -694,12 +699,20 @@ describe('Clôture d’un compte — règles portées par la base de données', 
           await asApp(async (observer) => {
             await first.query('BEGIN');
             await second.query('BEGIN');
+            // Rien de ce qu'écrit la première ne doit attendre la seconde : passé ce délai, c'est
+            // que le verrou pris sur le compte à chaque ajout est trop fort — et que les deux
+            // transactions s'interbloqueraient.
+            await first.query(`SET LOCAL lock_timeout = '3s'`);
             // Les deux ajouts passent sans s'attendre : le verrou pris sur le compte est partagé.
             await ROWS['user_sessions']!(first, user);
             await ROWS['user_sessions']!(second, user);
 
             // La première modification du compte n'attend pas l'autre transaction…
-            await first.query(`UPDATE users SET locale = 'en' WHERE id = $1`, [user]);
+            expect(
+              await sqlState(() =>
+                first.query(`UPDATE users SET locale = 'en' WHERE id = $1`, [user]),
+              ),
+            ).toBeUndefined();
             // … et la seconde attend seulement que la première soit validée.
             const update = sqlState(() =>
               second.query(`UPDATE users SET locale = 'fr' WHERE id = $1`, [user]),

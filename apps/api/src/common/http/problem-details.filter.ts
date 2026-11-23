@@ -12,12 +12,20 @@ import { PinoLogger } from 'nestjs-pino';
 
 import {
   ACCOUNT_CLOSED_SQLSTATE,
+  isDatabaseSaturated,
+  isTransactionConflict,
   sqlStateOf,
 } from '../../infrastructure/database/database-errors.js';
 import { AppError } from '../errors/app-error.js';
 import { getRequestId } from './request-id.middleware.js';
 
 const GENERIC_SERVER_ERROR_DETAIL = 'An unexpected error occurred. Please try again later.';
+
+/**
+ * Délai annoncé (`Retry-After`) lorsque la base est saturée : celui des autres refus pour
+ * saturation — réception des pièces, API injoignable derrière Nginx.
+ */
+export const DATABASE_SATURATED_RETRY_AFTER_SECONDS = 5;
 
 /** Code du catalogue associé par défaut à un statut HTTP levé sans code explicite. */
 const DEFAULT_CODE_BY_STATUS: Readonly<Record<number, ErrorCode>> = {
@@ -78,6 +86,27 @@ export function toProblem(exception: unknown): Problem {
     return { status: 409, code: 'CONFLICT', detail: 'This account is closed.' };
   }
 
+  // Transaction annulée par la base parce qu'elle en croisait une autre, y compris après ses
+  // nouvelles tentatives. Rien n'a été écrit : la requête peut être renvoyée telle quelle.
+  if (isTransactionConflict(exception)) {
+    return {
+      status: 409,
+      code: 'CONFLICT',
+      detail: 'The request conflicted with another one. Please try again.',
+    };
+  }
+
+  // Aucune connexion à la base ne s'est libérée à temps : l'opération n'a pas commencé. Le
+  // service est saturé, non défaillant — le client peut renvoyer sa requête un peu plus tard.
+  if (isDatabaseSaturated(exception)) {
+    return {
+      status: 503,
+      code: 'SERVICE_UNAVAILABLE',
+      detail: 'The service is temporarily overloaded. Please retry in a few seconds.',
+      retryAfterSeconds: DATABASE_SATURATED_RETRY_AFTER_SECONDS,
+    };
+  }
+
   return { status: 500, code: 'INTERNAL_ERROR', detail: GENERIC_SERVER_ERROR_DETAIL };
 }
 
@@ -135,6 +164,12 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       this.logger.error(
         { err: exception, requestId: getRequestId(request), code: problem.code },
         'Request failed',
+      );
+    } else if (isTransactionConflict(exception)) {
+      // Pas un défaut, mais un signal : des requêtes se disputent les mêmes lignes.
+      this.logger.warn(
+        { err: exception, requestId: getRequestId(request) },
+        'Request abandoned: its transaction conflicted with another one',
       );
     }
 

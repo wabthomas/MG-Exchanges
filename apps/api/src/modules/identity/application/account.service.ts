@@ -6,6 +6,7 @@ import { AppError } from '../../../common/errors/app-error.js';
 import { PrismaService } from '../../../infrastructure/database/prisma.service.js';
 import type { UserRecord } from '../domain/user.js';
 import { MfaRepository } from './mfa.repository.js';
+import { TermsService } from './terms.service.js';
 import { UserRepository } from './user.repository.js';
 import { VerificationStatusReader } from './verification-status.reader.js';
 
@@ -16,6 +17,7 @@ export class AccountService {
     private readonly users: UserRepository,
     private readonly mfa: MfaRepository,
     private readonly verification: VerificationStatusReader,
+    private readonly terms: TermsService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -28,10 +30,11 @@ export class AccountService {
   }
 
   async describe(user: UserRecord): Promise<CurrentUser> {
-    const [access, secondFactorEnabled, verificationLevel] = await Promise.all([
+    const [access, secondFactorEnabled, verificationLevel, terms] = await Promise.all([
       this.users.findAccess(this.prisma, user.id),
       this.mfa.isTotpEnabled(this.prisma, user.id),
       this.verification.level(this.prisma, user.id),
+      this.terms.accountTerms(this.prisma, user.id),
     ]);
     return {
       id: user.id,
@@ -47,6 +50,7 @@ export class AccountService {
       permissions: [...access.permissions],
       secondFactorEnabled,
       verificationLevel,
+      termsAcceptanceRequired: terms.acceptanceRequired,
       createdAt: user.createdAt.toISOString(),
     };
   }

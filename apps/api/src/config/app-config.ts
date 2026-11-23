@@ -56,6 +56,8 @@ export class AppConfig {
     readonly host: string;
     readonly port: number;
     readonly trustProxyHops: number;
+    /** Durée maximale d'un arrêt demandé par signal, en millisecondes. */
+    readonly shutdownTimeoutMs: number;
   };
 
   readonly http: {
@@ -124,6 +126,7 @@ export class AppConfig {
       host: env.HOST,
       port: env.PORT,
       trustProxyHops: env.TRUST_PROXY_HOPS,
+      shutdownTimeoutMs: env.SHUTDOWN_TIMEOUT_MS,
     };
     this.http = {
       corsAllowedOrigins: env.CORS_ALLOWED_ORIGINS,

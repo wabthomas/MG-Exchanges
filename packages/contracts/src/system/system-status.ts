@@ -11,6 +11,7 @@ export const FEATURE_KEYS = [
   'registration',
   'kyc',
   'internalTransfers',
+  'manualAdjustments',
   'fiatDeposits',
   'fiatWithdrawals',
   'cryptoDeposits',

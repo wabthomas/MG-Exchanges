@@ -579,7 +579,7 @@ describe('Connexion, sessions et mot de passe — bout en bout', () => {
       await http
         .post('/api/v1/auth/register')
         .set(from(newClientIp()))
-        .send({ email, password: PASSWORD, countryCode: 'CD', acceptTerms: true })
+        .send({ email, password: PASSWORD, countryCode: 'CD', acceptedTermsVersion: 1 })
         .expect(202);
       const verificationCode = await nextCode(testApp, email);
 

@@ -27,3 +27,20 @@ export const VERIFICATION_RATE_LIMIT: RateLimitPolicy = {
   limit: 20,
   windowMs: 15 * MINUTE_MS,
 };
+
+/**
+ * Lecture publique des conditions d'utilisation : une réponse peut peser plusieurs centaines
+ * de kilo-octets, et la route n'exige pas d'être connecté.
+ */
+export const TERMS_READING_RATE_LIMIT: RateLimitPolicy = {
+  name: 'terms-reading',
+  limit: 60,
+  windowMs: MINUTE_MS,
+};
+
+/** Publication d'une version des conditions d'utilisation (back-office) : un acte rare. */
+export const TERMS_PUBLICATION_RATE_LIMIT: RateLimitPolicy = {
+  name: 'terms-publication',
+  limit: 20,
+  windowMs: 60 * MINUTE_MS,
+};

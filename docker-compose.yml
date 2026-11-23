@@ -85,6 +85,10 @@ services:
       dockerfile: infrastructure/docker/api.Dockerfile
       target: runtime
     restart: unless-stopped
+    # À `docker compose stop`, l'API finit ses requêtes en cours puis se ferme, en huit
+    # secondes au plus (valeur par défaut de SHUTDOWN_TIMEOUT_MS, voir apps/api/.env.example).
+    # Le délai que Docker lui accorde avant de la tuer doit rester supérieur.
+    stop_grace_period: 10s
     environment:
       APP_ENV: ${APP_ENV:-local}
       TRUST_PROXY_HOPS: '1'
