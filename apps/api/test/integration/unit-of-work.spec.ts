@@ -12,7 +12,9 @@ import {
   UnitOfWork,
 } from '../../src/infrastructure/database/unit-of-work.js';
 import { toProblem } from '../../src/common/http/problem-details.filter.js';
+import { registerEntryKindsInSql } from '../support/ledger-sql.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
+import { withConnection } from '../support/test-database.js';
 
 /** Rendez-vous : chaque participant attend que `count` participants l'aient atteint. */
 function meetingOf(count: number): () => Promise<void> {
@@ -132,6 +134,11 @@ describe('Transactions — conflits et nouvelles tentatives (PostgreSQL réel)',
 
   it('une règle que la base vérifie à la validation remonte avec son SQLSTATE, et rien n’est écrit', async () => {
     const key = `test:${randomUUID()}`;
+    // Le type d'essai est déclaré à la base, qui refuserait sinon l'en-tête dès son écriture
+    // (MGX13) : c'est un refus prononcé à la validation que ce test attend.
+    await withConnection(testApp.database.ownerUrl, (owner) =>
+      registerEntryKindsInSql(owner, ['test.entry']),
+    );
     // Un en-tête d'écriture sans ses lignes : accepté à l'écriture, refusé à la validation.
     const outcome = await unitOfWork
       .run(

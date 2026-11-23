@@ -40,7 +40,7 @@ import {
   withOwner,
   wrongTotpCode,
 } from '../support/identity.js';
-import { ledgerSize, registerAssetInSql } from '../support/ledger-sql.js';
+import { ledgerSize, registerAssetInSql, registerEntryKindsInSql } from '../support/ledger-sql.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
 import { withConnection } from '../support/test-database.js';
 import { freshKey, verifyUpTo } from '../support/transfers-sql.js';
@@ -90,6 +90,9 @@ describe('Transferts entre titulaires — bout en bout', () => {
       .setFeatureEnabled('registration', true, { actor: { type: 'SYSTEM' }, reason: 'test setup' });
     root = await admin();
     await asOwner(async (db) => {
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });
     });

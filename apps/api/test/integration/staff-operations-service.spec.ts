@@ -36,7 +36,7 @@ import {
   withOwner,
   wrongTotpCode,
 } from '../support/identity.js';
-import { ledgerSize, registerAssetInSql } from '../support/ledger-sql.js';
+import { ledgerSize, registerAssetInSql, registerEntryKindsInSql } from '../support/ledger-sql.js';
 import { ageAdjustment } from '../support/staff-operations-sql.js';
 import { createTestApp, type TestApp } from '../support/test-app.js';
 import { withConnection } from '../support/test-database.js';
@@ -151,6 +151,9 @@ describe('Opérations du personnel — services (PostgreSQL réel)', () => {
     compliance = await staff('compliance');
     support = await staff('support');
     await asOwner(async (db) => {
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });
       // Transferts en dollars ouverts au niveau 1 : 100 par transfert, 250 par jour, 1 000 par mois.

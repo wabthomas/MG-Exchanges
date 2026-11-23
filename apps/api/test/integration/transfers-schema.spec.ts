@@ -19,6 +19,7 @@ import {
   openLedgerAccount,
   postEntryInSql,
   registerAssetInSql,
+  registerEntryKindsInSql,
 } from '../support/ledger-sql.js';
 import {
   createTestDatabase,
@@ -134,6 +135,9 @@ describe('Transferts — règles portées par la base de données', () => {
     await asOwner(async (db) => {
       admin = await insertStaff(db, 'super_admin');
       support = await insertStaff(db, 'support');
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'CDF', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });

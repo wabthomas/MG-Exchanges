@@ -12,7 +12,12 @@ import {
   holderProofShape,
 } from '../identity/account-lifecycle.js';
 import { adminActionReasonSchema } from '../identity/admin-users.js';
-import { assetSchema, ledgerCursorSchema, ledgerPageLimitSchema } from '../ledger/ledger.js';
+import {
+  assetSchema,
+  ledgerCursorSchema,
+  type LedgerEntryKind,
+  ledgerPageLimitSchema,
+} from '../ledger/ledger.js';
 import { positiveAmountSchema } from '../transfers/transfers.js';
 
 // --- Ajustement manuel d'un portefeuille --------------------------------------------------------
@@ -25,13 +30,14 @@ export const LEDGER_ADJUSTMENT_DIRECTIONS = ['CREDIT', 'DEBIT'] as const;
 export type LedgerAdjustmentDirection = (typeof LEDGER_ADJUSTMENT_DIRECTIONS)[number];
 
 /**
- * Type des écritures que produit un ajustement approuvé, selon son sens. Ce sont les seules
- * écritures qui passent sur un portefeuille gelé.
+ * Type des écritures que produit un ajustement approuvé, selon son sens — deux de ceux que le
+ * grand livre connaît (`LEDGER_ENTRY_KINDS`). Ce sont les seules écritures qui passent sur un
+ * portefeuille gelé.
  */
 export const LEDGER_ADJUSTMENT_ENTRY_KINDS = {
   CREDIT: 'adjustment.credit',
   DEBIT: 'adjustment.debit',
-} as const satisfies Record<LedgerAdjustmentDirection, string>;
+} as const satisfies Record<LedgerAdjustmentDirection, LedgerEntryKind>;
 
 /**
  * `PENDING` attend la décision d'un second membre du personnel ; `APPROVED` a été passé au

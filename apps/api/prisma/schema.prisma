@@ -914,6 +914,20 @@ model LedgerAccount {
   @@map("ledger_accounts")
 }
 
+/// Types d'écriture que la base connaît : la liste des opérations qui passent des écritures.
+/// Une écriture d'un autre type est refusée, et chaque type de la liste est lié à son opération
+/// par ses propres règles (un transfert, un ajustement approuvé). La liste ne change que par
+/// migration (copie du catalogue de @mgx/contracts) ; le rôle applicatif ne peut que la lire.
+///
+/// Il n'y a pas de clé étrangère depuis `ledger_entries` : la règle est portée par un
+/// déclencheur (migration `ledger_entry_kinds`), et vaut pour ce qui s'écrit désormais.
+model LedgerEntryKind {
+  key         String @id @db.VarChar(64)
+  description String @db.VarChar(255)
+
+  @@map("ledger_entry_kinds")
+}
+
 /// Écriture du grand livre : l'en-tête de ses lignes. Elle déclare leur nombre ; à la validation
 /// de la transaction, la base vérifie qu'elles y sont toutes et que, pour chaque actif, le
 /// total des débits égale celui des crédits. Une écriture est **immuable** : une erreur se
@@ -922,7 +936,8 @@ model LedgerEntry {
   id             String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
   /// Clé qui rend l'écriture unique : la repasser ne l'écrit pas une seconde fois.
   idempotencyKey String         @unique @map("idempotency_key") @db.VarChar(160)
-  /// Type de l'écriture : l'opération qui l'a produite (`transfer.internal`…).
+  /// Type de l'écriture : l'opération qui l'a produite (`transfer.internal`…) — l'un de ceux
+  /// que la base connaît (`LedgerEntryKind`).
   kind           String         @db.VarChar(64)
   /// Nombre de lignes de l'écriture, déclaré à sa création.
   postingCount   Int            @map("posting_count") @db.SmallInt

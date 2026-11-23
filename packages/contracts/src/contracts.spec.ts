@@ -60,8 +60,10 @@ import {
   LEDGER_ACCOUNT_TYPES,
   LEDGER_ACTOR_TYPES,
   LEDGER_CURSOR_PATTERN,
+  LEDGER_ENTRY_KIND_KEYS,
   LEDGER_ENTRY_KIND_MAX_LENGTH,
   LEDGER_ENTRY_KIND_PATTERN,
+  LEDGER_ENTRY_KINDS,
   LEDGER_PAGE_MAX_SIZE,
   LEDGER_SIDES,
   loginRequestSchema,
@@ -1065,6 +1067,30 @@ describe('contrats du grand livre', () => {
       expect(kind).not.toMatch(LEDGER_ENTRY_KIND_PATTERN);
     }
     expect(LEDGER_ENTRY_KIND_MAX_LENGTH).toBe(64);
+  });
+
+  it('les types d’écriture que le grand livre connaît : ceux des opérations, et eux seuls', () => {
+    expect(LEDGER_ENTRY_KINDS).toEqual({
+      'transfer.internal': { description: expect.any(String) },
+      'adjustment.credit': { description: expect.any(String) },
+      'adjustment.debit': { description: expect.any(String) },
+    });
+    expect(LEDGER_ENTRY_KIND_KEYS).toEqual([
+      'transfer.internal',
+      'adjustment.credit',
+      'adjustment.debit',
+    ]);
+    // Chaque opération qui passe des écritures y a son type, et la liste n'en a pas d'autre.
+    expect([...LEDGER_ENTRY_KIND_KEYS].sort()).toEqual(
+      [INTERNAL_TRANSFER_ENTRY_KIND, ...Object.values(LEDGER_ADJUSTMENT_ENTRY_KINDS)].sort(),
+    );
+    for (const key of LEDGER_ENTRY_KIND_KEYS) {
+      expect(key).toMatch(LEDGER_ENTRY_KIND_PATTERN);
+      expect(key.length).toBeLessThanOrEqual(LEDGER_ENTRY_KIND_MAX_LENGTH);
+      // La colonne `description` de la table `ledger_entry_kinds` en admet 255.
+      expect(LEDGER_ENTRY_KINDS[key].description.length).toBeGreaterThan(10);
+      expect(LEDGER_ENTRY_KINDS[key].description.length).toBeLessThanOrEqual(255);
+    }
   });
 
   it('enregistrer un actif : un code, un libellé, une nature, de 0 à 18 décimales — et une raison', () => {

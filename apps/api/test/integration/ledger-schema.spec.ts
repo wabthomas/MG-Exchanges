@@ -17,6 +17,7 @@ import {
   openLedgerAccount,
   postEntryInSql,
   registerAssetInSql,
+  registerEntryKindsInSql,
   type SqlPosting,
 } from '../support/ledger-sql.js';
 import {
@@ -68,6 +69,9 @@ describe('Grand livre — règles portées par la base de données', () => {
     await asOwner(async (db) => {
       admin = await insertStaff(db, 'super_admin');
       support = await insertStaff(db, 'support');
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'CDF', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });
@@ -708,6 +712,11 @@ describe('Grand livre — règles portées par la base de données', () => {
     });
 
     it('un type en minuscules, en segments séparés par des points', async () => {
+      // Seule la forme du type est éprouvée ici : les types bien formés sont d'abord déclarés à
+      // la base, qui refuserait sinon ceux qu'elle ne connaît pas (MGX13 — voir
+      // `ledger-entry-kinds-schema.spec.ts`).
+      const wellFormed = ['deposit', 'transfer.internal', 'a1.b_2.c', 'a'.repeat(64)];
+      await asOwner((db) => registerEntryKindsInSql(db, wellFormed));
       await asApp(async (db) => {
         for (const kind of [
           '',
@@ -727,7 +736,7 @@ describe('Grand livre — règles portées par la base de données', () => {
           });
         }
         expect(await header(db, { kind: 'a'.repeat(65) })).toBe(STRING_TOO_LONG);
-        for (const kind of ['deposit', 'transfer.internal', 'a1.b_2.c', 'a'.repeat(64)]) {
+        for (const kind of wellFormed) {
           expect({ kind, outcome: await header(db, { kind }) }).toEqual({
             kind,
             outcome: undefined,
@@ -1078,6 +1087,7 @@ describe('Grand livre — règles portées par la base de données', () => {
       ledger_account_types: 'ledger_account_types_immutable_truncate',
       ledger_accounts: 'ledger_accounts_no_truncate',
       ledger_entries: 'ledger_entries_immutable_truncate',
+      ledger_entry_kinds: 'ledger_entry_kinds_immutable_truncate',
       ledger_postings: 'ledger_postings_immutable_truncate',
     };
     /**

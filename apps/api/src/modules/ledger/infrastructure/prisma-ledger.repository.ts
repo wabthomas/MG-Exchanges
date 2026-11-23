@@ -40,6 +40,8 @@ const LEDGER_RULE_VIOLATION = 'MGX08';
 const INSUFFICIENT_FUNDS = 'MGX09';
 /** Ligne passée sur un portefeuille gelé (voir la migration `staff_ledger_operations`). */
 const WALLET_FROZEN = 'MGX12';
+/** Écriture d'un type que la base ne connaît pas (voir la migration `ledger_entry_kinds`). */
+const UNKNOWN_ENTRY_KIND = 'MGX13';
 
 interface AssetRow {
   code: string;
@@ -183,7 +185,9 @@ async function refusedByDatabase<T>(work: () => Promise<T>): Promise<T> {
     if (sqlState === WALLET_FROZEN) {
       throw new WalletFrozenError(null, { cause: error });
     }
-    if (sqlState === LEDGER_RULE_VIOLATION) {
+    // Le type d'une écriture est une constante de l'opération qui la passe, jamais une donnée
+    // reçue : un type inconnu de la base est un défaut du code, comme une règle enfreinte.
+    if (sqlState === LEDGER_RULE_VIOLATION || sqlState === UNKNOWN_ENTRY_KIND) {
       throw new LedgerIntegrityError({ cause: error });
     }
     throw error;

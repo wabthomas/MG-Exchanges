@@ -68,7 +68,11 @@ export interface PostingDraft {
 export interface JournalEntryDraft {
   /** Voir {@link IDEMPOTENCY_KEY_PATTERN}. Repasser la même écriture sous la même clé est sans effet. */
   readonly idempotencyKey: string;
-  /** Type de l'écriture : l'opération qui la produit (`transfer.internal`…). */
+  /**
+   * Type de l'écriture : l'opération qui la produit (`transfer.internal`…). C'est l'un des
+   * types que la base connaît (`LEDGER_ENTRY_KINDS`) : elle refuse une écriture d'un autre type
+   * (`LedgerIntegrityError`), et vérifie de chacun qu'il a son opération.
+   */
   readonly kind: string;
   readonly actor: LedgerActor;
   readonly requestId?: string | undefined;

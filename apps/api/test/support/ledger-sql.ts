@@ -49,6 +49,41 @@ export async function registerAssetInSql(
   );
 }
 
+/**
+ * Types d'écriture d'essai : ceux par lesquels les tests éprouvent le grand livre lui-même —
+ * une écriture de forme quelconque, qu'aucune opération du produit ne passe.
+ */
+export const TEST_ENTRY_KINDS = [
+  'test.entry',
+  'test.deposit',
+  'test.withdrawal',
+  'test.transfer',
+  'test.swap',
+  'test.refund',
+  'test.other',
+] as const;
+
+/**
+ * Fait connaître à la base des types d'écriture, avec le rôle **propriétaire** — le seul qui
+ * étende la liste, comme le fait une migration. Par défaut, les types d'essai.
+ *
+ * Une base migrée ne connaît que les types des opérations du produit, chacun lié à la sienne
+ * (`LEDGER_ENTRY_KINDS`) : sans cet appel, la base refuse toute écriture d'essai (`MGX13`).
+ * Il ne modifie que la base jetable du fichier de test, jamais la base modèle.
+ */
+export async function registerEntryKindsInSql(
+  owner: pg.Client,
+  kinds: readonly string[] = TEST_ENTRY_KINDS,
+): Promise<void> {
+  for (const kind of kinds) {
+    await owner.query(
+      `INSERT INTO ledger_entry_kinds (key, description) VALUES ($1, $2)
+       ON CONFLICT (key) DO NOTHING`,
+      [kind, `Test entry kind ${kind}.`],
+    );
+  }
+}
+
 /** Ouvre un compte du grand livre — ou retrouve celui qui existe déjà — et rend son identifiant. */
 export async function openLedgerAccount(
   db: pg.Client,
@@ -144,7 +179,8 @@ export async function insertPostings(
 /**
  * Passe une écriture entière dans sa propre transaction — en-tête, puis lignes — et rend son
  * identifiant. À l'usage des tests qui ont besoin de fonds sur un compte sans passer par
- * l'application.
+ * l'application. Son type par défaut, `test.entry`, doit avoir été déclaré à la base
+ * (`registerEntryKindsInSql`).
  */
 export async function postEntryInSql(
   db: pg.Client,

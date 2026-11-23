@@ -41,7 +41,7 @@ import {
   png,
   type TestFile,
 } from '../support/kyc.js';
-import { registerAssetInSql } from '../support/ledger-sql.js';
+import { registerAssetInSql, registerEntryKindsInSql } from '../support/ledger-sql.js';
 import {
   type CrossingMoment,
   RequestCrossing,
@@ -523,6 +523,9 @@ describe('Requêtes qui croisent la clôture de leur compte — bout en bout', (
     // Un actif tenu par la plateforme : sans lui, la lecture d'un portefeuille répond 404. Les
     // transferts y sont ouverts aux comptes sans niveau vérifié.
     await withConnection(testApp.database.ownerUrl, async (owner) => {
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(owner);
       await registerAssetInSql(owner, 'USD', 2);
       await setLimitInSql(owner, 'USD', 0, [10_000, 10_000, 10_000]);
     });

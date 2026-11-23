@@ -43,7 +43,7 @@ import {
   registerVerifiedUser,
   withOwner,
 } from '../support/identity.js';
-import { ledgerSize, registerAssetInSql } from '../support/ledger-sql.js';
+import { ledgerSize, registerAssetInSql, registerEntryKindsInSql } from '../support/ledger-sql.js';
 import { RequestCrossing, RequestCrossingModule } from '../support/request-crossing.module.js';
 import { createTestApp, type TestApp, testClock } from '../support/test-app.js';
 import { withConnection } from '../support/test-database.js';
@@ -102,6 +102,9 @@ describe('Grand livre et portefeuilles — bout en bout', () => {
     ledger = testApp.app.get(LedgerService);
     crossing = testApp.app.get(RequestCrossing);
     await openFeature(testApp, 'registration');
+    // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que ceux
+    // des opérations du produit.
+    await withConnection(testApp.database.ownerUrl, (owner) => registerEntryKindsInSql(owner));
     root = await admin();
   });
 

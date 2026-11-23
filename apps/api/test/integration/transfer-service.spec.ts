@@ -45,7 +45,12 @@ import {
   wrongTotpCode,
 } from '../support/identity.js';
 import { revoke } from '../support/kyc-sql.js';
-import { ledgerSize, openLedgerAccount, registerAssetInSql } from '../support/ledger-sql.js';
+import {
+  ledgerSize,
+  openLedgerAccount,
+  registerAssetInSql,
+  registerEntryKindsInSql,
+} from '../support/ledger-sql.js';
 import { createTestApp, type TestApp, testClock } from '../support/test-app.js';
 import { untilBlocked, withConnection } from '../support/test-database.js';
 import {
@@ -155,6 +160,9 @@ describe('Transferts entre titulaires — service (PostgreSQL réel)', () => {
     passwordHash = await testApp.app.get(PasswordHasher).hash(PASSWORD);
     root = await createAdmin(testApp, { secondFactor: false });
     await asOwner(async (db) => {
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'CDF', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });

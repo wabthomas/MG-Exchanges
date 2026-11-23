@@ -55,6 +55,7 @@ import {
   ledgerSize,
   openLedgerAccount,
   registerAssetInSql,
+  registerEntryKindsInSql,
   tamperWithLedger,
 } from '../support/ledger-sql.js';
 import { occupyConnections } from '../support/saturation.js';
@@ -110,6 +111,9 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
     repository = testApp.app.get(LedgerRepository);
     unitOfWork = testApp.app.get(UnitOfWork);
     await asOwner(async (db) => {
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'CDF', 2);
       await registerAssetInSql(db, 'BTC', 8, { kind: 'CRYPTO' });
@@ -1409,6 +1413,32 @@ describe('Grand livre — passer des écritures (PostgreSQL réel)', () => {
       expect(sqlStateOf(incomplete)).toBe('MGX08');
       expect(await size()).toEqual(before);
       expect(await prisma.ledgerAccount.count({ where: { userId: pending } })).toBe(0);
+    });
+
+    it('un type d’écriture que la base ne connaît pas : un défaut lui aussi — rien n’est écrit, pas même un compte', async () => {
+      const alice = await holderWith('10.00');
+      const newcomer = await createUser();
+      const before = await size();
+
+      // Le service ne tient pas la liste des types : une écriture bien formée, équilibrée et
+      // couverte par les fonds n'est arrêtée que par la base.
+      const credited = await errorOf(() =>
+        ledger.post({ ...depositDraft(newcomer, usd('5.00')), kind: 'test.unknown' }),
+      );
+      const moved = await errorOf(() =>
+        ledger.post({ ...transferDraft(alice, newcomer, usd('5.00')), kind: 'test.unknown' }),
+      );
+      for (const refused of [credited, moved]) {
+        expect(refused).toBeInstanceOf(LedgerIntegrityError);
+        expect((refused as Error).message).toBe(
+          'The ledger refused the entry: one of its rules would have been broken.',
+        );
+        expect(sqlStateOf((refused as Error).cause)).toBe('MGX13');
+      }
+      expect(await size()).toEqual(before);
+      expect(await balanceOf(alice)).toBe('1000');
+      // Le compte que l'écriture aurait ouvert ne l'est pas : la transaction entière est annulée.
+      expect(await balanceOf(newcomer)).toBeNull();
     });
 
     it('toute autre erreur de la base est relancée telle quelle', async () => {

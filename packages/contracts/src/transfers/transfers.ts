@@ -14,7 +14,12 @@ import {
 } from '../identity/account-lifecycle.js';
 import { adminActionReasonSchema } from '../identity/admin-users.js';
 import { kycVerifiedLevelSchema } from '../identity/kyc-levels.js';
-import { assetSchema, ledgerCursorSchema, ledgerPageLimitSchema } from '../ledger/ledger.js';
+import {
+  assetSchema,
+  ledgerCursorSchema,
+  type LedgerEntryKind,
+  ledgerPageLimitSchema,
+} from '../ledger/ledger.js';
 
 // --- Clé d'idempotence --------------------------------------------------------------------------
 
@@ -58,8 +63,11 @@ export const nonNegativeAmountSchema = decimalAmountSchema.refine(
 
 // --- Transfert entre deux titulaires ------------------------------------------------------------
 
-/** Type des écritures que produit un transfert entre deux titulaires. */
-export const INTERNAL_TRANSFER_ENTRY_KIND = 'transfer.internal';
+/**
+ * Type des écritures que produit un transfert entre deux titulaires — l'un de ceux que le grand
+ * livre connaît (`LEDGER_ENTRY_KINDS`).
+ */
+export const INTERNAL_TRANSFER_ENTRY_KIND = 'transfer.internal' satisfies LedgerEntryKind;
 
 /**
  * Transfert de fonds à un autre titulaire, désigné par son adresse e-mail. **Immédiat et

@@ -99,6 +99,37 @@ export const LEDGER_ACCOUNT_TYPE_KEY_PATTERN = /^[a-z][a-z0-9_]*$/;
 export const LEDGER_ENTRY_KIND_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/;
 export const LEDGER_ENTRY_KIND_MAX_LENGTH = 64;
 
+/**
+ * Types d'écriture que le grand livre connaît : la liste des opérations qui passent des
+ * écritures. La base de données refuse toute écriture d'un autre type, et lie chaque type à son
+ * opération : pas d'écriture `transfer.internal` sans son transfert, pas d'écriture
+ * `adjustment.credit` ou `adjustment.debit` sans son ajustement approuvé.
+ *
+ * La liste est recopiée dans la table `ledger_entry_kinds` par les migrations ; un test vérifie
+ * que la base et ce fichier sont identiques. Elle s'étend avec les opérations : ajouter un type,
+ * c'est écrire aussi, dans la même migration, la règle qui le lie à son opération.
+ */
+export const LEDGER_ENTRY_KINDS = {
+  'transfer.internal': {
+    description: 'Transfer of funds from one holder to another.',
+  },
+  'adjustment.credit': {
+    description:
+      'Manual credit of a wallet, requested by one member of staff and approved by another.',
+  },
+  'adjustment.debit': {
+    description:
+      'Manual debit of a wallet, requested by one member of staff and approved by another.',
+  },
+} as const satisfies Record<string, { readonly description: string }>;
+
+export type LedgerEntryKind = keyof typeof LEDGER_ENTRY_KINDS;
+
+export const LEDGER_ENTRY_KIND_KEYS = Object.keys(LEDGER_ENTRY_KINDS) as [
+  LedgerEntryKind,
+  ...LedgerEntryKind[],
+];
+
 // --- Portefeuilles du titulaire -----------------------------------------------------------------
 
 /**

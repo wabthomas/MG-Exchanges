@@ -17,6 +17,7 @@ import {
   openLedgerAccount,
   postEntryInSql,
   registerAssetInSql,
+  registerEntryKindsInSql,
   type SqlPosting,
 } from '../support/ledger-sql.js';
 import {
@@ -118,6 +119,9 @@ describe('Opérations du personnel — règles portées par la base de données'
       second = await insertStaff(db, 'super_admin');
       support = await insertStaff(db, 'support');
       compliance = await insertStaff(db, 'compliance');
+      // Les types d'écriture d'essai (`test.deposit`…) : d'elle-même, la base ne connaît que
+      // ceux des opérations du produit.
+      await registerEntryKindsInSql(db);
       await registerAssetInSql(db, 'USD', 2);
       await registerAssetInSql(db, 'CDF', 2);
       await setLimitInSql(db, 'USD', 1, [1000, 2500, 10_000]);
@@ -1675,13 +1679,17 @@ describe('Opérations du personnel — règles portées par la base de données'
             { account: holder.account, side: 'CREDIT', amount: 10 },
           ]),
         ).toMatch(WALLET_FROZEN());
-        // Le gel ne tient pas au type de l'opération : toute écriture est refusée.
-        for (const kind of [
+        // Le gel ne tient pas au type de l'opération : toute écriture est refusée. Les types
+        // voisins de ceux d'un ajustement sont déclarés à la base, pour que seul le gel s'y
+        // oppose : inconnus d'elle, ils seraient refusés avant lui (MGX13).
+        const otherKinds = [
           'transfer.internal',
           'deposit.confirmed',
           'adjustment',
           'adjustment.creditx',
-        ]) {
+        ];
+        await asOwner((owner) => registerEntryKindsInSql(owner, otherKinds));
+        for (const kind of otherKinds) {
           expect({
             kind,
             outcome: await posting(
