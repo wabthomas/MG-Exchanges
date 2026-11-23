@@ -1609,6 +1609,23 @@ journal ne montre pas le code de sortie, et aucune étape n'exige rien de cet ar
 l'arrêt pendant une panne de Redis, ni le retour d'un Redis vide ne sont rejoués par la
 CI** : ils l'ont été ici, à la main, sur l'API compilée.
 
+**Lot 4 de la phase 3.** Une exécution avant celle qui accompagne ces lignes (commit
+`643a771`) : au vert, sans correction. Le job de tests, dont le journal a été lu : mise en
+forme, compilation, analyse statique, types, cohérence des migrations, puis les 2 214 tests,
+sur un PostgreSQL qui attend son disque, et aucune vulnérabilité connue. La nouvelle
+migration y est appliquée par le moteur natif de Prisma : le fichier de tests de ce lot, qui
+relit la liste et ses règles dans la base, y passe. Le job Docker, dont le journal a été lu à
+partir du démarrage de la pile, non pendant la construction des images : le parcours,
+inchangé, s'y déroule **sur une base qui ne connaît que les trois types d'écriture du
+produit** — le crédit sous double validation, le transfert et le débit y passent (159
+requêtes, dont 120 comptées par la limite, une pause de 46 secondes). **Ce parcours n'éprouve
+pas le refus lui-même** : aucune de ses requêtes ne tente une écriture d'un autre type ; ce
+refus est éprouvé par les tests. Et le journal ne montre pas la sortie du conteneur de
+migration : que la nouvelle migration ait été appliquée dans la pile se déduit de ce qu'il
+s'est terminé sans erreur avant le démarrage de l'API, non d'une ligne lue. À la fin du job,
+le conteneur de l'API s'est arrêté en 134 millisecondes, contre 85 et 84 aux deux exécutions
+précédentes : une durée relevée, dont rien n'est exigé.
+
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
 exécuté ici, hors Docker (`infrastructure/ci/publish-terms-cli.sh`) ; il reste à l'appeler
