@@ -798,6 +798,18 @@ rien n'est simulé : il échoue seul, et l'étape le nomme. Enfin, les quatre fi
 qui passent de vrais transferts et de vrais ajustements, par les services et par les routes
 de l'API, se terminent désormais par la vérification : **elle n'y relève rien**.
 
+**Constaté sur l'aperçu.** La version de ce lot y a été mise en service le 23 novembre à 19
+h 46 (UTC), sans migration, et y a passé le parcours complet — 249 contrôles, double
+validation, transfert et débit compris — sans une erreur. Sa base portait alors 19
+écritures : sept transferts, onze ajustements approuvés, et l'écriture d'essai du 15
+novembre. **Au premier passage horaire de cette version, à 20 h 09, la vérification a échoué
+sur cette écriture, et sur elle seule** : une anomalie, « type inconnu », avec son
+identifiant ; rien sur les sept transferts ni sur les onze ajustements. Lu dans les journaux
+de la tâche elle-même : l'erreur, l'étape comptée en échec, les autres étapes exécutées ; au
+journal d'audit, une ligne ; et le passage suivant, planifié pour 21 h 09. Une heure plus
+tôt, la version précédente déclarait ce registre vérifié — il comptait alors seize écritures,
+dont celle-là. **Les passages suivants n'ont pas été observés.**
+
 **À savoir :**
 
 - **sur l'aperçu, la vérification échoue désormais à chaque passage.** L'écriture d'essai
@@ -1779,6 +1791,21 @@ migration : que la nouvelle migration ait été appliquée dans la pile se dédu
 s'est terminé sans erreur avant le démarrage de l'API, non d'une ligne lue. À la fin du job,
 le conteneur de l'API s'est arrêté en 134 millisecondes, contre 85 et 84 aux deux exécutions
 précédentes : une durée relevée, dont rien n'est exigé.
+
+**Lot 5 de la phase 3.** Une exécution avant celle qui accompagne ces lignes (commit
+`a4e31db`) : au vert, sans correction. Le job de tests, dont le journal a été lu de
+l'installation des outils à sa dernière étape : mise en forme, compilation, analyse statique,
+types, cohérence des migrations, puis les 2 246 tests, sur un PostgreSQL qui attend son
+disque, et aucune vulnérabilité connue. Le fichier de tests de ce lot y passe — son contrôle
+arrêté par un vrai délai d'exécution compris —, comme les quatre fichiers qui se terminent
+désormais par la vérification. Le job Docker, dont le journal n'a été lu qu'à partir des
+dernières vérifications du parcours : le parcours, inchangé, s'y termine sans erreur, et sa
+dernière ligne dit la double validation et un transfert abouti éprouvés (161 requêtes,
+dont 122 comptées par la limite, une pause de 48 secondes) ; les contrôles qui le suivent
+passent, et le conteneur de l'API s'est arrêté en 97 millisecondes. **Ce job n'éprouve pas la
+vérification horaire** : la pile est détruite deux secondes après la fin du parcours, la
+vérification ne passe qu'une fois par heure, et le journal de l'API n'y est affiché qu'en cas
+d'échec. Dans la CI, ce lot n'est donc éprouvé que par ses tests.
 
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
