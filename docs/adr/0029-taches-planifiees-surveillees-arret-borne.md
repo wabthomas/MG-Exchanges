@@ -148,10 +148,11 @@ Sept choix ont été faits sans vous ; chacun se change sans reprendre le reste.
 - **Le délai d'arrêt de l'orchestrateur doit dépasser `SHUTDOWN_TIMEOUT_MS`.**
 - **Un code de sortie 1 à l'arrêt** signifie une fermeture coupée à l'échéance, non une
   panne du programme.
-- **Non couvert par un test automatique** : l'envoi d'un vrai signal à un vrai processus,
-  et les valeurs par défaut du lancement (les signaux du processus, sa fin réelle, sa sortie
-  d'erreur). **Non mesuré sous Docker** : l'intégration continue arrête la pile sans relever
-  sa durée ni son code de sortie.
+- **Non couvert par un test automatique** : l'envoi d'un vrai signal à un vrai processus, et
+  les valeurs par défaut du lancement (les signaux du processus, sa fin réelle, sa sortie
+  d'erreur). **Non vérifié sous Docker** : l'intégration continue arrête la pile sans rien en
+  exiger ; son journal n'en donne que la durée, pour l'arrêt sans incident, et pas le code de
+  sortie.
 - **Reste ouvert, antérieur à cette décision** : pendant le chargement du programme — la
   première seconde environ après le lancement —, l'API n'écoute pas encore ses signaux. En
   processus 1 d'un conteneur, un signal reçu à cet instant est ignoré : elle démarre, et

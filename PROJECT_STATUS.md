@@ -1,6 +1,6 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-18 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond) ; intégration continue active._
+_Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond) et deux corrections de robustesse (tâches planifiées surveillées, arrêt borné) ; intégration continue active._
 
 ## Synthèse
 
@@ -91,13 +91,20 @@ procédure qui vous revient. Il faut désormais **deux administrateurs** pour qu
 aboutisse. Huit choix ont été faits sans vous pour que le lot soit complet : ils sont à
 confirmer (décision 15).
 
-**Surcharge et pannes.** Deux retouches du socle ont suivi le lot 3. Une base saturée fait
+**Surcharge et pannes.** Quatre retouches du socle ont suivi le lot 3. Une base saturée fait
 répondre « réessayez dans cinq secondes », et non plus « erreur » ; ce que les tâches de fond
-signalent s'écrit désormais dans les journaux. En provoquant des pannes pour le vérifier,
-deux défauts plus anciens sont apparus, **non corrigés** : si Redis — le service qui tient
-les files de tâches — revient vide d'une coupure, **plus aucun message ne part** jusqu'au
-redémarrage de l'API, et rien ne le signale ; et l'API ne s'arrête pas d'elle-même tant que
-Redis est injoignable. Leur correction est proposée en tête du prochain lot (décision 16).
+signalent s'écrit dans les journaux. Les deux défauts que ces essais de panne avaient révélés
+sont corrigés à leur tour. Si Redis — le service qui tient les files de tâches — revient vide
+d'une coupure, **l'API réinscrit d'elle-même ses tâches, et les messages repartent en moins
+d'une minute**, sans redémarrage. Et **l'API s'arrête en huit secondes au plus**, que Redis
+réponde ou non, là où elle ne s'arrêtait pas. Un troisième défaut, trouvé en chemin, est
+corrigé aussi : une requête en cours à l'instant d'un arrêt recevait une erreur ; elle reçoit
+sa réponse.
+
+**Un point annoncé n'a pas été fait** : la sonde de disponibilité ne signale pas les tâches
+manquantes. Elle aurait retiré du trafic toutes les instances à la fois, pour un retard que
+l'API répare seule ; c'est une ligne du journal qui le dit. Ce choix, et six autres faits
+sans vous, sont à confirmer (décision 16).
 
 ## Phase 2 — identité et utilisateurs
 
@@ -537,27 +544,100 @@ ces lignes sont de niveau « erreur » ; l'API ne relance pas elle-même une req
 une ligne par demi-minute et par erreur ; les passages en échec du relais et de la purge sont
 écrits eux aussi, ce que le constat ne demandait pas.
 
-**Ce que ces essais ont trouvé d'autre** — deux comportements antérieurs à ces retouches,
-**non corrigés**, proposés en tête du prochain lot (« Problèmes identifiés ») : si Redis
-revient **vide**, plus aucun message ne part jusqu'au redémarrage de l'API, sans que rien le
-signale ; et l'API ne s'arrête pas d'elle-même tant que Redis est injoignable.
+**Ce que ces essais ont trouvé d'autre** — deux comportements antérieurs à ces retouches : si
+Redis revenait **vide**, plus aucun message ne partait jusqu'au redémarrage de l'API, sans
+que rien le signale ; et l'API ne s'arrêtait pas d'elle-même tant que Redis était
+injoignable. **Corrigés depuis** : section suivante.
 
 **Ce qui change pour un client** : toute route peut répondre `503` avec `Retry-After` ; il
 attend ce délai, puis renvoie sa requête. Rien d'autre. Détail :
 [`CHANGELOG.md`](CHANGELOG.md) ; pour l'exploitation,
 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), « Saturation et pannes ». Décision : ADR 0028.
 
+### Robustesse du socle — livrée : tâches planifiées surveillées, arrêt borné
+
+Les deux corrections proposées à la fin des retouches précédentes, et une troisième, trouvée
+en reprenant l'arrêt. Elles n'ajoutent aucune fonctionnalité et ne touchent pas à la base de
+données — aucune route nouvelle, aucune migration. **Rien ne change pour un client de
+l'API** ; trois choses changent pour l'hébergement, dites plus bas.
+
+**Un Redis revenu vide ne coupe plus les messages.** Les deux tâches planifiées de l'API — le
+relais, par lequel partent les codes de vérification, et la purge — n'existent que dans
+Redis, et l'API ne les y inscrivait qu'à son démarrage. Si Redis perdait ses données, elles
+disparaissaient, et plus rien ne partait jusqu'au redémarrage de l'API, sans aucun signal.
+Désormais, chaque instance vérifie toutes les trente secondes que ses tâches sont dans Redis
+et à l'heure, réinscrit celle qui ne l'est pas, et l'écrit dans les journaux, au niveau
+« erreur ». L'essai qui avait révélé le défaut, refait : Redis arrêté 12 secondes puis
+relancé sans ses données, les deux tâches sont réinscrites 14 à 18 secondes après son retour,
+et l'événement resté en attente part aussitôt — sans redémarrage.
+
+**L'API s'arrête en un temps borné.** À la demande d'arrêt, elle fermait d'abord ses tâches
+de fond, puis son serveur ; or, sans Redis, la première étape ne finissait jamais : elle
+continuait de répondre, et il fallait la tuer. Désormais elle **cesse aussitôt d'accepter des
+connexions**, mène à leur terme les requêtes et les tâches en cours, ferme le reste — et, si
+cela n'a pas abouti après huit secondes, s'arrête quand même, en l'écrivant.
+
+**Une requête en cours à l'instant de l'arrêt reçoit sa réponse.** C'est le troisième défaut,
+antérieur lui aussi : la base était fermée avant que le serveur ait fini de répondre. Une
+requête qui écrivait à cet instant recevait une erreur, et son écriture était annulée — rien
+n'était perdu, mais le client devait recommencer. Un test écrit pour vérifier que les
+requêtes en cours vont à leur terme l'a montré. La base se ferme désormais en dernier.
+
+**Éprouvé en provoquant les pannes**, sur l'API compilée, lancée seule contre un PostgreSQL
+et un Redis réels, avant puis après la correction :
+
+| Essai                                                            | Avant                                                   | Désormais                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
+| Redis revenu vide après 12 secondes                              | plus aucun message, jusqu'au redémarrage ; aucun signal | tâches réinscrites en 14 à 18 secondes ; deux lignes au journal |
+| Redis revenu avec ses données                                    | reprise en 16 secondes                                  | de même ; aucune réinscription                                  |
+| Arrêt en service normal                                          | un dixième de seconde                                   | de même                                                         |
+| Arrêt cinq secondes après la perte de Redis                      | tourne et répond encore vingt secondes plus tard        | ne répond plus dans la seconde ; arrêtée en huit                |
+| Arrêt huit secondes après le retour d'une coupure de 40 secondes | de même, jusqu'à plus de deux minutes                   | arrêtée en huit secondes                                        |
+| Arrêt pendant qu'une requête écrit en base                       | la requête reçoit une erreur                            | la requête reçoit sa réponse                                    |
+
+Les deux premiers arrêts ont été refaits dans la position qu'occupe l'API dans son image
+Docker — premier processus de son conteneur —, sans Docker, que cet environnement n'a pas :
+mêmes résultats.
+
+**Ce qui n'a pas été fait, et pourquoi :**
+
+- **La sonde de disponibilité ne signale pas les tâches manquantes**, contrairement à ce que
+  la proposition annonçait. Cette sonde sert à retirer une instance du trafic. Or toutes les
+  instances partagent les mêmes tâches : elles se seraient déclarées indisponibles toutes
+  ensemble, et tout le service aurait été coupé pour un retard que l'API répare seule en
+  moins d'une minute. Le signal est une ligne du journal. À confirmer (décision 16) ;
+  l'ajouter à la sonde reste possible, et court.
+- **Sous Docker, aucune étape ne vérifie l'arrêt.** La CI arrête la pile sans rien en exiger,
+  et ne peut pas être modifiée d'ici. Son journal en donne seulement la durée, pour l'arrêt
+  sans incident : le conteneur de l'API arrêté 85 millisecondes après la demande
+  (« Intégration continue »). Ni le code de sortie, ni l'arrêt pendant une panne n'y
+  figurent.
+- **Aucun test automatique n'envoie un vrai signal à un vrai processus.** Les tests lancent
+  l'API comme en service, mais lui fournissent ses signaux ; le signal réel a été éprouvé à
+  la main, comme ci-dessus.
+- **La première seconde du lancement en conteneur.** Pendant le chargement du programme,
+  l'API n'écoute pas encore : une demande d'arrêt reçue à cet instant est ignorée, et
+  l'hébergeur force l'arrêt à l'expiration de son délai. Antérieur à ces corrections, non
+  corrigé (« Problèmes identifiés »).
+
+**Ce qui change pour l'hébergement** : un arrêt propre se termine par le code 0 — il se
+terminait par 143 hors conteneur — et un code 1 signifie un arrêt coupé à son échéance ; dès
+la demande d'arrêt, l'API refuse les connexions nouvelles ; le délai que l'hébergeur accorde
+avant de forcer l'arrêt doit dépasser huit secondes — dix sont désormais écrites dans la pile
+Docker du dépôt. Détail : [`CHANGELOG.md`](CHANGELOG.md) ; pour l'exploitation,
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), « Au retour de Redis » et « Arrêt de l'API ».
+Décision : ADR 0029.
+
+**Sept choix techniques ont été faits sans vous** (ADR 0029, décision 16) : la sonde ne dit
+rien des tâches ; vérification toutes les trente secondes, retard toléré d'une minute ; la
+ligne de réinscription est de niveau « erreur » ; huit secondes pour s'arrêter ; code de
+sortie 0 pour un arrêt propre ; refus des connexions dès le signal ; à l'échéance, ce qui est
+en cours est coupé.
+
 ### Suite proposée de la phase 3
 
 À confirmer par vous — rien n'en est commencé :
 
-- **En tête du prochain lot — deux autres retouches du socle**, relevées en provoquant des
-  pannes pour vérifier les premières (« Problèmes identifiés ») : **réinscrire les tâches
-  planifiées quand Redis revient**, et faire dire à la sonde qu'elles manquent — un Redis
-  revenu vide laisse aujourd'hui l'API sans relais ni purge, sans que rien le signale — ;
-  **borner l'arrêt de l'API**, qui ne s'arrête pas d'elle-même tant que Redis est
-  injoignable. Courtes l'une et l'autre. La première compte le plus : c'est par le relais que
-  partent les codes de vérification.
 - **Lot 4 — fermer, dans la base, l'entrée des fonds.** Aujourd'hui, la base exige d'une
   écriture d'ajustement qu'elle ait son ajustement approuvé, mais elle accepte une écriture
   équilibrée d'un autre type (voir « Problèmes identifiés »). Le lot ferait de toute ligne
@@ -571,13 +651,16 @@ attend ce délai, puis renvoie sa requête. Rien d'autre. Détail :
 - **Selon vos réponses à la décision 15** : un montant maximal par ajustement, la double
   validation de la levée d'un gel, un rôle « finance » distinct de `super_admin`. Aucun n'est
   commencé ; chacun est court.
+- **Deux restes du socle, courts et sans urgence** (« Problèmes identifiés ») : pendant une
+  coupure de Redis, une requête met jusqu'à neuf secondes à échouer ; pendant la première
+  seconde de son lancement en conteneur, l'API ignore une demande d'arrêt.
 
 Dépôts et retraits réels relèvent des phases 4 (paiements) et 5 (blockchain) : ils supposent
 un prestataire, et l'autorisation correspondante (décision 11).
 
 ## Résultats de tests
 
-Exécution du 2026-11-18 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
+Exécution du 2026-11-20 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
 
 | Vérification                     | Résultat                         |
 | -------------------------------- | -------------------------------- |
@@ -587,18 +670,18 @@ Exécution du 2026-11-18 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **2 160 tests réussis, 0 échec** |
+| `pnpm test`                      | **2 196 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 96    | —                                               |
 | `@mgx/contracts`          | 70    | —                                               |
-| API — unitaires           | 617   | —                                               |
-| API — intégration         | 669   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 605   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — unitaires           | 642   | —                                               |
+| API — intégration         | 673   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 612   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
-Les 1 274 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
+Les 1 285 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
 d'une transaction est retardée de 25 ms. Cette répétition « disque lent » a été ajoutée après
 le lot 3 de la phase 3 : le PostgreSQL de l'environnement de développement valide sans
 attendre le disque, à la différence de celui de la CI et d'une installation réelle, et un
@@ -632,6 +715,17 @@ Ce que ces tests établissent, notamment :
   qu'ils signalent est écrit avec le nom de la file ; un passage du relais qui échoue à
   chaque échéance n'écrit qu'une ligne ; l'échec du traitement d'un événement en écrit une à
   chaque fois ;
+- **tâches planifiées** : Redis vidé sous l'application, elle réinscrit ses deux tâches et
+  relaie de nouveau, sans être redémarrée ; une tâche dont seule l'exécution en attente a
+  disparu est réinscrite aussi ; une vérification ne touche pas une tâche saine ; chaque
+  tâche est inscrite à sa cadence ; un test parcourt Redis et échoue si une tâche planifiée
+  n'est pas surveillée ;
+- **arrêt** : sur l'application réelle à l'écoute d'un port, une connexion nouvelle est
+  refusée dès la demande ; la requête en cours reçoit sa réponse, y compris au milieu d'une
+  écriture en base ; la tâche de fond en cours s'achève ; l'arrêt achevé, plus aucune
+  connexion à la base ne reste ; si la fermeture n'aboutit pas, le processus se termine à
+  l'échéance, par le code 1 ; le lancement réel installe cet arrêt, et un signal reçu avant
+  que l'API soit prête y met fin aussitôt ;
 - **sécurité HTTP** : aucun détail interne dans une erreur 500, secrets absents des journaux,
   documentation fermée en production, limitation de débit non contournable par `X-Forwarded-For` ;
 - **reverse proxy** : les erreurs que Nginx produit lui-même respectent le contrat d'erreur de
@@ -930,7 +1024,7 @@ Ce que ces tests établissent, notamment :
   et le personnel ajuste, gèle et lève encore ; la copie des données dit quel portefeuille
   est gelé, l'historique ce que la plateforme y a fait — jamais pourquoi.
 
-**Efficacité des tests vérifiée par mutation.** 1 979 défauts ont été introduits
+**Efficacité des tests vérifiée par mutation.** 2 082 défauts ont été introduits
 volontairement, un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -1226,8 +1320,42 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   échouer un fichier entier. Les dix-neuf défauts des lots précédents qui visent le même
   terrain — transactions, erreurs de la base, traduction des erreurs en réponses — ont été
   rejoués : tous détectés. Les autres défauts des lots précédents n'ont pas été rejoués ;
-  leurs motifs s'appliquent tous au code livré, ce qui porte à 1 955 les défauts rejouables
-  par script.
+  leurs motifs s'appliquaient tous au code livré, ce qui portait à 1 955 les défauts
+  rejouables par script.
+
+- Robustesse du socle : 103 défauts — ce qui est tenu pour une tâche perdue, sa réinscription
+  et la ligne qui la dit, la surveillance et son arrêt, l'ordre de l'arrêt, son échéance, ses
+  codes de sortie, ses signaux, le lancement, la configuration. **Il a fallu quatre passes,
+  et les premières ont trouvé plus que des manques** :
+  - **un des nouveaux tests échouait une fois sur quatre, sans raison valable.** Pour simuler
+    la perte de l'exécution en attente d'une tâche, il la retirait de deux listes de Redis ;
+    la bibliothèque des files la range dans trois. Lancé seul, il passait le plus souvent ;
+    répété par ce contrôle, il a échoué pour 35 défauts sur 98, puis 30 sur 104, y compris
+    ceux qui ne le concernaient pas. Corrigé, puis répété 40 fois sans échec ;
+  - cet échec fortuit **faisait passer pour détectés trois défauts qu'aucun test ne voyait**.
+    Deux étaient de vrais manques : la file et la tâche prises l'une pour l'autre, dans la
+    liste des tâches surveillées et dans le journal des erreurs — dans l'application, une
+    tâche porte le nom de sa file, et les tests avaient repris ces noms ; ils en emploient
+    maintenant deux différents. Le troisième était sans effet — une instruction retirée que
+    deux gardes rendaient superflue — et a été écarté ;
+  - un autre n'était pas détecté : la purge inscrite toutes les minutes au lieu de toutes les
+    heures. Un test lit désormais la cadence inscrite dans Redis, au démarrage et après une
+    réinscription ;
+  - deux arrêtaient net les tests unitaires au lieu d'en faire échouer un : l'arrêt
+    n'attendait plus la fermeture, dont l'échec n'avait alors personne pour le recevoir. Les
+    tests le reçoivent maintenant, et leurs vérifications parlent ;
+  - cinq faisaient échouer les cinq tests de l'arrêt à la fois, quand un seul était visé : le
+    test en échec laissait une connexion ouverte, qui retenait la fermeture de l'application
+    jusqu'au délai du test, et les suivants ne pouvaient plus démarrer. Les tests ferment
+    désormais ces connexions.
+
+  Six défauts ont été ajoutés avec l'arrêt demandé pendant l'initialisation. **À la quatrième
+  passe, sur le code livré, les 103 sont détectés**, chacun par une vérification qui le
+  concerne : aucun par un test resté bloqué, aucun en faisant échouer un fichier entier,
+  aucun par l'échec d'un test étranger au défaut — la liste des tests en échec a été relue
+  défaut par défaut. Les six défauts des retouches précédentes qui visent les deux
+  traitements modifiés ont été rejoués : tous détectés. Les motifs des 1 955 défauts
+  antérieurs s'appliquent tous au code livré : 2 058 défauts sont rejouables par script.
 
 ## Infrastructure : vérifications hors Docker
 
@@ -1325,6 +1453,18 @@ inchangé : 162 requêtes, 123 comptées par la limite, une pause. **Les pannes,
 pas rejouées par la CI** : les coupures de Redis et de la base ont été provoquées ici, à la
 main, sur l'API compilée.
 
+**Robustesse du socle.** Une exécution avant celle qui accompagne ces lignes (commit
+`8cdfca9`) : au vert, sans correction, journaux des deux jobs lus. Le job de tests exécute
+les 2 196 tests — dont ceux qui arrêtent une application réelle au milieu d'une requête, et
+ceux qui vident un vrai Redis sous elle —, sans dérive du schéma ni vulnérabilité connue. Le
+job Docker rejoue le parcours, inchangé : 162 requêtes, 123 comptées par la limite, une pause
+de 49 secondes. **Son journal donne, pour la première fois, une durée d'arrêt sous Docker** :
+à la fin du job, le conteneur de l'API s'arrête 85 millisecondes après la demande — 153 à
+l'exécution précédente, avant ces corrections : l'arrêt sans incident était déjà rapide. Ce
+journal ne montre pas le code de sortie, et aucune étape n'exige rien de cet arrêt. **Ni
+l'arrêt pendant une panne de Redis, ni le retour d'un Redis vide ne sont rejoués par la
+CI** : ils l'ont été ici, à la main, sur l'API compilée.
+
 **Une étape reste à ajouter, par vous.** L'outil qui publie une version en ligne de commande
 n'a pas encore été exécuté dans la pile Docker. Le script qui le fait est prêt et a été
 exécuté ici, hors Docker (`infrastructure/ci/publish-terms-cli.sh`) ; il reste à l'appeler
@@ -1346,11 +1486,62 @@ sauvegarde, ni montée en charge (phase 9) ; elle n'exécute que Node.js 24.
 
 ## Problèmes identifiés
 
+### Pendant les corrections de robustesse
+
+Le premier et le quatrième sont antérieurs à ces corrections ; le deuxième est un écart par
+rapport à ce qui vous avait été proposé ; le troisième, un changement à connaître ; le
+cinquième, un défaut de ces corrections elles-mêmes, corrigé avant leur publication.
+
+1. **Une requête en cours à l'instant d'un arrêt recevait une erreur.** L'API fermait sa
+   connexion à la base à la première étape de son arrêt, avant que son serveur ait fini de
+   répondre. Trouvé en écrivant le test qui vérifie que les requêtes en cours vont à leur
+   terme : une connexion retenue au milieu de son écriture, puis l'arrêt demandé — elle
+   recevait `500`. Rien n'était perdu, la transaction était annulée ; mais à chaque mise à
+   jour, les requêtes en train d'écrire échouaient. **Corrigé** : la base se ferme à la
+   dernière étape, après les requêtes et les tâches en cours.
+
+2. **La sonde de disponibilité ne dit rien des tâches planifiées — écart par rapport à la
+   proposition.** Il était proposé de « faire dire à la sonde qu'elles manquent ». En
+   l'écrivant, le défaut de l'idée est apparu : cette sonde décide si une instance reçoit du
+   trafic, et toutes les instances lisent les mêmes tâches dans le même Redis. Une tâche
+   manquante les aurait toutes fait déclarer indisponibles au même instant : le service
+   entier coupé, pour un retard que la réinscription répare en moins d'une minute, et alors
+   que les requêtes aboutissent. Le signal retenu est une ligne d'erreur à chaque
+   réinscription. **Non fait, à confirmer** (décision 16).
+
+3. **Un arrêt propre ne se terminait pas par le même code partout.** Hors conteneur, l'API se
+   terminait par le signal reçu (code 143) ; premier processus d'un conteneur, où ce signal
+   renvoyé à soi-même est ignoré, par le code 0 — par accident. Mesuré sur l'API compilée,
+   dans les deux positions. C'est désormais 0 partout, et 1 pour un arrêt coupé à son
+   échéance : une supervision qui attendait 143 est à régler.
+
+4. **Pendant la première seconde de son lancement, l'API en conteneur ignore une demande
+   d'arrêt.** Tant que le programme se charge, rien n'écoute les signaux ; or un premier
+   processus de conteneur qui n'écoute pas n'est pas arrêté par le système. Mesuré : un
+   signal envoyé 0,3 ou 0,7 seconde après le lancement est ignoré — l'API démarre, et répond
+   encore douze secondes plus tard. Aucune donnée n'est en jeu : l'hébergeur force l'arrêt à
+   l'expiration de son délai. **Non corrigé** : il faudrait charger l'application depuis un
+   point d'entrée réduit, qui écoute d'abord. Ce qui suit le chargement est corrigé, en
+   revanche : pendant l'initialisation, l'arrêt croisait le démarrage et se terminait le plus
+   souvent par une erreur — code 1, trois essais sur quatre, à 1,2 ou 1,3 seconde du
+   lancement — ; l'API s'arrête désormais aussitôt, par le code 0, en l'écrivant.
+
+5. **Un des nouveaux tests échouait une fois sur quatre — trouvé avant publication.** Le test
+   qui retire l'exécution en attente d'une tâche la cherchait dans deux des trois listes où
+   la bibliothèque des files la range : selon l'instant, il la trouvait ou non. Lancé seul
+   une demi-douzaine de fois, puis avec toute la suite, il était passé à chaque fois ; c'est
+   le contrôle par mutation, qui le répète une centaine de fois, qui l'a montré — et montré
+   qu'il masquait deux manques dans les tests (« mutation » ci-dessus). Il aurait fait
+   échouer la CI une fois sur quatre, sans défaut dans le code. Corrigé ; les deux fichiers
+   de tests de ces corrections ont ensuite été répétés 40 et 25 fois, sans échec. Rien de tel
+   n'a été publié.
+
 ### Pendant les retouches du socle
 
 Relevés en provoquant des pannes pour vérifier les deux corrections. Les trois premiers sont
-antérieurs à ces retouches et **restent ouverts** ; le quatrième est un défaut de la
-correction elle-même, corrigé avant sa publication.
+antérieurs à ces retouches : **les deux premiers sont corrigés depuis** (« Robustesse du
+socle »), le troisième reste ouvert ; le quatrième est un défaut de la correction elle-même,
+corrigé avant sa publication.
 
 1. **Si Redis revient vide, plus aucun message ne part — et rien ne le signale.** Les deux
    tâches planifiées de l'API, le relais de la boîte d'envoi et la purge, sont inscrites dans
@@ -1363,9 +1554,9 @@ correction elle-même, corrigé avant sa publication.
    (persistance activée, volume conservé), tout reprend de soi-même : un événement écrit de
    la même façon est parti en moins de vingt secondes. Le cas suppose donc une persistance
    absente, un volume perdu ou une bascule vers une instance neuve ; mais il est silencieux,
-   et c'est ce silence qu'il faut corriger : réinscrire les tâches quand Redis revient, et
-   faire dire à la sonde qu'elles manquent. **Non corrigé** ; d'ici là, `docs/DEPLOYMENT.md`
-   donne la vérification à faire après toute coupure de Redis.
+   et c'est ce silence qu'il fallait corriger. **Corrigé le 20 novembre** : l'API vérifie
+   ses tâches toutes les trente secondes, réinscrit celle qui manque, et l'écrit. La sonde,
+   elle, n'en dit rien (« Pendant les corrections de robustesse », point 2).
 
 2. **L'API ne s'arrête pas d'elle-même tant que Redis est injoignable.** À la demande
    d'arrêt, elle ferme d'abord les exécutants de ses files, puis son serveur HTTP. Or la
@@ -1377,8 +1568,9 @@ correction elle-même, corrigé avant sa publication.
    jeu : l'hébergeur force l'arrêt à l'expiration de son délai, une transaction interrompue
    est annulée, un événement non relayé reste en base. Mais une mise à jour déployée pendant
    une panne de Redis en est ralentie, et les requêtes en cours à cet instant sont coupées.
-   Le comportement est celui de la bibliothèque des files, reproduit sans l'API. **Non
-   corrigé** : il faut borner l'arrêt.
+   Le comportement est celui de la bibliothèque des files, reproduit sans l'API. **Corrigé
+   le 20 novembre** : l'API cesse d'accepter dès la demande, et s'arrête en huit secondes au
+   plus.
 
 3. **Pendant une coupure de Redis, une requête attend jusqu'à neuf secondes avant
    d'échouer.** La limitation de débit ne laisse rien passer sans compter : c'est voulu, et
@@ -2149,15 +2341,20 @@ Socle :
   durée d'une panne se lit à trente secondes près. Aucune alerte n'est branchée sur ces
   lignes (phase 9). Les pannes qui ont éprouvé ces journaux ont été provoquées à la main ;
   aucun test automatique ne les rejoue.
-- **Redis revenu vide : ni relais ni purge, et aucun signal.** Les tâches planifiées ne sont
-  inscrites qu'au démarrage de l'API ; si Redis perd ses données, elles disparaissent, la
-  sonde de disponibilité répond pourtant `200`, et aucun message ne part jusqu'au redémarrage
-  de l'API. La pile Docker du dépôt conserve les données de Redis. Correction proposée en
-  tête du prochain lot (voir « Problèmes identifiés »).
-- **Arrêt pendant une coupure de Redis** : l'API ne s'arrête pas d'elle-même tant que Redis
-  est injoignable, ni dans les secondes qui suivent son retour d'une longue coupure ;
-  l'hébergeur doit forcer l'arrêt. Aucune donnée n'est en jeu. Correction proposée avec la
-  précédente.
+- **Redis qui perd ses données** : l'API réinscrit ses tâches planifiées en moins d'une
+  minute, et l'écrit ; **elle ne rend pas ce que Redis portait d'autre**. Les événements déjà
+  remis à la file et pas encore traités sont perdus — leurs messages ne partent pas, et aucun
+  outil ne les rejoue — ; les compteurs de la limitation de débit repartent de zéro ; une
+  connexion en attente de sa seconde étape est à refaire. La persistance de Redis reste
+  exigée ; la pile Docker du dépôt l'active. La sonde de disponibilité ne dit rien des tâches
+  planifiées, et aucune alerte n'est branchée sur la ligne qui en parle (phase 9).
+- **Arrêt de l'API** : borné à huit secondes. À cette échéance — atteinte quand Redis est
+  injoignable —, les requêtes et les tâches encore en cours sont coupées ; aucune donnée
+  n'est en jeu. Pendant la première seconde de son lancement en conteneur, l'API ignore une
+  demande d'arrêt. Sous Docker, aucune étape ne vérifie l'arrêt — le journal de la CI n'en
+  donne que la durée, pour l'arrêt sans incident —, et aucun test automatique n'envoie un
+  vrai signal à un vrai processus : l'arrêt pendant une panne et le signal réel ont été
+  éprouvés à la main, hors Docker.
 - **Requêtes pendant une coupure de Redis** : elles échouent (`500`) — la limitation de débit
   ne laisse rien passer sans compter —, mais après une à neuf secondes d'attente.
 - **Boîte d'envoi** : remise « au moins une fois » (les consommateurs doivent être
@@ -2270,8 +2467,8 @@ réalisées.
     - une demande **échoit après 72 heures**, comme une demande de changement de rôle ;
     - les ajustements sont **fermés par défaut** ; les gels, non : on gèle à tout moment.
 
-16. **Socle : six choix techniques à confirmer, deux corrections à autoriser.** Les six choix
-    des retouches du socle (ADR 0028) ; sans objection de votre part, ils restent :
+16. **Socle : treize choix techniques à confirmer.** Sans objection de votre part, ils
+    restent. Les six des premières retouches (ADR 0028) :
     - une base saturée se reconnaît **au message de l'erreur** ; un test la provoque pour de
       vrai, et signalera tout changement ;
     - le délai annoncé au client est de **cinq secondes** ;
@@ -2280,6 +2477,15 @@ réalisées.
     - une même erreur de tâche de fond s'écrit **une fois par demi-minute** ;
     - les **passages en échec** du relais et de la purge sont écrits eux aussi.
 
-    Et les deux corrections proposées en tête du prochain lot : réinscrire les tâches
-    planifiées quand Redis revient, et borner l'arrêt de l'API (« Suite proposée de la
-    phase 3 »).
+    Et les sept des corrections de robustesse (ADR 0029) :
+    - la sonde de disponibilité **ne signale pas** les tâches planifiées manquantes — c'est
+      l'écart par rapport à la proposition ; une ligne du journal le dit ;
+    - les tâches sont vérifiées **toutes les trente secondes**, et réinscrites au-delà
+      d'**une minute** de retard ;
+    - chaque réinscription s'écrit au niveau **« erreur »** ;
+    - l'API se donne **huit secondes** pour s'arrêter ;
+    - un arrêt propre se termine par le **code 0**, un arrêt coupé à l'échéance par le
+      code 1 ;
+    - l'API **refuse les connexions dès la demande d'arrêt** : une instance se retire du
+      trafic avant d'être arrêtée ;
+    - à l'échéance, **ce qui est encore en cours est coupé**.

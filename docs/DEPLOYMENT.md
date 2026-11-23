@@ -871,8 +871,10 @@ dans cette position — sans Docker, par un espace de processus séparé (`unsha
 un dixième de seconde environ, code 0 ; Redis arrêté, fin à huit secondes, code 1 ; signal
 reçu 1,2 ou 1,3 seconde après le lancement, pendant l'initialisation : fin en un tiers de
 seconde, code 0 ; signal reçu 0,3 ou 0,7 seconde après le lancement : ignoré, comme avant ces
-corrections. **Sous Docker même, l'arrêt n'est pas mesuré** : l'intégration continue arrête
-la pile sans relever ni sa durée ni son code de sortie.
+corrections. **Sous Docker même, aucune étape ne vérifie l'arrêt** : l'intégration continue
+arrête la pile sans rien en exiger. Son journal en donne seulement la durée, pour l'arrêt
+sans incident — conteneur de l'API arrêté 85 ms après la demande, à l'exécution du 20
+novembre 2026 ; 153 ms à la précédente, avant ces corrections —, jamais le code de sortie.
 
 ## Intégration continue
 

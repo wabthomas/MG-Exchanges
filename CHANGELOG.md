@@ -68,8 +68,9 @@ change pour un client de l'API.
   était proposé : elle retirerait du trafic toutes les instances à la fois, pour un retard
   que l'API répare seule en moins d'une minute (ADR 0029, premier choix à confirmer).
 - **Aucun test automatique n'envoie un vrai signal à un vrai processus** : l'arrêt réel est
-  éprouvé à la main, sur l'API compilée — y compris en processus 1, sa position dans
-  l'image Docker. Sous Docker même, sa durée et son code de sortie ne sont pas mesurés.
+  éprouvé à la main, sur l'API compilée — y compris en processus 1, sa position dans l'image
+  Docker. Sous Docker même, aucune étape ne le vérifie : le journal de l'intégration continue
+  n'en donne que la durée, pour l'arrêt sans incident, et pas le code de sortie.
 - **Pendant la première seconde après son lancement** — le chargement du programme —, l'API
   n'écoute pas encore ses signaux : dans un conteneur, un arrêt demandé à cet instant est
   ignoré, et l'orchestrateur tue le processus à l'expiration de son délai. Antérieur à ces
