@@ -113,6 +113,16 @@ une opération : c'est lui qui le fait respecter, à chaque ligne, pour toutes.
   La base, elle, refuse de toute façon une ligne ajoutée à un compte clôturé, pour les tables
   qui portent le déclencheur `<table>_account_open` (voir [`DATABASE.md`](DATABASE.md)).
 
+**Le grand livre expose un registre de la même façon**, pour sa vérification périodique :
+`LedgerCheckRegistry`. Un module qui passe des écritures y inscrit un contrôle
+(`LedgerCheck`) qui relit **ses** opérations et leurs écritures — `transfers` et
+`adjustments` y ont chacun le leur. L'étape `verify-ledger` exécute les contrôles du grand
+livre, puis ceux-là : le lien de chaque écriture à son opération est relu sans que le grand
+livre connaisse aucune opération. **Un module qui apporte un type d'écriture apporte son
+contrôle** : un test donne chaque type du produit à une écriture qui n'est pas de ce type, et
+exige que la vérification la désigne. Le prix : les instructions de ces deux contrôles lisent
+les tables du grand livre, comme le font déjà les règles en base de ces modules.
+
 ### Chaîne de traitement d'une requête
 
 Cinq gardes globales s'exécutent dans cet ordre, avant toute validation du corps :
@@ -377,7 +387,11 @@ partie du code ne lit `process.env` en dehors de `config/` et des deux points d'
    `ledger_entry_kinds` — avec, dans cette même migration, la règle qui lie l'écriture à la
    ligne de l'opération** (un déclencheur de contrainte différé sur `ledger_entries`, et sa
    réciproque sur la table de l'opération : voir `transfers` et `ledger_adjustments`). Sans
-   type, la base refuse l'écriture ; sans règle, un test échoue.
+   type, la base refuse l'écriture ; sans règle, un test échoue. **Le module inscrit aussi à
+   `LedgerCheckRegistry` le contrôle qui relit ces deux règles** (`LedgerCheck` : une
+   instruction, les mêmes clauses que la migration — voir `TransferLedgerCheck`) : la
+   vérification horaire relève ainsi ce que la base aurait refusé. Sans contrôle, un autre
+   test échoue.
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.

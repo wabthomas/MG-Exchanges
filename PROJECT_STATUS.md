@@ -1,6 +1,6 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond), deux corrections de robustesse (tâches planifiées surveillées, arrêt borné) et le lot 4 (types d'écriture en liste fermée), **construit sans votre confirmation** ; intégration continue active._
+_Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond), deux corrections de robustesse (tâches planifiées surveillées, arrêt borné) et le lot 4 (types d'écriture en liste fermée), **construit sans votre confirmation**, puis le lot 5 (la vérification horaire relit le type des écritures et leur opération), fait sur votre « vas y » ; intégration continue active._
 
 ## Synthèse
 
@@ -8,7 +8,7 @@ _Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3
 | ----- | --------------------------------------- | -------------------------------- |
 | 1     | Analyse et fondations                   | **Livrée**                       |
 | 2     | Identité et utilisateurs                | **En cours** — lots 1 à 5 livrés |
-| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 à 4 livrés |
+| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 à 5 livrés |
 | 4     | Échange et paiements                    | Non commencée                    |
 | 5     | Blockchain                              | Non commencée                    |
 | 6     | P2P et séquestre                        | Non commencée                    |
@@ -118,6 +118,20 @@ portefeuille à un autre sans plafond. La base tient désormais la liste des op�
 autre écriture. Rien ne change pour un client de l'API. **Ce n'est pas une protection
 complète** : avec ces mêmes identifiants, on peut encore écrire une opération entière — un
 ajustement et son approbation, au nom de deux membres habilités de votre équipe.
+
+**Le registre relit désormais, toutes les heures, d'où vient chaque écriture.** C'est l'étape
+que proposait l'état précédent ; votre réponse a été « vas y », **lue comme votre accord pour
+cette étape — et comme le maintien du lot 4, sur lequel elle repose**. Ce lot 5 la livre. La
+vérification horaire ne recalculait que l'arithmétique du registre : une écriture bien formée
+que personne n'avait demandée — passée en suspendant les règles de la base, ce que peut le
+propriétaire des tables, non l'API — lui paraissait saine. Elle relève maintenant une
+écriture d'un type inconnu, un transfert ou un ajustement qui ne correspond plus à son
+écriture, et une écriture de transfert ou d'ajustement sans son opération. **Elle relève
+après coup : elle n'empêche rien, ne corrige rien, et ne prévient toujours personne** —
+l'anomalie est dans les journaux. Rien ne change pour un client de l'API. **À connaître : sur
+l'aperçu, cette vérification échoue désormais à chaque passage**, à cause de l'écriture
+d'essai du 15 novembre, qui ne s'efface pas. Cinq choix ont été faits sans vous, dont
+celui-là, et une question vous est posée sur l'aperçu (décision 18).
 
 ## Phase 2 — identité et utilisateurs
 
@@ -713,12 +727,11 @@ désignerait des écritures faites à côté de l'API.
   protéger comme ceux d'un compte qui peut créditer ;
 - **les écritures déjà passées ne sont pas réexaminées.** Une écriture ne se modifie ni ne
   s'efface : celle de l'essai du 15 novembre reste dans la base de l'aperçu, sous son type
-  inventé. Aucune base de production n'existe encore ;
-- **la vérification horaire du grand livre n'a pas été étendue.** Elle recalcule les soldes
-  et les équilibres ; elle ne relit ni le type des écritures, ni leur lien à une opération.
-  Une écriture passée en suspendant les règles — ce que le rôle de l'API ne peut pas faire,
-  mais que peut le propriétaire des tables — n'y serait pas signalée pour son type. L'étendre
-  est proposé plus bas ;
+  inventé. Aucune base de production n'existe encore. _Depuis le lot 5, la vérification
+  horaire la signale, à chaque passage ;_
+- **la vérification horaire du grand livre n'était pas étendue par ce lot.** Elle recalculait
+  les soldes et les équilibres ; elle ne relisait ni le type des écritures, ni leur lien à
+  une opération. _Elle les relit depuis le lot 5, ci-dessous ;_
 - **un type ajouté à la liste sans la règle qui le lie à son opération rouvrirait le
   chemin.** Chaque opération à venir — dépôt, retrait, échange — devra apporter les deux,
   dans la même migration. Un test le garde pour les types présents : il relit dans la base
@@ -736,17 +749,110 @@ désignerait des écritures faites à côté de l'API.
   continue qui l'exécute dans la pile Docker (« Intégration continue ») ;
 - **cinq choix ont été faits sans vous** (décision 17).
 
+### Lot 5 — livré : la vérification horaire relit le type des écritures et leur opération
+
+**Ce que vous avez approuvé, et ce qui a été décidé sans vous.** L'état précédent proposait
+d'« étendre la vérification horaire du grand livre au type des écritures et à leur lien avec
+une opération ». Votre réponse a été « vas y » : elle a été lue comme votre accord pour cette
+étape, et comme le maintien du lot 4, sur lequel elle repose. **Si ce n'était pas votre
+intention, dites-le** : ce lot ne contient aucune migration et se retire en annulant ses
+commits. **Les choix faits en le construisant ne vous ont pas été soumis** (décision 18) ; et
+vos réponses aux décisions 16 et 17 restent attendues.
+
+**Ce qu'il corrige.** La base refuse, à l'instant où elle s'écrit, une écriture d'un type
+inconnu ou sans son opération. Mais une règle à l'écriture ne dit rien de ce qui est déjà
+écrit, ni de ce qui s'écrit pendant qu'elle est suspendue — ce que le rôle de l'API ne peut
+pas faire, mais que peut le propriétaire des tables, et que produirait aussi une restauration
+partielle. La vérification horaire, elle, recalculait les soldes et les équilibres : **une
+écriture entière et équilibrée, que personne n'avait demandée, lui paraissait saine**. Un
+test de ce lot l'établit : un portefeuille crédité depuis le compte de conservation, sans
+demande ni approbation, la règle suspendue, n'est relevé par aucun des contrôles qui
+existaient.
+
+| Sujet                           | Réalisation                                                                                                                                                                                                                         |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Écriture d'un type inconnu      | relevée : une écriture dont le type n'est pas dans la liste que tient la base — c'est le cas de l'écriture d'essai du 15 novembre, sur l'aperçu                                                                                     |
+| Transfert et son écriture       | relevé, un transfert dont l'écriture n'est plus la sienne : son type, ses deux lignes exactement, leur sens, leur montant, leur monnaie, le portefeuille de l'émetteur et celui du destinataire — ou dont l'écriture n'existe pas   |
+| Écriture de transfert orpheline | relevée : des fonds passés d'un portefeuille à un autre sans qu'aucun transfert l'ait demandé — donc sans plafond ni niveau de vérification                                                                                         |
+| Ajustement et son écriture      | relevé de même, pour un ajustement approuvé : type, deux lignes, sens, montant, monnaie, portefeuille du titulaire, compte de conservation                                                                                          |
+| Écriture d'ajustement orpheline | relevée : un crédit ou un débit que ne désigne aucun ajustement **approuvé** — un ajustement refusé, retiré ou échu ne compte pas                                                                                                   |
+| Comment                         | chaque contrôle reprend, condition pour condition, la règle que la base applique à l'écriture : ce qu'elle refuse alors est ce qui est relevé après coup                                                                            |
+| Ce que vous en voyez            | comme pour les anomalies existantes : une erreur dans les journaux, une ligne au journal d'audit, l'étape en échec à chaque passage — avec le nom de l'anomalie et l'identifiant de l'opération ou de l'écriture, jamais un montant |
+| Contrôle qui ne s'exécute pas   | si l'un des trois contrôles ne peut pas s'exécuter — la base ne répond pas à temps —, les deux autres s'exécutent quand même ; l'étape échoue dans tous les cas, et nomme celui qui a manqué                                        |
+| Dans l'API                      | aucune route, aucun contrat, aucune migration ne change                                                                                                                                                                             |
+
+Détail : [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (« Vérification horaire » : les dix
+anomalies, ce que portent les journaux), [`docs/DATABASE.md`](docs/DATABASE.md),
+[`docs/SECURITY.md`](docs/SECURITY.md), [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Décision : ADR 0031.
+
+**Éprouvé.** Sur une base telle que les migrations la laissent, où un crédit approuvé, un
+transfert et un débit approuvé ont été écrits sous le rôle de l'API, toutes règles en
+vigueur. Chaque condition de chaque règle y est altérée à son tour, avec le rôle
+propriétaire, règles suspendues : chacune est relevée, sous son nom, et la vérification ne
+relève plus rien une fois l'altération défaite. Trois écritures entières et équilibrées sont
+passées sans leur opération — un crédit, un débit, un mouvement entre deux titulaires :
+chacune est relevée, **et par ce lot seulement**. Un contrôle est arrêté pour de vrai par le
+délai que la base accorde à une requête — une autre session tient la table des transferts,
+rien n'est simulé : il échoue seul, et l'étape le nomme. Enfin, les quatre fichiers de tests
+qui passent de vrais transferts et de vrais ajustements, par les services et par les routes
+de l'API, se terminent désormais par la vérification : **elle n'y relève rien**.
+
+**À savoir :**
+
+- **sur l'aperçu, la vérification échoue désormais à chaque passage.** L'écriture d'essai
+  du 15 novembre y est d'un type que la base ne connaît pas ; une écriture ne s'efface pas,
+  et rien ne permet d'acquitter une anomalie. C'est le comportement décidé, non un défaut —
+  et c'est la seule anomalie que les trois contrôles relèvent sur cette base. Chaque passage
+  y laisse une erreur dans les journaux et une ligne au journal d'audit. Le faire cesser
+  demande de recréer la base de l'aperçu, ce qui efface ses comptes : **rien n'a été fait
+  sans vous** (décision 18) ;
+- **avant de mettre en service cette version sur une base qui a déjà servi**, la requête de
+  [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) (« Grand livre ») recense les écritures d'un
+  type inconnu : chacune ferait échouer la vérification toutes les heures. Aucune base de
+  production n'existe encore ;
+- **elle relève, elle n'empêche pas, et elle ne prévient personne.** L'alerte reste à
+  brancher (phase 9) : d'ici là, une anomalie n'est vue que de qui lit les journaux ;
+- **ce qui dépendait du moment n'est pas relu** : les plafonds et le niveau de vérification à
+  l'heure d'un transfert, les permissions de ceux qui ont demandé et approuvé un ajustement,
+  un gel alors en vigueur. Ces règles dépendent d'un état qui a pu changer depuis, et que
+  rien ne conserve à la date de l'opération. Les demandes d'ajustement non approuvées ne sont
+  pas relues non plus ;
+- **ce n'est toujours pas une protection contre qui détient les identifiants de l'API.** Une
+  opération entière écrite avec eux — un ajustement, sa demande et son approbation — est une
+  opération en règle pour la base : la vérification ne la signale pas. Elle établit qu'une
+  opération existe et correspond à son écriture, non qu'elle était justifiée ;
+- **un type ajouté à la liste à la main, par le propriétaire des tables, n'est pas signalé.**
+  La vérification compare le type d'une écriture à la liste que tient la base, non à celle du
+  code : elle relève ce que la base aurait refusé. Un test le montre ;
+- **sa durée n'a jamais été mesurée sur un registre volumineux.** Elle fait maintenant trois
+  lectures complètes par passage au lieu d'une — le registre, tous les transferts, tous les
+  ajustements approuvés —, chacune limitée par le délai que la base accorde à une requête
+  (quinze secondes par défaut). Une lecture qui le dépasserait échouerait à chaque passage,
+  sans avoir rien vérifié : l'étape échouerait, le journal le dirait, et ce serait le signal
+  qu'il faut découper la relecture. Sans conséquence aujourd'hui ;
+- **les règles existent désormais en deux exemplaires** : dans la base, qui les applique à
+  l'écriture, et dans les contrôles, qui les relisent. Rien ne les compare mécaniquement ; ce
+  sont les tests qui altèrent une à une les données sur lesquelles porte chaque condition.
+  Une condition ajoutée plus tard à une règle devra l'être aussi à son contrôle ;
+- **chaque opération à venir devra apporter son contrôle**, avec son type d'écriture et sa
+  règle. Un test le garde : il donne chaque type du produit à une écriture qui n'en est pas,
+  et exige qu'elle soit relevée. Rien ne l'impose au démarrage de l'API ;
+- **la pile Docker n'a pas été répétée ici pour ce lot**, comme pour le lot 4 : il ne change
+  aucun fichier d'infrastructure, et c'est l'intégration continue qui l'exécute dans la pile
+  Docker. Son parcours ne peut pas déclencher la vérification horaire, ni en lire le
+  résultat : dans la CI, ce lot n'est éprouvé que par les tests ;
+- **cinq choix ont été faits sans vous** (décision 18).
+
 ### Suite proposée de la phase 3
 
 À confirmer par vous — rien n'en est commencé :
 
-- **Étendre la vérification horaire du grand livre** au type des écritures et à leur lien
-  avec une opération : elle signalerait une écriture d'un type inconnu, un transfert sans son
-  écriture, une écriture d'ajustement sans son ajustement — ce que la base refuse à
-  l'écriture, mais que rien ne relit ensuite. Court ; c'est la suite directe du lot 4.
-- **Ensuite — les fonds réservés**, avec la première opération qui en a l'usage (un retrait
-  en attente de validation, par exemple), puis le **rapprochement** avec les fonds réellement
-  détenus.
+- **Les fonds réservés**, avec la première opération qui en a l'usage (un retrait en attente
+  de validation, par exemple), puis le **rapprochement** avec les fonds réellement détenus.
+- **Mesurer la vérification horaire sur un registre volumineux**, puis la découper si
+  nécessaire : elle fait trois lectures complètes par passage, et sa durée n'a jamais été
+  mesurée. Court.
 - **Selon vos réponses à la décision 15** : un montant maximal par ajustement, la double
   validation de la levée d'un gel, un rôle « finance » distinct de `super_admin`. Aucun n'est
   commencé ; chacun est court.
@@ -769,19 +875,20 @@ Exécution du 2026-11-23 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **2 214 tests réussis, 0 échec** |
+| `pnpm test`                      | **2 246 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 96    | —                                               |
 | `@mgx/contracts`          | 71    | —                                               |
-| API — unitaires           | 642   | —                                               |
-| API — intégration         | 690   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
-| API — bout en bout (HTTP) | 612   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — unitaires           | 644   | —                                               |
+| API — intégration         | 718   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — bout en bout (HTTP) | 614   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
-Les 1 302 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
-d'une transaction est retardée de 25 ms. Cette répétition « disque lent » a été ajoutée après
+Les 1 332 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
+d'une transaction est retardée de 25 ms — 1 328 d'une traite, puis, en entier, les quatre
+fichiers auxquels un test a été ajouté ensuite. Cette répétition « disque lent » a été ajoutée après
 le lot 3 de la phase 3 : le PostgreSQL de l'environnement de développement valide sans
 attendre le disque, à la différence de celui de la CI et d'une installation réelle, et un
 test qui dépendait de cette durée a échoué une fois dans la CI. À 100 ms, bien au-delà de ce
@@ -1018,6 +1125,29 @@ Ce que ces tests établissent, notamment :
   compte à l'autre, écriture amputée d'une ligne — est relevée, avec ce qu'elle touche ; un
   registre sain n'en présente aucune ; une anomalie fait échouer l'étape, qui la consigne
   sans rien corriger ; au-delà de cinquante, la liste s'arrête et le dit ;
+- **vérification du grand livre — types et opérations** : sur une base telle que les
+  migrations la laissent, où un crédit approuvé, un transfert et un débit approuvé ont été
+  écrits sous le rôle de l'API, toutes règles en vigueur, à côté de demandes en attente,
+  refusée et retirée. Ce registre ne présente aucune anomalie. Puis chaque condition de
+  chaque règle est altérée à son tour, avec le rôle propriétaire, règles suspendues — le type
+  de l'écriture, sept types voisins d'un type connu, une troisième ligne, le sens, le montant
+  et la monnaie de chaque ligne, le type et le titulaire de chaque compte, l'émetteur, le
+  destinataire, le montant et la monnaie de l'opération, l'opération supprimée, l'écriture
+  introuvable : chacune est relevée, sous son nom, avec l'opération ou l'écriture qu'elle
+  désigne, et plus rien ne l'est une fois l'altération défaite. **Une écriture entière et
+  équilibrée passée sans son opération — un crédit, un débit, un mouvement entre deux
+  titulaires — n'est relevée que par ces contrôles** : ceux qui existaient n'en disent rien.
+  Un ajustement qui se dit refusé ne couvre pas son écriture, qu'il la désigne encore ou non.
+  Une écriture d'un type inconnu passée pendant que la règle était suspendue est relevée à
+  chaque passage ; elle ne l'est plus si le propriétaire déclare son type — c'est la limite
+  dite plus haut. Le maximum de cinquante anomalies vaut pour l'ensemble des contrôles ; un
+  contrôle qui échoue ne fait pas taire les autres, et l'étape, le journal et la trace
+  d'audit le nomment ; **un contrôle arrêté pour de vrai par le délai d'exécution des
+  requêtes** — une autre session tient la table — échoue seul, puis réussit la table libérée.
+  Un test donne chaque type d'écriture du produit à une écriture qui n'en est pas, et exige
+  qu'elle soit relevée : un type ajouté sans son contrôle le ferait échouer. Et les quatre
+  fichiers qui passent de vrais transferts et de vrais ajustements, par les services et par
+  les routes de l'API, se terminent par la vérification, qui n'y relève rien ;
 - **portefeuilles et back-office** : un titulaire ne lit que ses portefeuilles — aucune
   route, aucun paramètre ne désigne un autre compte ; un mouvement ne dit rien de l'autre
   partie, des frais perçus, ni des références internes ; un montant au-delà de 2⁵³, ou à
@@ -1137,7 +1267,7 @@ Ce que ces tests établissent, notamment :
   et le personnel ajuste, gèle et lève encore ; la copie des données dit quel portefeuille
   est gelé, l'historique ce que la plateforme y a fait — jamais pourquoi.
 
-**Efficacité des tests vérifiée par mutation.** 2 144 défauts ont été introduits
+**Efficacité des tests vérifiée par mutation.** 2 234 défauts ont été introduits
 volontairement, un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -1501,6 +1631,30 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   fichiers de tests ne sont modifiés que par la déclaration de leurs types d'essai ; les
   trois autres ont en outre un test adapté ou ajouté, dont tous les défauts ont été rejoués.
 
+- Phase 3, lot 5 : 90 défauts — 60 dans les trois lectures (10 pour le type des écritures, 23
+  pour les transferts, 27 pour les ajustements : chaque condition retirée ou faussée,
+  l'anomalie mal nommée ou désignant autre chose, le nombre d'anomalies non borné), 21 dans
+  l'étape (un contrôle qui n'est pas exécuté, le maximum mal partagé, un contrôle en échec
+  qui interrompt les autres, passe pour sain ou n'est pas nommé), 8 dans le registre des
+  contrôles et leur inscription, 1 qui ajoute un type d'écriture au code et à la base sans
+  son contrôle. **Aucun n'a échappé aux tests** : les 90 sont détectés dès la première passe
+  complète, chacun par une vérification qui le concerne — aucun par un test resté bloqué,
+  aucun parce qu'une lecture ne s'exécutait plus ; la liste des tests en échec a été relue
+  défaut par défaut. Quand un défaut fait échouer plusieurs tests — parce qu'il fausse tous
+  les scénarios, ou parce qu'un premier échec laisse derrière lui une écriture altérée —,
+  c'est le premier échec qui a été relu. Deux défauts envisagés ont été écartés, et ne sont
+  pas comptés : ils ne changent rien au comportement. Le fichier de tests est passé de 22
+  à 25 tests avant cette passe, **à la relecture et non parce qu'un défaut avait échappé**,
+  puis à 26 après elle, avec le test du délai d'exécution ; **les 90 ont ensuite été rejoués
+  d'une traite sur le code livré**.
+
+  Ce lot modifie le code de la vérification : deux motifs de défauts du lot 1 ne s'appliquaient
+  plus, et ont été réécrits. Les 20 défauts antérieurs qui visent la vérification ont été
+  rejoués : tous détectés, par les mêmes tests qu'avant. **Les autres défauts antérieurs n'ont
+  pas été rejoués** : ce lot ne touche ni leur code, ni leurs tests — sauf quatre fichiers de
+  tests, auxquels il ajoute un test final sans rien y changer. Leurs motifs s'appliquent tous
+  au code livré, ce qui porte à 2 210 les défauts rejouables par script.
+
 ## Infrastructure : vérifications hors Docker
 
 L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accès aux dépôts de
@@ -1646,6 +1800,34 @@ lot 3 de la phase 3 ; des exécutions antérieures, seuls le résultat et la dur
 sauvegarde, ni montée en charge (phase 9) ; elle n'exécute que Node.js 24.
 
 ## Problèmes identifiés
+
+### Pendant le lot 5 de la phase 3
+
+Le premier est le constat qui fonde le lot ; le deuxième, un défaut de ce lot lui-même,
+corrigé avant sa publication ; le troisième, une conséquence voulue, à connaître.
+
+1. **Une écriture en règle que personne n'avait demandée n'était relevée par rien.** La
+   vérification horaire recalculait le registre ; les règles qui lient une écriture à son
+   opération ne valaient qu'à l'écriture. Un test de ce lot passe un crédit de portefeuille
+   entier et équilibré, sans demande ni approbation, pendant que la règle est suspendue par
+   le propriétaire des tables : aucun des contrôles qui existaient ne le relève. De même pour
+   un débit, et pour un mouvement entre deux titulaires hors de tout transfert — donc hors
+   plafond. Aucune route de l'API ne le permettait, ni le rôle de l'API : il fallait le rôle
+   propriétaire. **Corrigé par ce lot** : chacun est relevé au passage suivant.
+2. **Une vérification incomplète pouvait passer pour complète — défaut de ce lot, corrigé
+   avant sa publication.** Dans sa première version, quand l'un des trois contrôles ne
+   pouvait pas s'exécuter et que les autres relevaient une anomalie, l'erreur de l'étape et
+   la ligne du journal d'audit donnaient la liste des anomalies sans dire qu'un contrôle
+   avait manqué — seule une autre ligne des journaux le disait : qui lisait la trace d'audit
+   pouvait croire que tout le reste avait été relu. Relevé en écrivant le test de ce cas.
+   L'erreur, la ligne de journal et la trace d'audit nomment maintenant le contrôle qui a
+   manqué.
+3. **Sur l'aperçu, la vérification horaire échoue désormais à chaque passage.** L'écriture
+   d'essai du 15 novembre — celle qui avait révélé le défaut corrigé par le lot 4 — y est
+   d'un type inconnu, et y restera : une écriture ne s'efface pas. Le lot 4 l'avait laissée
+   sans la signaler ; ce lot la signale, toutes les heures, sans moyen de l'acquitter. C'est
+   voulu : un moyen de faire taire une anomalie serait aussi un moyen de la cacher. **À vous
+   de dire s'il faut recréer la base de l'aperçu** (décision 18).
 
 ### Pendant le lot 4 de la phase 3
 
@@ -2413,8 +2595,15 @@ Grand livre :
   d'audit, à chaque passage ; rien n'est corrigé automatiquement, et la conduite à tenir se
   limite aujourd'hui à une consigne : passer en maintenance, ne rien corriger à la main,
   examiner.
-- **La vérification relit tout le registre** à chaque passage : sans conséquence
-  aujourd'hui, à borner quand le volume grandira. Elle rapporte cinquante anomalies au plus.
+- **La vérification relit tout le registre** à chaque passage — depuis le lot 5, en trois
+  lectures : le registre, tous les transferts, tous les ajustements approuvés. Sans
+  conséquence aujourd'hui ; **jamais mesurée sur un registre volumineux**, à borner quand le
+  volume grandira. Elle rapporte cinquante anomalies au plus, tous contrôles confondus.
+- **La vérification relit ce que la base refuse à l'écriture, non ce qui dépendait du
+  moment** (lot 5) : ni les plafonds et le niveau de vérification à l'heure d'un transfert,
+  ni les permissions à l'heure d'une approbation, ni un gel alors en vigueur. Et **rien ne
+  permet d'acquitter une anomalie** : une écriture ancienne d'un type inconnu est signalée à
+  chaque passage, tant que la base existe.
 - **Le propriétaire du schéma peut tout** : lever une règle, puis altérer une ligne. Ses
   identifiants ne servent qu'aux migrations et aux outils d'exploitation ; la vérification
   horaire est là pour relever une telle altération.
@@ -2484,11 +2673,13 @@ Opérations du personnel :
   ce que deux personnes déclarent ; sa justification est un texte, qui doit désigner la
   pièce. La procédure qui fonde un ajustement n'est pas écrite (décision 15).
 - **La liste des types d'écriture est fermée pour ce qui s'écrit désormais, non pour ce qui
-  l'a été** (lot 4) : les écritures antérieures à la migration ne sont pas réexaminées, et la
-  vérification horaire ne relit ni le type des écritures, ni leur lien à une opération. Un
-  type ajouté à la liste sans la règle qui le lie à son opération rouvrirait le chemin : un
-  test le garde pour les types présents, rien dans la base ne l'impose. Le propriétaire des
-  tables peut suspendre ces règles, comme toutes celles du grand livre.
+  l'a été** (lot 4) : la base ne réexamine pas les écritures antérieures à la migration.
+  Depuis le lot 5, la vérification horaire les signale, à chaque passage. Un type ajouté à la
+  liste sans la règle qui le lie à son opération rouvrirait le chemin : deux tests le gardent
+  pour les types présents, rien dans la base ne l'impose — et **ajouté à la main par le
+  propriétaire des tables, il ne serait signalé par rien**. Le propriétaire des tables peut
+  suspendre ces règles, comme toutes celles du grand livre : la vérification horaire relève
+  alors, après coup, ce qui a été écrit.
 - **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
   les lui désigne, et c'est elle qui vérifie la preuve de l'approbateur. Qui écrirait dans la
   base avec les identifiants de l'API pourrait fabriquer une demande et son approbation au
@@ -2687,15 +2878,38 @@ réalisées.
 
 17. **Lot 4 : fait sans votre confirmation — à valider, avec cinq choix.** D'abord le
     principe : ce lot était proposé, non confirmé ; votre « continue » a été pris pour un
-    accord. S'il ne devait pas être fait, ou pas ainsi, il se retire. Puis les cinq choix
-    faits pour qu'il soit complet (ADR 0030) ; sans objection de votre part, ils restent :
+    accord. S'il ne devait pas être fait, ou pas ainsi, il se retire. **Votre « vas y » du
+    23 novembre a été lu comme son maintien** — le lot 5 repose sur lui ; dites-le si ce
+    n'était pas le cas. Puis les cinq choix faits pour qu'il soit complet (ADR 0030) ; sans
+    objection de votre part, ils restent :
     - une **liste fermée des types d'écriture**, plutôt que la règle proposée sur le seul
       compte de conservation : elle ferme aussi le déplacement d'un portefeuille à un autre ;
     - les **écritures déjà passées ne sont pas réexaminées** : la règle vaut pour ce qui
       s'écrit après la migration ;
     - la **vérification horaire n'est pas étendue** au type des écritures — proposé pour la
-      suite ;
+      suite. **Ce choix est repris : c'est le lot 5**, fait sur votre « vas y » ;
     - un type inconnu passé par le code est **un défaut, non un refus prévu** : erreur
       serveur, rien d'écrit, un code d'erreur propre dans les journaux (`MGX13`) ;
     - les **tests gardent leurs écritures d'essai**, dont ils déclarent les types avec le
       rôle propriétaire, dans leur propre base.
+
+18. **Lot 5 : cinq choix à confirmer, et une question sur l'aperçu.** L'étape, vous l'avez
+    approuvée ; ces choix ont été faits en la construisant (ADR 0031). Sans objection de
+    votre part, ils restent :
+    - une anomalie ancienne est **signalée à chaque passage, sans moyen de l'acquitter** : un
+      moyen de la faire taire serait aussi un moyen de la cacher ;
+    - les **demandes d'ajustement non approuvées ne sont pas relues** : seul un ajustement
+      approuvé a une écriture ;
+    - **ce qui dépendait du moment n'est pas relu** : plafonds et niveau de vérification à
+      l'heure d'un transfert, permissions à l'heure d'une approbation, gel alors en vigueur ;
+    - un contrôle qui ne peut pas s'exécuter fait échouer l'étape **sans ligne au journal
+      d'audit**, quand les autres n'ont rien relevé : ce n'est pas une anomalie du registre ;
+    - le type d'une écriture se compare à **la liste que tient la base**, non à celle du
+      code : un type que le propriétaire des tables y ajouterait à la main ne serait pas
+      signalé.
+
+    **Et une question : faut-il recréer la base de l'aperçu ?** L'écriture d'essai du 15 novembre
+    y fait échouer la vérification toutes les heures, et y ajoute chaque fois une ligne au
+    journal d'audit. La recréer efface les comptes et les données de l'aperçu ; la garder laisse
+    l'alerte en place — ce qui montre aussi, sur un cas réel, ce que la vérification relève. Rien
+    n'a été fait sans vous.

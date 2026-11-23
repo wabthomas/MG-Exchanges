@@ -470,10 +470,15 @@ titulaires et l'ajustement du personnel —, décrites aux sections suivantes.
 > - **La liste des types d'écriture vaut pour ce qui s'écrit depuis qu'elle existe.** Une
 >   écriture d'un autre type passée auparavant reste dans le grand livre — elle ne s'efface
 >   pas — ; la base d'aperçu en porte une, la production n'a jamais servi. **La vérification
->   horaire ne relit ni le type des écritures, ni leur lien à une opération** : elle ne
->   signalerait pas une telle écriture. Et un type ajouté à la liste, par migration, sans la
->   règle qui le lie à son opération rouvrirait le chemin : un test le garde pour les types
->   présents, rien dans la base ne l'empêche.
+>   horaire la signale, à chaque passage** : elle relit le type de chaque écriture et son
+>   lien à son opération. Elle relève après coup ; elle n'empêche rien, et **elle ne relit
+>   pas ce qui dépendait du moment** — plafonds et niveau à l'heure d'un transfert,
+>   permissions à l'heure d'une approbation, gel alors en vigueur.
+> - **Un type ajouté à la liste sans la règle qui le lie à son opération rouvrirait le
+>   chemin** : rien dans la base ne l'empêche. Par migration, deux tests le gardent pour les
+>   types présents — l'un lit les règles, l'autre exige que la vérification horaire relève
+>   une écriture de ce type sans son opération. **À la main, par le propriétaire, rien ne le
+>   relève** : la vérification tient pour connu tout type de la liste.
 > - **Une anomalie n'alerte personne** : elle est journalisée et tracée, mais aucune alerte
 >   n'est encore branchée (phase 9), et les opérations ne sont pas suspendues
 >   automatiquement.
@@ -770,7 +775,6 @@ Décisions et limites : ADR 0026.
 | Ajustements : plafond par ajustement, rapprochement avec une pièce (relevé, reçu)          | 3+    |
 | Gel : double validation de la levée, gel de tout un compte, visibilité pour le support     | 3+    |
 | Grand livre : rapprochement avec les fonds réellement détenus, alerte sur une anomalie     | 3–9   |
-| Grand livre : vérification périodique du type des écritures et de leur opération           | 3+    |
 | Grand livre : double validation de l'enregistrement d'un actif                             | 3     |
 | Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé         | 9     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |

@@ -193,7 +193,8 @@ L'en-tête HTTP `Idempotency-Key`, qui protégera les routes des opérations, vi
 
 Une étape de la tâche horaire, `verify-ledger`, relit **tout** le grand livre et recalcule ce
 que la base garantit à chaque écriture : solde de chaque compte, enchaînement des lignes,
-actif de chaque ligne, écritures entières et équilibrées, équilibre de chaque actif.
+actif de chaque ligne, écritures entières et équilibrées, équilibre de chaque actif. Depuis
+l'ADR 0031, elle relit aussi le type de chaque écriture et son lien à son opération.
 
 Aucune écriture normale ne peut enfreindre ces règles : une anomalie signale une altération
 faite hors de l'application — déclencheurs désactivés par le propriétaire du schéma,
@@ -271,9 +272,10 @@ Le grand livre s'inscrit à `AccountDataRegistry` (ADR 0023) :
   compte d'un titulaire ; pour les comptes de la plateforme, que tout dépôt et tout retrait
   toucheront, ce sera un point de contention à mesurer sous charge avant l'ouverture, et à
   répartir si nécessaire.
-- **La vérification relit tout le grand livre** à chaque passage, en une instruction : sans
-  conséquence aujourd'hui, à borner — par tranches, ou sur une réplique — quand le volume le
-  demandera. Elle rapporte cinquante anomalies au plus par passage.
+- **La vérification relit tout le grand livre** à chaque passage, en une instruction — trois
+  depuis l'ADR 0031 : sans conséquence aujourd'hui, à borner — par tranches, ou sur une
+  réplique — quand le volume le demandera. Elle rapporte cinquante anomalies au plus par
+  passage.
 - **La vérification ne prouve pas que les fonds existent.** Elle établit que le grand livre
   est cohérent avec lui-même ; le rapprochement avec ce que détiennent réellement la banque,
   l'opérateur de monnaie mobile ou le dépositaire viendra avec les dépôts et les retraits.

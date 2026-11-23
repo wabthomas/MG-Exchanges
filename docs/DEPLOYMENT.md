@@ -294,8 +294,20 @@ sections suivantes. Ce que l'exploitation doit savoir :
   l'API**, en SQL — à examiner comme un incident, avant ou après la migration. Celle-ci
   s'applique dans les deux cas et n'y touche pas : une écriture ne se modifie ni ne s'efface.
   La migration appliquée, la même requête s'écrit
-  `WHERE kind NOT IN (SELECT key FROM ledger_entry_kinds)`. **Rien ne l'exécute
-  périodiquement** : la vérification horaire ne relit pas le type des écritures.
+  `WHERE kind NOT IN (SELECT key FROM ledger_entry_kinds)` — et **la vérification horaire
+  l'exécute à chaque passage** : chacune de ces écritures y est relevée
+  (`ENTRY_KIND_UNKNOWN`), et l'étape échoue **tant qu'elle demeure**. Or une écriture ne
+  s'efface pas, et rien ne permet d'acquitter une anomalie. Sur une base qui en porte une :
+
+  - une base jetable (développement, aperçu) se recrée ;
+  - ailleurs, c'est un incident à instruire. Si l'écriture est légitime, son type se déclare
+    **par une migration, avec la règle qui le lie à son opération** — comme tout type
+    nouveau. Si elle ne l'est pas, ses effets se corrigent par des ajustements ; l'écriture,
+    elle, demeure, et l'anomalie avec elle : **aucun moyen de l'acquitter n'existe à ce
+    jour** (ADR 0031, choix à confirmer) ;
+  - **ne pas ajouter le type à la main** dans `ledger_entry_kinds` : l'anomalie
+    disparaîtrait, mais ce type, lié à aucune opération, s'écrirait dès lors sous le rôle de
+    l'API sans rien qui le contrôle.
 
   **Dans les journaux.** Une écriture d'un type hors liste tentée en SQL laisse, dans le
   journal de PostgreSQL, l'erreur `MGX13`
@@ -308,20 +320,54 @@ sections suivantes. Ce que l'exploitation doit savoir :
   une requête.
 
 - **Vérification horaire.** L'étape `verify-ledger` de la tâche de maintenance relit **tout**
-  le grand livre. Une anomalie produit :
+  le grand livre, en trois contrôles : celui du grand livre (`ledger`), celui des transferts
+  (`transfers`), celui des ajustements (`adjustments`). Une anomalie produit :
   - une erreur dans les journaux, `Ledger verification failed`, avec la liste des anomalies
-    (nature et identifiant — jamais de montant ; cinquante au plus) ;
+    (nature et identifiant — jamais de montant ; cinquante au plus, tous contrôles
+    confondus) ;
   - une entrée `ledger.verification_failed` au journal d'audit ;
   - l'échec de l'étape (`Account maintenance step failed`), à chaque passage tant que
     l'anomalie demeure.
 
+  | Anomalie (`kind`)           | Contrôle      | Ce qui est relevé                                                                                                    | `subject`          |
+  | --------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------ |
+  | `ACCOUNT_BALANCE_MISMATCH`  | `ledger`      | le solde d'un compte, ou son nombre de lignes, n'est pas celui de sa dernière ligne                                  | le compte          |
+  | `POSTING_CHAIN_BROKEN`      | `ledger`      | sur un compte, une ligne ne prolonge pas la précédente (rang, ou solde)                                              | la ligne           |
+  | `POSTING_ASSET_MISMATCH`    | `ledger`      | une ligne n'est pas dans l'actif de son compte                                                                       | la ligne           |
+  | `ENTRY_UNSOUND`             | `ledger`      | une écriture n'a pas toutes ses lignes, porte sur un seul compte, ou ne s'équilibre pas                              | l'écriture         |
+  | `ASSET_UNBALANCED`          | `ledger`      | dans un actif, les soldes de sens débit et de sens crédit ne s'égalent pas                                           | le code de l'actif |
+  | `ENTRY_KIND_UNKNOWN`        | `ledger`      | une écriture est d'un type absent de `ledger_entry_kinds`                                                            | l'écriture         |
+  | `TRANSFER_ENTRY_MISMATCH`   | `transfers`   | l'écriture que désigne un transfert n'est pas la sienne : type, deux lignes, sens, montant, actif, comptes           | **le transfert**   |
+  | `ENTRY_WITHOUT_TRANSFER`    | `transfers`   | une écriture `transfer.internal` n'est désignée par aucun transfert                                                  | l'écriture         |
+  | `ADJUSTMENT_ENTRY_MISMATCH` | `adjustments` | l'écriture que désigne un ajustement approuvé n'est pas la sienne : type, deux lignes, sens, montant, actif, comptes | **l'ajustement**   |
+  | `ENTRY_WITHOUT_ADJUSTMENT`  | `adjustments` | une écriture `adjustment.credit` ou `adjustment.debit` n'est désignée par aucun ajustement **approuvé**              | l'écriture         |
+
+  Une même altération en produit souvent plusieurs : une ligne modifiée déséquilibre son
+  écriture, rompt la suite de son compte et ne correspond plus à son opération.
+
+  **Un contrôle qui ne peut pas s'exécuter** — son instruction dépasse le délai d'exécution
+  des requêtes, par exemple — laisse l'erreur `Ledger verification check failed`, avec son
+  nom (`check`) ; les autres s'exécutent tout de même, et **l'étape échoue dans tous les
+  cas** :
+  - s'ils relèvent une anomalie, `Ledger verification failed` et l'entrée d'audit nomment en
+    outre le contrôle qui a manqué (`failedChecks`) : la liste ne dit rien de ce qu'il relit ;
+  - sinon, l'étape échoue avec
+    `The ledger could not be verified entirely: 1 check(s) failed (…)`, sans entrée d'audit —
+    le grand livre n'a pas été vérifié en entier, ce qui n'est pas une anomalie.
+
   **Cette alerte doit être traitée sans délai** — et aucune alerte automatique n'est encore
   branchée (phase 9) : c'est à la supervision des journaux de la relever. Une anomalie ne
   peut venir que d'une écriture faite hors des règles de la base (déclencheurs désactivés
-  avec le rôle propriétaire, restauration partielle) ou d'un défaut de ces règles. **Ne rien
-  corriger à la main** : passer en mode maintenance, conserver les journaux, examiner. Rien
-  n'est corrigé automatiquement. Elle recalcule les soldes et les équilibres ; **elle ne
-  relit ni le type des écritures, ni leur lien à un transfert ou à un ajustement**.
+  avec le rôle propriétaire, restauration partielle), d'une écriture antérieure à l'une de
+  ces règles, ou d'un défaut de ces règles. **Ne rien corriger à la main** : passer en mode
+  maintenance, conserver les journaux, examiner. Rien n'est corrigé automatiquement, et
+  **rien ne permet d'acquitter une anomalie** : l'étape échoue tant qu'elle demeure.
+
+  **Ce qu'elle ne relit pas.** Ce qui dépendait du moment de l'opération : les plafonds et le
+  niveau de vérification à l'heure d'un transfert, les permissions de ceux qui ont demandé et
+  approuvé un ajustement, un gel alors en vigueur. Elle ne dit rien non plus d'un type que le
+  propriétaire aurait ajouté à `ledger_entry_kinds` hors d'une migration : les écritures de
+  ce type sont, pour elle, d'un type connu.
 
 - **Rôle propriétaire.** Il peut désactiver les règles du grand livre ; le rôle de l'API ne
   le peut pas. Ses identifiants (`DATABASE_MIGRATION_URL`) ne servent qu'aux migrations et
@@ -340,9 +386,12 @@ sections suivantes. Ce que l'exploitation doit savoir :
   les transferts lui sont ouverts ; sinon, le personnel les fait sortir par un **débit sous
   double validation** (voir « Opérations du personnel »). Un compte dont un portefeuille est
   gelé ne se clôt pas davantage : le gel est d'abord levé.
-- **Volume.** La vérification relit toutes les lignes à chaque passage, en une instruction
-  bornée par le délai d'exécution des requêtes. Sans conséquence aujourd'hui ; à mesurer,
-  puis à borner, avant que le grand livre ne compte des millions de lignes.
+- **Volume.** La vérification relit toutes les lignes, tous les transferts et tous les
+  ajustements à chaque passage : trois instructions, chacune bornée par le délai d'exécution
+  des requêtes (`DATABASE_STATEMENT_TIMEOUT_MS`, 15 s par défaut). Un contrôle qui le dépasse
+  échoue comme dit plus haut — **à chaque passage**, sans avoir rien vérifié. Sans
+  conséquence aujourd'hui ; **jamais mesuré sur un grand livre volumineux** : à mesurer, puis
+  à borner, avant qu'il ne compte des millions de lignes.
 
 ## Transferts entre titulaires
 
@@ -405,9 +454,9 @@ Décisions : ADR 0026. Ce que l'exploitation doit savoir :
   gravité ; **répété, il signale que l'application et la base ne s'accordent plus sur une
   règle** — un défaut, à signaler.
 - **Sauvegarde et restauration.** Les transferts se restaurent avec le grand livre, **en
-  entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La
-  vérification horaire du grand livre ne relit pas cette correspondance ; la base, elle, la
-  vérifie à chaque écriture.
+  entier** : un transfert sans son écriture, ou l'inverse, serait incohérent. La base
+  vérifie cette correspondance à chaque écriture ; la vérification horaire la relit
+  (`TRANSFER_ENTRY_MISMATCH`, `ENTRY_WITHOUT_TRANSFER` — voir « Vérification horaire »).
 - **Parcours de vérification.** `infrastructure/ci/smoke-identity.sh` ouvre les transferts
   et les ajustements manuels, fixe des plafonds sur son actif de test, **crédite un
   portefeuille**, et laisse le tout ouvert : il est fait pour une pile de test, jamais pour
@@ -509,8 +558,10 @@ Décisions : ADR 0027. Ce que l'exploitation doit savoir :
 - **Sauvegarde et restauration.** Les ajustements et les gels se restaurent avec le grand
   livre, **en entier** : un ajustement approuvé sans son écriture, ou l'inverse, serait
   incohérent ; un gel absent d'une restauration partielle laisserait passer ce qu'il
-  arrêtait. La vérification horaire du grand livre ne relit pas ces correspondances ; la
-  base, elle, les vérifie à chaque écriture.
+  arrêtait. La base vérifie la correspondance entre un ajustement approuvé et son écriture
+  à chaque écriture ; la vérification horaire la relit (`ADJUSTMENT_ENTRY_MISMATCH`,
+  `ENTRY_WITHOUT_ADJUSTMENT` — voir « Vérification horaire »). **Elle ne peut rien dire d'un
+  gel qui manque.**
 
 ## Vérification d'identité : stockage des pièces
 

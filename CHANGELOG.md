@@ -3,6 +3,72 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 5 : la vérification horaire relit le type des écritures et leur opération
+
+**La vérification horaire relève désormais une écriture bien formée que personne n'a
+demandée** (ADR 0031, cinq choix à confirmer). Ni migration, ni route, ni contrat de l'API,
+ni dépendance nouvelle : rien ne change pour un client de l'API.
+
+### Ajouté
+
+- **Cinq anomalies de plus**, relevées à chaque passage de l'étape `verify-ledger` :
+  - `ENTRY_KIND_UNKNOWN` — une écriture d'un type absent de `ledger_entry_kinds` ;
+  - `TRANSFER_ENTRY_MISMATCH` — l'écriture que désigne un transfert n'est pas la sienne
+    (type, deux lignes, sens, montant, actif, comptes), ou n'existe pas ;
+  - `ENTRY_WITHOUT_TRANSFER` — une écriture `transfer.internal` sans son transfert ;
+  - `ADJUSTMENT_ENTRY_MISMATCH` — de même pour un ajustement approuvé ;
+  - `ENTRY_WITHOUT_ADJUSTMENT` — une écriture `adjustment.credit` ou `adjustment.debit`
+    sans ajustement **approuvé** qui la désigne.
+
+  Chacune reprend, clause pour clause, une règle que la base applique à l'écriture
+  (ADR 0026, 0027, 0030) : ce qu'elle refuse alors est ce qui est relevé après coup. Avant
+  ce lot, un crédit entier et équilibré passé sans demande ni approbation — règle
+  neutralisée par le propriétaire du schéma — n'était désigné par aucune anomalie.
+
+- `LedgerCheckRegistry` : les modules `transfers` et `adjustments` y inscrivent le contrôle
+  de leurs propres écritures ; le grand livre les exécute sans connaître aucune opération.
+- **Un contrôle qui ne peut pas s'exécuter ne fait pas taire les autres** : il est
+  journalisé (`Ledger verification check failed`), les autres s'exécutent, et l'étape échoue
+  dans tous les cas — en nommant le contrôle qui a manqué.
+- Tests, sur une base telle que les migrations la laissent : chaque clause de chaque règle
+  altérée une à une ; des écritures entières passées sans leur opération ; le maximum
+  d'anomalies partagé entre les contrôles ; un contrôle arrêté par le délai d'exécution des
+  requêtes, sans rien simuler ; et un test qui exige, pour chaque type d'écriture du
+  produit, qu'une écriture de ce type sans son opération soit relevée.
+- ADR 0031. `DEPLOYMENT.md` : la table des dix anomalies, ce que les journaux portent, que
+  faire d'une écriture d'un type inconnu. `DATABASE.md`, `ARCHITECTURE.md`, `SECURITY.md`.
+
+### Modifié — à prendre en compte pour l'exploitation
+
+- **Sur une base qui porte une écriture d'un type inconnu, l'étape `verify-ledger` échoue
+  désormais à chaque passage**, tant que l'écriture demeure — et une écriture ne s'efface
+  pas. Avant de mettre en service cette version sur une base qui a déjà servi, exécuter la
+  requête de `DEPLOYMENT.md` (« Grand livre ») : chaque écriture qu'elle rend sera signalée
+  toutes les heures. **C'est le cas de la base d'aperçu** (écriture `preview.seed`).
+- **Journaux** : `Ledger verification failed` et l'entrée d'audit
+  `ledger.verification_failed` portent `failedChecks` quand un contrôle a manqué ; ligne
+  nouvelle `Ledger verification check failed` (`check`, `err`) ; erreur nouvelle
+  `The ledger could not be verified entirely: … check(s) failed (…)`, sans entrée d'audit.
+- Le maximum de cinquante anomalies par passage vaut pour l'ensemble des contrôles.
+- **Trois instructions par passage au lieu d'une**, chacune bornée par
+  `DATABASE_STATEMENT_TIMEOUT_MS`.
+- **Une opération nouvelle apporte son contrôle** (`LedgerCheck`), avec son type d'écriture
+  et sa règle (`ARCHITECTURE.md`) ; un test échoue sinon.
+
+### Non fait
+
+- **Rien ne permet d'acquitter une anomalie** : une écriture ancienne d'un type inconnu est
+  signalée indéfiniment, jusqu'à ce que la base soit recréée ou son type déclaré par une
+  migration.
+- **Ce qui dépendait du moment n'est pas relu** : plafonds et niveau de vérification à
+  l'heure d'un transfert, permissions à l'heure d'une approbation, gel alors en vigueur.
+  Les ajustements non approuvés ne sont pas relus.
+- **Un type ajouté à la liste à la main, par le propriétaire, n'est pas signalé** : la
+  vérification tient pour connu tout type de la liste.
+- **La durée des trois instructions n'a jamais été mesurée sur un grand livre volumineux.**
+- **Une anomalie n'alerte toujours personne** (phase 9), et rien n'est corrigé
+  automatiquement.
+
 ## [Non publié] — Phase 3, lot 4 : types d'écriture en liste fermée
 
 **La base n'accepte plus d'écriture hors d'une opération qu'elle connaît** (ADR 0030, cinq
@@ -54,7 +120,7 @@ rien ne change pour un client de l'API.
 - **Les écritures déjà passées ne sont pas réexaminées** : une écriture d'un autre type
   antérieure à la migration reste dans le grand livre — la base d'aperçu en porte une.
 - **La vérification horaire ne relit pas le type des écritures**, ni leur lien à une
-  opération.
+  opération. _Fait au lot 5 (ci-dessus)._
 - **Un type ajouté sans sa règle rouvrirait le chemin** : un test le garde pour les types
   présents ; rien dans la base ne l'empêche.
 - **Qui détient les identifiants du rôle de l'API peut encore écrire une opération

@@ -689,15 +689,30 @@ d'abord les titulaires, puis les comptes, toujours dans le même ordre (voir
 code qui écrit — au pire, PostgreSQL annule l'une de deux transactions qui s'interbloquent.
 
 **Vérification périodique.** L'étape `verify-ledger` de la tâche horaire relit tout le grand
-livre et recalcule ce que ces règles garantissent : solde de chaque compte, enchaînement des
-lignes, actif des lignes, écritures entières et équilibrées, équilibre de chaque actif. Une
-anomalie ne peut venir que d'une altération faite hors de ces règles (déclencheurs
-désactivés par le propriétaire du schéma, restauration partielle) : elle est journalisée,
-inscrite au journal d'audit (`ledger.verification_failed`), et **rien n'est corrigé
-automatiquement**. Elle **ne relit pas le type des écritures**, ni le lien d'une écriture à
-son transfert ou à son ajustement : une écriture d'un type inconnu passée avant la migration
-`ledger_entry_kinds`, ou écrite hors de ces règles, n'y est pas signalée (voir
-`DEPLOYMENT.md` pour la requête qui les recense).
+livre, en trois contrôles — une instruction chacun, qui lit donc un seul état de la base :
+
+- celui du **grand livre** recalcule ce que ces règles garantissent — solde de chaque
+  compte, enchaînement des lignes, actif des lignes, écritures entières et équilibrées,
+  équilibre de chaque actif — et vérifie que **chaque écriture est d'un type que la base
+  connaît** : la liste `ledger_entry_kinds`, celle que la base consulte à l'écriture, non
+  celle du code ;
+- celui des **transferts** relit les deux règles qui lient un transfert à son écriture
+  (`transfers_entry_matches`, `ledger_entries_transfer_recorded`) ;
+- celui des **ajustements** relit les deux règles qui lient un ajustement approuvé à la
+  sienne (`ledger_adjustments_entry_matches`, `ledger_entries_adjustment_recorded`).
+
+Chaque contrôle reprend, clause pour clause, la règle que la base applique à l'écriture : ce
+qu'elle refuse alors est ce qu'il relève après coup. Une anomalie ne peut venir que d'une
+altération faite hors de ces règles (déclencheurs désactivés par le propriétaire du schéma,
+restauration partielle) ou d'une écriture passée avant que la règle n'existe : elle est
+journalisée, inscrite au journal d'audit (`ledger.verification_failed`), et **rien n'est
+corrigé automatiquement**. Les anomalies, et ce que chacune désigne, sont listées dans
+`DEPLOYMENT.md`.
+
+**Ce qu'elle ne relit pas** : ce qui dépendait du moment de l'opération — plafonds et niveau
+de vérification à l'heure d'un transfert, permissions de ceux qui ont demandé et approuvé un
+ajustement, gel alors en vigueur. Et un type ajouté à `ledger_entry_kinds` par le
+propriétaire, hors d'une migration, est pour elle un type connu.
 
 ## Tables (phase 3 — transferts)
 
@@ -785,6 +800,9 @@ n'est créé par migration.
   `mgx_check_transfer_recorded()`), posé sur `ledger_entries` — réciproquement, **une
   écriture de type `transfer.internal` n'existe pas sans son transfert** (`MGX10`) : aucun
   mouvement de ce type n'échappe aux plafonds.
+
+Ces deux règles valent à l'écriture ; la vérification périodique du grand livre les relit
+sur tous les transferts (voir « Vérification périodique »).
 
 **Niveau de vérification.** `mgx_verified_level(uuid)` rend le plus haut niveau dont tous les
 précédents sont acceptés : un niveau 2 accepté ne compte pas tant que le niveau 1 ne l'est
@@ -875,6 +893,9 @@ arrête.
   écriture de type `adjustment.credit` ou `adjustment.debit` n'existe pas sans son ajustement
   approuvé** (`MGX11`) : aucun crédit, aucun débit de ce type n'échappe à la double
   validation.
+
+Ces deux règles valent à l'écriture ; la vérification périodique du grand livre les relit
+sur tous les ajustements approuvés (voir « Vérification périodique »).
 
 **Ce que la base ne vérifie pas** : que les deux intervenants sont bien ceux qui agissent —
 c'est l'API qui les lui désigne (limite décrite dans l'ADR 0018) — ; et le solde, qui est

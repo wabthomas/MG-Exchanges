@@ -119,7 +119,8 @@ sans reprendre le reste.
 2. **Les écritures déjà passées ne sont pas réexaminées**, et celle de la base d'aperçu y
    reste.
 3. **La vérification horaire n'est pas étendue** : elle ne signale ni une écriture d'un type
-   inconnu, ni une écriture sans son opération.
+   inconnu, ni une écriture sans son opération. _Ce choix a été repris depuis : voir
+   l'ADR 0031._
 4. **Un type inconnu est un défaut du code** (`500`), avec un code d'erreur à lui (`MGX13`).
 5. **Les tests gardent leurs écritures d'essai**, déclarées par le rôle propriétaire : ils
    n'alimentent pas les portefeuilles par de vrais ajustements.
@@ -175,7 +176,8 @@ sans reprendre le reste.
   définition des déclencheurs ; une règle écrite autrement qu'eux lui échappera et devra y
   être ajoutée.
 - **Les écritures antérieures restent** — une dans la base d'aperçu, aucune en production,
-  qui n'a jamais servi. La vérification horaire ne les signale pas.
+  qui n'a jamais servi. La vérification horaire ne les signale pas — elle les signale depuis
+  l'ADR 0031, à chaque passage.
 - **Déploiement sans ordre imposé.** La version précédente de l'API ne passe que les trois
   types connus : elle fonctionne après la migration, et revenir à elle ne demande pas de
   défaire la migration.
