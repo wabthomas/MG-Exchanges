@@ -47,8 +47,9 @@ membre du personnel habilité, que la base vérifie. La base vérifie la qualit�
 elle ne peut pas vérifier que ce sont bien eux qui agissent (limite décrite dans l'ADR 0018).
 
 Sur le **grand livre**, le rôle applicatif ne peut qu'**ajouter** : il lit le plan de comptes
-(`ledger_account_types`) sans pouvoir l'écrire ; il ajoute des actifs, des écritures et des
-lignes sans pouvoir les modifier ni les supprimer. Il garde `UPDATE` sur `ledger_accounts`
+(`ledger_account_types`) et la liste des types d'écriture (`ledger_entry_kinds`) sans pouvoir
+les écrire ; il ajoute des actifs, des écritures et des lignes sans pouvoir les modifier ni
+les supprimer. Il garde `UPDATE` sur `ledger_accounts`
 — c'est ce privilège qui permet de verrouiller un compte (`FOR UPDATE`), et c'est sous son
 nom que la base met le solde à jour lorsqu'il passe une ligne —, mais un solde écrit
 directement n'est jamais validé (voir « Tables (phase 3 — grand livre) »). Un actif **sans
@@ -455,7 +456,9 @@ que le reflet de sa dernière ligne.
 **Deux opérations passent des écritures à ce jour** : le transfert entre titulaires (voir
 « Tables (phase 3 — transferts) ») et l'ajustement du personnel, sous double validation —
 la seule par laquelle des fonds entrent dans un portefeuille ou en sortent (voir « Tables
-(phase 3 — opérations du personnel) »).
+(phase 3 — opérations du personnel) »). **La base n'en admet aucune autre** : elle tient la
+liste des types d'écriture (`ledger_entry_kinds`), refuse toute écriture d'un autre type, et
+ne valide une écriture d'un type connu qu'avec l'opération dont elle est la trace.
 
 ### `assets` — actifs tenus par la plateforme
 
@@ -501,6 +504,58 @@ la seule par laquelle des fonds entrent dans un portefeuille ou en sortent (voir
   retire** (déclencheurs `ledger_account_types_immutable_row`, `…_immutable_truncate`,
   `MGX01`) : son sens est recopié sur chaque compte à son ouverture.
 
+### `ledger_entry_kinds` — types d'écriture
+
+| `key`               | Opération                                               | Ce qui lie l'écriture à son opération                                              |
+| ------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `transfer.internal` | transfert entre deux titulaires                         | `ledger_entries_transfer_recorded`, `transfers_entry_matches` (`MGX10`)            |
+| `adjustment.credit` | crédit manuel d'un portefeuille, sous double validation | `ledger_entries_adjustment_recorded`, `ledger_adjustments_entry_matches` (`MGX11`) |
+| `adjustment.debit`  | débit manuel d'un portefeuille, sous double validation  | les mêmes                                                                          |
+
+Deux colonnes : `key` (`varchar(64)`, clé primaire) et `description` (`varchar(255)`).
+
+- **Une écriture d'un type absent de cette liste est refusée** (`MGX13`) — déclencheur
+  `ledger_entries_kind_known` (fonction `mgx_check_ledger_entry_kind()`), dès l'insertion de
+  l'en-tête, quels que soient le rôle qui écrit, l'auteur que l'écriture désigne et ses
+  lignes. Jusqu'à la migration `ledger_entry_kinds`, la base ne vérifiait d'une écriture que
+  l'arithmétique : une écriture équilibrée d'un type quelconque créditait un portefeuille
+  depuis `platform_custody`, ou déplaçait des fonds d'un portefeuille à un autre hors des
+  règles des transferts.
+- Le contrôle a lieu **à l'insertion de l'en-tête, et là seulement**. Il suffit parce qu'une
+  écriture ne change pas de type après coup — elle ne se modifie pas, pas même dans la
+  transaction qui l'écrit (`ledger_entries_immutable_row`, et aucun privilège `UPDATE` pour
+  le rôle applicatif) — et qu'un type ne se retire pas de la liste. Un test l'éprouve sous le
+  rôle applicatif, le propriétaire et le superutilisateur.
+- **Chaque type de la liste est lié à son opération** par les règles de la migration qui a
+  créé cette opération (colonne de droite) : une écriture `transfer.internal` n'existe pas
+  sans son transfert, une écriture `adjustment.credit` ou `adjustment.debit` pas sans son
+  ajustement approuvé. Avec la règle précédente, il s'ensuit que **plus aucune écriture ne
+  déplace de fonds hors d'un transfert ou d'un ajustement approuvé**. Un test relit, dans la
+  base, les contrôles de fin de transaction posés sur `ledger_entries` : chaque type de la
+  liste y est nommé, et aucun autre.
+- La liste **ne change que par migration**, et s'étendra avec les opérations ; elle est
+  recopiée de `@mgx/contracts` (`LEDGER_ENTRY_KINDS`), et un test vérifie que les deux sont
+  identiques. **Ajouter un type, c'est écrire dans la même migration la règle qui le lie à
+  son opération** : un type connu de la base sans règle rouvrirait le chemin que cette liste
+  ferme.
+- contrainte `ledger_entry_kinds_key_format_check` (le format du type d'une écriture) ;
+  déclencheur `ledger_entry_kinds_enforce` (fonction `mgx_enforce_ledger_entry_kind()`,
+  `MGX13`) : **seul le rôle propriétaire de la table y ajoute un type** — le rôle applicatif
+  n'a que `SELECT`, et ne pourrait rien y ajouter même si `INSERT` lui était rendu par
+  erreur ; un type **ne se modifie ni ne se retire** (déclencheurs
+  `ledger_entry_kinds_immutable_row`, `…_immutable_truncate`, `MGX01`), même par le
+  propriétaire : des écritures le portent, et des règles le nomment.
+- Il n'y a **pas de clé étrangère** de `ledger_entries.kind` vers cette table : la règle est
+  un déclencheur, comme toutes celles du grand livre, et **vaut pour ce qui s'écrit après la
+  migration**. Une écriture passée auparavant sous un autre type n'est pas réexaminée — elle
+  ne se modifie ni ne s'efface, pas même par le propriétaire — et reste dans le grand livre ;
+  `DEPLOYMENT.md` donne la requête qui les recense.
+- Les tests qui éprouvent le grand livre lui-même passent des écritures de types d'essai
+  (`test.deposit`, `test.transfer`…) : chacun les déclare d'abord, avec le rôle propriétaire,
+  dans sa propre base jetable (`registerEntryKindsInSql`). La base modèle des tests n'en
+  connaît aucun, et `ledger-entry-kinds-schema.spec.ts` s'exécute sur une base telle que les
+  migrations la laissent.
+
 ### `ledger_accounts` — comptes
 
 | Colonne         | Type            | Notes                                                                                 |
@@ -544,22 +599,26 @@ la seule par laquelle des fonds entrent dans un portefeuille ou en sortent (voir
 
 ### `ledger_entries` — écritures (en-tête)
 
-| Colonne                  | Type               | Notes                                                                    |
-| ------------------------ | ------------------ | ------------------------------------------------------------------------ |
-| `id`                     | `uuid`             | UUID v7                                                                  |
-| `idempotency_key`        | `varchar(160)`     | **unique** : la même opération ne s'écrit qu'une fois                    |
-| `kind`                   | `varchar(64)`      | type de l'écriture — l'opération qui l'a produite (`transfer.internal`…) |
-| `posting_count`          | `smallint`         | nombre de lignes que l'écriture **déclare** : 2 à 100                    |
-| `actor_type`, `actor_id` | `audit_actor_type` | qui l'a passée : `USER`, `SERVICE` (avec identifiant) ou `SYSTEM` (sans) |
-| `request_id`             | `varchar(128)`     | requête à l'origine de l'écriture, si elle en a une                      |
-| `metadata`               | `jsonb`            | références de l'opération : un objet, 4 096 octets au plus               |
-| `posted_at`              | `timestamptz`      | **heure de la base** (déclencheur `ledger_entries_stamp`)                |
+| Colonne                  | Type               | Notes                                                                                    |
+| ------------------------ | ------------------ | ---------------------------------------------------------------------------------------- |
+| `id`                     | `uuid`             | UUID v7                                                                                  |
+| `idempotency_key`        | `varchar(160)`     | **unique** : la même opération ne s'écrit qu'une fois                                    |
+| `kind`                   | `varchar(64)`      | type de l'écriture — l'opération qui l'a produite : l'un de ceux de `ledger_entry_kinds` |
+| `posting_count`          | `smallint`         | nombre de lignes que l'écriture **déclare** : 2 à 100                                    |
+| `actor_type`, `actor_id` | `audit_actor_type` | qui l'a passée : `USER`, `SERVICE` (avec identifiant) ou `SYSTEM` (sans)                 |
+| `request_id`             | `varchar(128)`     | requête à l'origine de l'écriture, si elle en a une                                      |
+| `metadata`               | `jsonb`            | références de l'opération : un objet, 4 096 octets au plus                               |
+| `posted_at`              | `timestamptz`      | **heure de la base** (déclencheur `ledger_entries_stamp`)                                |
 
 - contraintes : `ledger_entries_idempotency_key_format_check` (8 à 160 caractères : lettres,
   chiffres, `.`, `_`, `:`, `-`, le premier étant une lettre ou un chiffre),
   `ledger_entries_kind_format_check` (minuscules, segments séparés par des points),
   `ledger_entries_posting_count_check`, `ledger_entries_actor_id_check`,
   `ledger_entries_metadata_check` ;
+- déclencheur `ledger_entries_kind_known` (fonction `mgx_check_ledger_entry_kind()`), erreur
+  `MGX13` : **le type de l'écriture est l'un de ceux que la base connaît** (voir
+  `ledger_entry_kinds`). Il s'exécute après l'insertion de l'en-tête : un type mal formé est
+  d'abord refusé par `ledger_entries_kind_format_check` ;
 - **une écriture ne se modifie ni ne s'efface** (déclencheurs `ledger_entries_immutable_row`,
   `ledger_entries_immutable_truncate`, `MGX01`), même pour le propriétaire du schéma ; le
   rôle applicatif n'a que `SELECT` et `INSERT`.
@@ -619,6 +678,9 @@ la seule par laquelle des fonds entrent dans un portefeuille ou en sortent (voir
 **Chemin de recherche figé.** Les huit fonctions de la migration `ledger` ne résolvent les
 noms que dans le schéma de l'application (`search_path = <schéma>, pg_temp`) : une table
 temporaire homonyme placée par une session ne peut ni habiliter un intrus, ni créer de fonds.
+Il en va de même des deux fonctions de la migration `ledger_entry_kinds` : une table
+temporaire nommée `ledger_entry_kinds` ne fait connaître aucun type, et n'en fait pas de son
+propriétaire celui de la liste.
 
 **Écritures simultanées.** Deux écritures qui touchent un même compte passent l'une après
 l'autre, la seconde à partir du solde laissé par la première. L'application verrouille
@@ -632,7 +694,10 @@ lignes, actif des lignes, écritures entières et équilibrées, équilibre de c
 anomalie ne peut venir que d'une altération faite hors de ces règles (déclencheurs
 désactivés par le propriétaire du schéma, restauration partielle) : elle est journalisée,
 inscrite au journal d'audit (`ledger.verification_failed`), et **rien n'est corrigé
-automatiquement**.
+automatiquement**. Elle **ne relit pas le type des écritures**, ni le lien d'une écriture à
+son transfert ou à son ajustement : une écriture d'un type inconnu passée avant la migration
+`ledger_entry_kinds`, ou écrite hors de ces règles, n'y est pas signalée (voir
+`DEPLOYMENT.md` pour la requête qui les recense).
 
 ## Tables (phase 3 — transferts)
 
@@ -812,13 +877,23 @@ arrête.
   validation.
 
 **Ce que la base ne vérifie pas** : que les deux intervenants sont bien ceux qui agissent —
-c'est l'API qui les lui désigne (limite décrite dans l'ADR 0018) — ; le solde, qui est
-l'affaire du grand livre (`MGX09`) ; et **les écritures d'un autre type**. La base ne tient
-pas la liste des types d'écriture admis : une écriture équilibrée de type quelconque, qui
-créditerait un portefeuille depuis `platform_custody`, est validée sous le rôle de l'API si
-elle n'est pas de type `adjustment.*` — c'est ainsi que les tests alimentent les
-portefeuilles (`test.deposit`). Les règles ci-dessus protègent d'un défaut du code des
-ajustements, non d'un accès en écriture à la base (ADR 0027, « Conséquences »).
+c'est l'API qui les lui désigne (limite décrite dans l'ADR 0018) — ; et le solde, qui est
+l'affaire du grand livre (`MGX09`).
+
+**Les écritures d'un autre type ne sont plus un chemin.** Jusqu'à la migration
+`ledger_entry_kinds`, une écriture équilibrée de type quelconque, qui créditait un
+portefeuille depuis `platform_custody`, était validée sous le rôle de l'API si elle n'était
+pas de type `adjustment.*`. La base refuse désormais toute écriture dont le type n'est pas
+dans sa liste (`MGX13`, voir `ledger_entry_kinds`) : sous le rôle de l'API, des fonds
+n'entrent dans un portefeuille et n'en sortent que par un ajustement approuvé, et ne passent
+d'un portefeuille à un autre que par un transfert (ADR 0030).
+
+**Ce qui reste hors de portée de la base** : qui détient les identifiants du rôle de l'API
+peut encore écrire l'opération **entière** — un ajustement, sa demande et son approbation, en
+y désignant deux membres du personnel habilités ; un transfert entre deux comptes actifs,
+dans les plafonds. La base vérifie les règles de l'opération, non que ses auteurs y ont
+consenti ; chacune de ces opérations laisse sa ligne, ineffaçable, qui les nomme. Et le rôle
+propriétaire, celui des migrations, peut ajouter un type à la liste ou lever une règle.
 
 ### `wallet_freezes` — gels de portefeuilles
 
@@ -962,12 +1037,16 @@ Ils sont ajoutés à la fin du fichier SQL de la migration et **recensés ici** 
 | fonction `mgx_forbid_closure_with_frozen_wallet()` ; déclencheur `users_closure_leaves_no_freeze`                                                                                                                                                                                                                                                                  | `users`                                                  |
 | chemin de recherche figé (`search_path = <schéma>, pg_temp`) des sept fonctions de la migration `staff_ledger_operations`                                                                                                                                                                                                                                          | —                                                        |
 | données initiales : permissions `adjustments.read`, `adjustments.request`, `adjustments.approve`, `wallet_freezes.read`, `wallet_freezes.create` et `wallet_freezes.lift`, attribuées à `super_admin` ; les deux premières des gels, à `compliance` aussi                                                                                                          | `permissions`, `role_permissions`                        |
+| `ledger_entry_kinds_key_format_check` ; fonction `mgx_enforce_ledger_entry_kind()` ; déclencheurs `ledger_entry_kinds_enforce`, `ledger_entry_kinds_immutable_row`, `ledger_entry_kinds_immutable_truncate` ; retrait de tout privilège d'écriture aux rôles non propriétaires ; données initiales : les trois types d'écriture                                    | `ledger_entry_kinds`                                     |
+| fonction `mgx_check_ledger_entry_kind()` ; déclencheur `ledger_entries_kind_known`                                                                                                                                                                                                                                                                                 | `ledger_entries`                                         |
+| chemin de recherche figé (`search_path = <schéma>, pg_temp`) des deux fonctions de la migration `ledger_entry_kinds`                                                                                                                                                                                                                                               | —                                                        |
 
 Leur présence et leur effet sont vérifiés par les tests d'intégration
 `database-constraints.spec.ts`, `identity-schema.spec.ts`, `account-security-schema.spec.ts`,
 `back-office-schema.spec.ts`, `kyc-schema.spec.ts`, `account-closure-schema.spec.ts`,
-`terms-schema.spec.ts`, `ledger-schema.spec.ts`, `transfers-schema.spec.ts` et
-`staff-operations-schema.spec.ts` (dans `apps/api/test/integration/`).
+`terms-schema.spec.ts`, `ledger-schema.spec.ts`, `transfers-schema.spec.ts`,
+`staff-operations-schema.spec.ts` et `ledger-entry-kinds-schema.spec.ts` (dans
+`apps/api/test/integration/`).
 
 **Erreurs levées par les déclencheurs** — codes SQLSTATE propres à l'application :
 
@@ -985,6 +1064,7 @@ Leur présence et leur effet sont vérifiés par les tests d'intégration
 | `MGX10` | règle des transferts enfreinte : plafonds fixés sans y être habilité, partie qui n'est pas active, niveau de vérification erroné ou non ouvert dans l'actif, plafond dépassé, transfert sans son écriture — ou écriture de transfert sans son transfert                 |
 | `MGX11` | règle des opérations du personnel enfreinte : demande ou décision par qui n'y est pas habilité, demande déjà décidée, échue ou aux termes modifiés, ajustement sans son écriture — ou écriture d'ajustement sans son ajustement approuvé —, gel posé ou levé sans droit |
 | `MGX12` | portefeuille gelé : la ligne passerait sur un compte dont le titulaire a son portefeuille gelé dans cet actif                                                                                                                                                           |
+| `MGX13` | type d'écriture inconnu de la base : écriture d'un type absent de `ledger_entry_kinds` — ou type ajouté à cette liste par un autre rôle que le propriétaire de la table                                                                                                 |
 
 `MGX05` est traduit **partout**, par le filtre d'erreurs de l'API : il signale le plus souvent
 une requête partie avant la clôture du compte et arrivée après, et aucun service n'a à s'en
@@ -999,9 +1079,12 @@ l'API et l'écriture : `403 FORBIDDEN`.
 Pour le grand livre, le dépôt traduit le refus d'une instruction en erreur du domaine, que
 l'opération appelante traduira à son tour pour son utilisateur : `MGX09` devient
 `InsufficientFundsError` et `MGX05` `HolderClosedError` — deux cas **attendus** —, `MGX08`
-`LedgerIntegrityError`, un défaut. `MGX12` devient `WalletFrozenError`, un cas attendu lui aussi. `LedgerService` fait les
-mêmes contrôles avant d'écrire :
-la base n'est atteinte que si deux requêtes se croisent, ou si le code est fautif. Un refus
+`LedgerIntegrityError`, un défaut. `MGX12` devient `WalletFrozenError`, un cas attendu lui
+aussi. `MGX13` devient `LedgerIntegrityError` comme `MGX08` : le type d'une écriture est une
+constante de l'opération qui la passe, jamais une donnée reçue — un type inconnu de la base
+est un défaut du code, et le service ne le contrôle pas d'avance. Pour le reste,
+`LedgerService` fait les mêmes contrôles avant d'écrire : la base n'est atteinte que si deux
+requêtes se croisent, ou si le code est fautif. Un refus
 prononcé **à la validation de la transaction** (écriture incomplète, solde non justifié)
 n'est pas traduit : c'est toujours un défaut du code, et l'erreur de la base remonte telle
 quelle. À l'enregistrement d'un actif, `MGX08` signifie que l'auteur a perdu son droit entre

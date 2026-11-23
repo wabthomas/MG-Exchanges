@@ -3,7 +3,7 @@
 Ce document distingue strictement ce qui est **en place et testé** de ce qui est **prévu**.
 Rien de ce qui figure dans la seconde catégorie ne doit être considéré comme acquis.
 
-## En place (phases 1 et 2 ; phase 3, lots 1 à 3)
+## En place (phases 1 et 2 ; phase 3, lots 1 à 4)
 
 ### Configuration et secrets
 
@@ -387,9 +387,9 @@ Décisions et limites : ADR 0024.
 
 ### Grand livre
 
-Décisions et limites : ADR 0025. Ce qui suit vaut pour **toute** opération, présente ou à
-venir : aucune ne peut l'enfreindre. La seule qui existe à ce jour, le transfert entre
-titulaires, est décrite à la section suivante.
+Décisions et limites : ADR 0025 et 0030. Ce qui suit vaut pour **toute** opération, présente
+ou à venir : aucune ne peut l'enfreindre. Deux existent à ce jour — le transfert entre
+titulaires et l'ajustement du personnel —, décrites aux sections suivantes.
 
 - **Un solde ne s'écrit pas, il résulte d'écritures.** Chaque écriture a au moins deux
   lignes, et pour chaque actif ses débits égalent ses crédits : la base le vérifie à la
@@ -407,6 +407,14 @@ titulaires, est décrite à la section suivante.
   droit de mettre à jour un compte — sans quoi il ne pourrait pas le verrouiller —, mais un
   solde qu'il écrirait lui-même est refusé, et un compte dont le solde ne correspond plus à
   sa dernière ligne n'accepte plus aucune ligne.
+- **Aucune écriture hors d'une opération que la base connaît.** La base tient la liste des
+  types d'écriture — trois à ce jour — et refuse toute écriture d'un autre type, quels que
+  soient le rôle qui écrit et l'auteur qu'elle désigne ; chaque type de la liste n'est validé
+  qu'avec son opération : son transfert, ou son ajustement approuvé. Une écriture équilibrée
+  d'un type inventé, écrite en SQL sous le rôle de l'API, ne crédite donc plus un
+  portefeuille depuis le compte de conservation, ni ne déplace de fonds d'un portefeuille à
+  un autre hors des règles des transferts (ADR 0030). La liste ne s'étend que par migration :
+  le rôle de l'API ne fait que la lire, et un type ne se modifie ni ne se retire.
 - **Un montant n'a de sens que dans son actif** : une ligne est dans l'actif de son compte,
   et l'équilibre se vérifie actif par actif. Les montants sont des entiers d'unités
   minimales, jamais des nombres à virgule (ADR 0007).
@@ -459,6 +467,13 @@ titulaires, est décrite à la section suivante.
 > - **Le propriétaire du schéma peut tout** : désactiver un déclencheur, puis altérer une
 >   ligne. La vérification périodique est là pour le relever ; elle ne l'empêche pas. Les
 >   identifiants du rôle propriétaire ne doivent servir qu'aux migrations.
+> - **La liste des types d'écriture vaut pour ce qui s'écrit depuis qu'elle existe.** Une
+>   écriture d'un autre type passée auparavant reste dans le grand livre — elle ne s'efface
+>   pas — ; la base d'aperçu en porte une, la production n'a jamais servi. **La vérification
+>   horaire ne relit ni le type des écritures, ni leur lien à une opération** : elle ne
+>   signalerait pas une telle écriture. Et un type ajouté à la liste, par migration, sans la
+>   règle qui le lie à son opération rouvrirait le chemin : un test le garde pour les types
+>   présents, rien dans la base ne l'empêche.
 > - **Une anomalie n'alerte personne** : elle est journalisée et tracée, mais aucune alerte
 >   n'est encore branchée (phase 9), et les opérations ne sont pas suspendues
 >   automatiquement.
@@ -584,9 +599,10 @@ Décisions et limites : ADR 0026.
   transaction : l'écriture désignée est celle de l'ajustement — son type, ses deux lignes,
   son montant, le portefeuille du titulaire et le compte de conservation —, et toute écriture
   de ce type a son ajustement approuvé. Aucune écriture **d'ajustement** n'échappe donc à la
-  double validation, même écrite en SQL sous le rôle de l'API — ce qui ne vaut pas pour une
-  écriture d'un autre type (voir les limites). Le propriétaire du schéma lui-même ne passe
-  pas un ajustement sans deux personnes habilitées, tant que les règles sont en place.
+  double validation, même écrite en SQL sous le rôle de l'API — et une écriture d'un autre
+  type que ceux des opérations est refusée (voir « Grand livre »). Le propriétaire du schéma
+  lui-même ne passe pas un ajustement sans deux personnes habilitées, tant que les règles
+  sont en place.
 - **Preuve de l'approbateur.** Une session ouverte ne suffit pas à déplacer des fonds :
   l'approbation exige de nouveau le mot de passe et le second facteur de l'approbateur,
   vérifiés avant tout examen de la demande ; les essais erronés sont bornés et tracés.
@@ -629,13 +645,11 @@ Décisions et limites : ADR 0026.
 >   d'une adresse : la double validation est le seul contrôle. Deux personnes habilitées qui
 >   s'entendent — ou deux comptes d'administration compromis — créditent n'importe quel
 >   portefeuille, du montant qu'elles veulent : **aucun plafond ne borne un ajustement**.
-> - **La base ne ferme pas la liste des types d'écriture.** Elle refuse une écriture
->   d'ajustement sans son ajustement approuvé ; elle ne refuse pas une écriture équilibrée
->   d'un **autre** type, qui créditerait un portefeuille depuis le compte de conservation,
->   écrite en SQL sous le rôle de l'API — constaté sur la base d'aperçu. Le grand livre
->   garantit l'arithmétique d'une écriture, non sa légitimité. La double validation portée
->   par la base protège d'un défaut du code des ajustements, pas d'un accès en écriture à la
->   base sous le rôle de l'API. Fermer ce chemin est proposé pour la suite (ADR 0027).
+> - **Un accès en écriture sous le rôle de l'API ne passe plus d'écriture libre, mais peut
+>   encore écrire l'opération entière.** La base refuse désormais une écriture d'un type
+>   qu'elle ne connaît pas (ADR 0030) : le chemin constaté sur la base d'aperçu — un
+>   portefeuille crédité depuis le compte de conservation par une écriture d'un type
+>   inventé — est fermé. Reste la limite qui suit.
 > - **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
 >   les lui désigne. Un attaquant capable d'exécuter du SQL sous le rôle de l'API pourrait
 >   fabriquer une demande et son approbation au nom de deux administrateurs existants — et
@@ -756,6 +770,7 @@ Décisions et limites : ADR 0026.
 | Ajustements : plafond par ajustement, rapprochement avec une pièce (relevé, reçu)          | 3+    |
 | Gel : double validation de la levée, gel de tout un compte, visibilité pour le support     | 3+    |
 | Grand livre : rapprochement avec les fonds réellement détenus, alerte sur une anomalie     | 3–9   |
+| Grand livre : vérification périodique du type des écritures et de leur opération           | 3+    |
 | Grand livre : double validation de l'enregistrement d'un actif                             | 3     |
 | Stockage objet des pièces (aujourd'hui : un volume), sauvegarde outillée de la clé         | 9     |
 | Consultation du journal d'audit depuis le back-office ; alertes sur les actions sensibles  | 2+    |

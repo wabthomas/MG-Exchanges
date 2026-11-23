@@ -1,6 +1,6 @@
 # 0027 — Opérations du personnel : ajustements sous double validation, gel d'un portefeuille
 
-**Statut :** acceptée (2026-11-15) — l'ouverture de la fonctionnalité, les personnes à habiliter et la procédure qui fonde un ajustement (quelle pièce, quel rapprochement) restent à décider par le propriétaire et son conseil ; huit choix, faits ici sans lui, sont à confirmer (voir « Choix à confirmer »)
+**Statut :** acceptée (2026-11-15) — l'ouverture de la fonctionnalité, les personnes à habiliter et la procédure qui fonde un ajustement (quelle pièce, quel rapprochement) restent à décider par le propriétaire et son conseil ; huit choix, faits ici sans lui, sont à confirmer (voir « Choix à confirmer »). La limite relevée ici — la base ne fermait pas la liste des types d'écriture — est levée par l'ADR 0030 (2026-11-23).
 
 ## Contexte
 
@@ -79,7 +79,8 @@ l'écriture et l'ajustement vont ensemble. Une écriture d'ajustement écrite en
 de l'API, sans son ajustement approuvé par deux personnes habilitées, n'est pas validée.
 
 La garantie s'arrête là, et c'est moins que pour les rôles : la base **ne ferme pas la liste
-des types d'écriture** (voir « Conséquences »).
+des types d'écriture** (voir « Conséquences »). _Depuis l'ADR 0030, elle la ferme : une
+écriture d'un autre type est refusée._
 
 Le rôle propriétaire n'a **pas de chemin à part** : il n'existe pas d'ajustement « sans
 auteur », contrairement à un actif ou à des plafonds.
@@ -264,6 +265,10 @@ faits pour que le lot soit complet et vérifiable ; chacun se change sans repren
   chemin. Ici, il y en a un. **Le fermer** — toute ligne sur le compte de conservation
   appartient à une opération que la base connaît — est proposé pour la suite : cela demande
   de revoir la façon dont les tests alimentent les portefeuilles (écritures `test.deposit`).
+  _Fait depuis (ADR 0030) : la base tient la liste des types d'écriture et refuse toute
+  écriture d'un autre type ; les tests déclarent leurs types d'essai avec le rôle
+  propriétaire, dans leur base jetable. La limite suivante — la base vérifie la qualité des
+  deux intervenants, pas leur présence — demeure._
 - **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
   les lui désigne (même limite que l'ADR 0018). Un attaquant capable d'exécuter du SQL sous
   le rôle de l'API pourrait fabriquer une demande et son approbation au nom de deux

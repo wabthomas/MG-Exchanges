@@ -1,6 +1,6 @@
 # État du projet MG-Exchange
 
-_Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond) et deux corrections de robustesse (tâches planifiées surveillées, arrêt borné) ; intégration continue active._
+_Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3 : lot 1 (grand livre), lot 2 (transferts entre titulaires) et lot 3 (opérations du personnel) livrés, puis deux retouches du socle (base saturée, erreurs des tâches de fond), deux corrections de robustesse (tâches planifiées surveillées, arrêt borné) et le lot 4 (types d'écriture en liste fermée), **construit sans votre confirmation** ; intégration continue active._
 
 ## Synthèse
 
@@ -8,7 +8,7 @@ _Dernière mise à jour : 2026-11-23 — phase 2 : lots 1 à 5 livrés ; phase 3
 | ----- | --------------------------------------- | -------------------------------- |
 | 1     | Analyse et fondations                   | **Livrée**                       |
 | 2     | Identité et utilisateurs                | **En cours** — lots 1 à 5 livrés |
-| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 à 3 livrés |
+| 3     | Infrastructure financière (grand livre) | **En cours** — lots 1 à 4 livrés |
 | 4     | Échange et paiements                    | Non commencée                    |
 | 5     | Blockchain                              | Non commencée                    |
 | 6     | P2P et séquestre                        | Non commencée                    |
@@ -66,7 +66,8 @@ négatifs. **Ce registre est vide** : aucun actif n'y est enregistré — la lis
 à tenir, et le nombre de décimales de chacune, vous reviennent (décision 12) —, et aucune
 des deux opérations qui y écrivent, le transfert et l'ajustement, n'est ouverte. Un
 titulaire peut déjà lire ses portefeuilles : il n'en a aucun tant qu'aucun actif n'est
-enregistré, puis ils sont à zéro.
+enregistré, puis ils sont à zéro. Depuis le lot 4, la base refuse aussi toute écriture qui
+n'est pas celle d'une opération qu'elle connaît.
 
 **Transferts entre titulaires.** Un titulaire peut envoyer des fonds à un autre, désigné par
 son adresse e-mail : c'est immédiat et définitif. Chaque envoi redemande le mot de passe, ne
@@ -105,6 +106,18 @@ sa réponse.
 manquantes. Elle aurait retiré du trafic toutes les instances à la fois, pour un retard que
 l'API répare seule ; c'est une ligne du journal qui le dit. Ce choix, et six autres faits
 sans vous, sont à confirmer (décision 16).
+
+**Entrée des fonds : fermée aussi dans la base — un lot fait sans votre confirmation.** Le
+lot 4 de la phase 3 n'était que proposé, « à confirmer par vous ». Votre message suivant a
+été « continue » : il a été pris pour un accord, **ce qu'il vous revient de confirmer ou de
+démentir** (décision 17). Ce lot corrige le défaut relevé au lot 3 : qui écrivait dans la
+base à côté de l'API, avec ses identifiants, pouvait y passer une écriture comptable
+« libre » — créditer un portefeuille sans double validation, ou déplacer des fonds d'un
+portefeuille à un autre sans plafond. La base tient désormais la liste des opérations qui
+écrivent au registre — le transfert, le crédit et le débit de votre équipe — et refuse toute
+autre écriture. Rien ne change pour un client de l'API. **Ce n'est pas une protection
+complète** : avec ces mêmes identifiants, on peut encore écrire une opération entière — un
+ajustement et son approbation, au nom de deux membres habilités de votre équipe.
 
 ## Phase 2 — identité et utilisateurs
 
@@ -451,13 +464,12 @@ Décision : ADR 0027.
   n'importe quel portefeuille du montant qu'elles veulent. Chaque ajustement est tracé,
   ineffaçable, et signalé au titulaire — après coup : rien ne l'empêche. La procédure qui
   fonde un ajustement est à écrire avant toute ouverture (décision 15) ;
-- **la base de données ne ferme pas la liste des types d'écriture.** Elle refuse une écriture
-  d'ajustement sans son ajustement approuvé par deux personnes ; elle ne refuse pas une
-  écriture équilibrée d'un **autre** type qui créditerait un portefeuille. La double
-  validation est donc la seule route **de l'API** qui apporte des fonds, et elle tient même
-  si le code des ajustements est fautif ; elle ne protège pas de qui écrirait dans la base
-  avec les identifiants de l'API. Constaté pendant ce lot, documenté, et proposé comme
-  prochain lot (voir « Problèmes identifiés ») ;
+- **à la livraison de ce lot, la base de données ne fermait pas la liste des types
+  d'écriture** — corrigé depuis par le lot 4. Elle refusait une écriture d'ajustement sans
+  son ajustement approuvé par deux personnes ; elle ne refusait pas une écriture équilibrée
+  d'un **autre** type qui créditerait un portefeuille. La double validation était donc la
+  seule route **de l'API** qui apporte des fonds ; elle ne protégeait pas de qui écrirait
+  dans la base avec les identifiants de l'API. Ce qui en reste est dit au lot 4 ;
 - **il faut deux administrateurs**, chacun avec la validation en deux étapes : seul
   `super_admin` prend part à un ajustement, et il n'existe pas de rôle « finance ». Avec un
   seul administrateur, aucun ajustement n'aboutit ;
@@ -634,17 +646,104 @@ ligne de réinscription est de niveau « erreur » ; huit secondes pour s'arrêt
 sortie 0 pour un arrêt propre ; refus des connexions dès le signal ; à l'échéance, ce qui est
 en cours est coupé.
 
+### Lot 4 — livré sans votre confirmation : la base n'accepte plus d'écriture hors d'une opération
+
+**Ce lot n'avait pas été confirmé.** L'état précédent le présentait comme « à confirmer par
+vous — rien n'en est commencé ». Votre message suivant a été « continue » : il a été pris
+pour un accord. **Si ce n'était pas votre intention, dites-le** : le lot tient en une
+migration, quelques lignes de code et des tests ; il se retire en annulant ses commits, sans
+toucher au reste — aussi longtemps que sa migration n'a été appliquée à aucune base que vous
+gardez. Il a aussi été fait **plus large que proposé**, pour une raison donnée plus bas.
+
+**Ce qu'il corrige.** Le défaut relevé au lot 3 (« Problèmes identifiés », lot 3, point 1).
+Le grand livre vérifiait d'une écriture l'arithmétique — entière, équilibrée, sans solde
+négatif — et, pour les seules écritures de transfert et d'ajustement, l'opération qui les
+fonde. Une écriture équilibrée d'un type quelconque, écrite dans la base avec les
+identifiants de l'API, passait donc : elle pouvait **créditer un portefeuille depuis le
+compte de conservation**, sans double validation, ou **déplacer des fonds d'un portefeuille à
+un autre**, sans plafond ni niveau de vérification. Aucune route de l'API ne le permettait :
+il fallait écrire dans la base, à côté d'elle.
+
+| Sujet                    | Réalisation                                                                                                                                                                                                                                                     |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Liste des types          | la base tient la liste des types d'écriture — trois à ce jour : le transfert entre titulaires, le crédit et le débit de votre équipe ; la même liste est dans le code, et un test échoue si elles diffèrent                                                     |
+| Écriture d'un autre type | refusée d'emblée, avant qu'aucun montant soit écrit, sous tous les rôles — celui de l'API, le propriétaire des tables, le superutilisateur de la base — et quel que soit l'auteur qu'elle désigne ; aucun solde ne bouge                                        |
+| Écriture d'un type connu | validée seulement avec son opération, comme avant : son transfert, avec ses plafonds, ou son ajustement approuvé par deux personnes                                                                                                                             |
+| Étendre la liste         | par une migration seulement, avec le rôle propriétaire des tables ; le rôle de l'API ne fait que lire la liste, et n'y ajouterait rien même si le droit d'y écrire lui était rendu par erreur ; un type ne se modifie ni ne se retire, même par le propriétaire |
+| Dans l'API               | aucune route, aucun contrat ne change ; si le code passait un jour une écriture d'un type inconnu, ce serait un défaut — erreur serveur, rien d'écrit, une ligne au journal                                                                                     |
+
+Détail : [`docs/DATABASE.md`](docs/DATABASE.md), [`docs/SECURITY.md`](docs/SECURITY.md),
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md). Décision : ADR 0030.
+
+**Plus large que ce qui était proposé.** La proposition était de faire de toute ligne passée
+sur le compte de conservation la ligne d'une opération que la base connaît. En relisant les
+règles avant de les écrire, le même chemin existait d'un portefeuille à un autre, sans passer
+par ce compte : une règle sur le seul compte de conservation l'aurait laissé ouvert. La règle
+retenue est donc une liste fermée des types d'écriture, qui ferme les deux. C'est le premier
+des cinq choix à confirmer.
+
+**Éprouvé.** Sur une base telle que les migrations la laissent, sans aucun aménagement pour
+les tests : un crédit depuis le compte de conservation, un déplacement d'un portefeuille à un
+autre, une sortie vers le compte de conservation — chacun refusé, soldes inchangés ; treize
+types voisins d'un type connu, refusés ; une table de même nom glissée par une session ne
+trompe pas la règle ; et les opérations réelles — un crédit, un transfert, un débit —
+passent. **L'essai du 15 novembre, qui avait révélé le défaut, a été refait à l'identique sur
+la base de l'aperçu, la migration appliquée** — même commande, même portefeuille, mêmes
+identifiants de l'API : refusé, et rien n'a bougé.
+
+**Mise à jour d'une base existante.** La migration ajoute une table de trois lignes et une
+règle sur les écritures. Elle ne relit, ne modifie ni ne retire aucune écriture existante ;
+elle n'ouvre rien et ne déplace rien. Constaté sur la base de l'aperçu, qui contenait 230
+comptes et sept écritures : appliquée en moins de deux secondes pendant que la version
+précédente de l'API tournait ; celle-ci a ensuite passé son parcours complet — 249 contrôles,
+double validation, transfert et débit compris — sans une erreur, puis la nouvelle version le
+sien. **La version précédente fonctionne donc sur la base migrée** : aucun ordre de mise en
+service n'est imposé, et un retour en arrière ne demande rien. Avant de migrer une base qui a
+déjà servi, une requête recense les écritures d'un autre type
+([`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md), « Grand livre ») : un résultat non vide
+désignerait des écritures faites à côté de l'API.
+
+**À savoir :**
+
+- **ce n'est pas une protection complète contre qui détient les identifiants de l'API.** Il
+  ne passe plus d'écriture libre ; il peut encore écrire **une opération entière** : un
+  ajustement, avec sa demande et son approbation, au nom de deux membres habilités de votre
+  équipe — la base vérifie leur qualité, pas leur présence —, ou un transfert dans les
+  plafonds. Il laisserait à leur nom des traces ineffaçables. Ces identifiants restent à
+  protéger comme ceux d'un compte qui peut créditer ;
+- **les écritures déjà passées ne sont pas réexaminées.** Une écriture ne se modifie ni ne
+  s'efface : celle de l'essai du 15 novembre reste dans la base de l'aperçu, sous son type
+  inventé. Aucune base de production n'existe encore ;
+- **la vérification horaire du grand livre n'a pas été étendue.** Elle recalcule les soldes
+  et les équilibres ; elle ne relit ni le type des écritures, ni leur lien à une opération.
+  Une écriture passée en suspendant les règles — ce que le rôle de l'API ne peut pas faire,
+  mais que peut le propriétaire des tables — n'y serait pas signalée pour son type. L'étendre
+  est proposé plus bas ;
+- **un type ajouté à la liste sans la règle qui le lie à son opération rouvrirait le
+  chemin.** Chaque opération à venir — dépôt, retrait, échange — devra apporter les deux,
+  dans la même migration. Un test le garde pour les types présents : il relit dans la base
+  les règles posées sur les écritures, et exige que chaque type ait la sienne. Rien, dans la
+  base, ne l'impose ;
+- **les tests du grand livre gardent des écritures d'essai** — à cinq lignes, sur plusieurs
+  actifs, sur le compte des frais —, qu'aucune opération ne produit encore. Chaque fichier de
+  tests concerné déclare leurs types dans sa propre base jetable, avec le rôle propriétaire,
+  comme le ferait une migration. Dix fichiers le font. Le fichier de tests de ce lot, lui,
+  travaille sur la base telle que les migrations la laissent, et le parcours de la CI aussi ;
+- **la pile Docker n'a pas été répétée ici pour ce lot.** Les lots précédents l'étaient hors
+  Docker, à travers un Nginx compilé pour l'occasion, qui n'existe plus dans cet
+  environnement. Ce lot ne change aucun fichier d'infrastructure ; le parcours complet a été
+  exécuté sur l'aperçu, à travers son relais et non à travers Nginx. C'est l'intégration
+  continue qui l'exécute dans la pile Docker (« Intégration continue ») ;
+- **cinq choix ont été faits sans vous** (décision 17).
+
 ### Suite proposée de la phase 3
 
 À confirmer par vous — rien n'en est commencé :
 
-- **Lot 4 — fermer, dans la base, l'entrée des fonds.** Aujourd'hui, la base exige d'une
-  écriture d'ajustement qu'elle ait son ajustement approuvé, mais elle accepte une écriture
-  équilibrée d'un autre type (voir « Problèmes identifiés »). Le lot ferait de toute ligne
-  passée sur le compte de conservation de la plateforme la ligne d'une opération que la base
-  connaît — la double validation deviendrait le seul chemin, et non plus seulement la seule
-  route de l'API. Il demande de revoir la façon dont les tests alimentent les portefeuilles.
-  Court, et à faire avant qu'une autre opération n'écrive sur ce compte.
+- **Étendre la vérification horaire du grand livre** au type des écritures et à leur lien
+  avec une opération : elle signalerait une écriture d'un type inconnu, un transfert sans son
+  écriture, une écriture d'ajustement sans son ajustement — ce que la base refuse à
+  l'écriture, mais que rien ne relit ensuite. Court ; c'est la suite directe du lot 4.
 - **Ensuite — les fonds réservés**, avec la première opération qui en a l'usage (un retrait
   en attente de validation, par exemple), puis le **rapprochement** avec les fonds réellement
   détenus.
@@ -660,7 +759,7 @@ un prestataire, et l'autorisation correspondante (décision 11).
 
 ## Résultats de tests
 
-Exécution du 2026-11-20 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
+Exécution du 2026-11-23 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Redis 8.10.3.
 
 | Vérification                     | Résultat                         |
 | -------------------------------- | -------------------------------- |
@@ -670,18 +769,18 @@ Exécution du 2026-11-20 — Node.js 24.22.2, pnpm 12.18.0, PostgreSQL 18.6, Red
 | `pnpm typecheck`                 | 0 erreur                         |
 | `pnpm db:check-drift`            | aucune différence                |
 | `pnpm audit --prod`              | aucune vulnérabilité connue      |
-| `pnpm test`                      | **2 196 tests réussis, 0 échec** |
+| `pnpm test`                      | **2 214 tests réussis, 0 échec** |
 
 | Suite                     | Tests | Services réels                                  |
 | ------------------------- | ----- | ----------------------------------------------- |
 | `@mgx/shared` (montants)  | 103   | —                                               |
 | `@mgx/validation`         | 96    | —                                               |
-| `@mgx/contracts`          | 70    | —                                               |
+| `@mgx/contracts`          | 71    | —                                               |
 | API — unitaires           | 642   | —                                               |
-| API — intégration         | 673   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
+| API — intégration         | 690   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 | API — bout en bout (HTTP) | 612   | PostgreSQL, Redis, BullMQ, serveur SMTP de test |
 
-Les 1 285 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
+Les 1 302 tests d'intégration et de bout en bout passent aussi lorsque chaque validation
 d'une transaction est retardée de 25 ms. Cette répétition « disque lent » a été ajoutée après
 le lot 3 de la phase 3 : le PostgreSQL de l'environnement de développement valide sans
 attendre le disque, à la différence de celui de la CI et d'une installation réelle, et un
@@ -900,6 +999,20 @@ Ce que ces tests établissent, notamment :
   sous la même clé est refusée, quelle que soit la différence — montant, compte, sens,
   type, actif, ordre ou nombre des lignes ; passée dans la transaction d'une opération,
   l'écriture est validée ou annulée avec elle ;
+- **types d'écriture** : des tests s'adressent **directement à PostgreSQL**, sur une base
+  telle que les migrations la laissent, avec le rôle de l'API, le rôle propriétaire et le
+  superutilisateur. La base refuse alors d'emblée toute écriture d'un type absent de sa
+  liste — qu'elle crédite un portefeuille depuis le compte de conservation, déplace des fonds
+  d'un portefeuille à un autre ou les en sorte —, sans qu'un solde bouge, et quel que soit
+  l'auteur qu'elle désigne ; un type voisin d'un type connu n'est pas ce type ; une table de
+  même nom glissée par une session ne fait connaître aucun type. La liste est celle du code ;
+  le rôle de l'API ne fait que la lire, et n'y ajoute rien même si le droit d'y écrire lui
+  est rendu ; un type ne se modifie ni ne se retire, même par le propriétaire ; une écriture
+  ne change pas de type après coup. Une écriture d'un type connu reste tenue par la règle de
+  son opération, et **un test relit dans la base ces règles et exige que chaque type de la
+  liste ait la sienne**. Un crédit, un transfert et un débit réels passent sans aucun type
+  d'essai. Passée par le service, une écriture d'un type inconnu est un défaut : rien n'est
+  écrit, pas même un compte ;
 - **vérification du grand livre** : chaque altération faite avec le rôle propriétaire,
   contrôles suspendus — solde, compteur, montant, sens, actif, rang, ligne déplacée d'un
   compte à l'autre, écriture amputée d'une ligne — est relevée, avec ce qu'elle touche ; un
@@ -1024,7 +1137,7 @@ Ce que ces tests établissent, notamment :
   et le personnel ajuste, gèle et lève encore ; la copie des données dit quel portefeuille
   est gelé, l'historique ce que la plateforme y a fait — jamais pourquoi.
 
-**Efficacité des tests vérifiée par mutation.** 2 082 défauts ont été introduits
+**Efficacité des tests vérifiée par mutation.** 2 144 défauts ont été introduits
 volontairement, un par un, puis retirés ; chacun doit faire échouer au moins un test.
 
 - Phase 1 : 20 défauts (calculs monétaires, concurrence, expurgation, privilèges,
@@ -1357,6 +1470,37 @@ volontairement, un par un, puis retirés ; chacun doit faire échouer au moins u
   traitements modifiés ont été rejoués : tous détectés. Les motifs des 1 955 défauts
   antérieurs s'appliquent tous au code livré : 2 058 défauts sont rejouables par script.
 
+- Phase 3, lot 4 : 62 défauts — 50 dans les règles SQL (le contrôle du type à l'écriture, ce
+  qui vaut pour un type connu, qui peut étendre la liste, son format, ses privilèges, le
+  chemin de recherche des fonctions, le lien de chaque type à son opération, l'immutabilité
+  d'une écriture), 4 dans le code qui traduit le refus de la base, 8 dans le catalogue des
+  types. **Aucun n'a échappé aux tests** : chacun est détecté dès sa première exécution, par
+  une vérification qui le concerne — aucun par un test resté bloqué, aucun en faisant échouer
+  un fichier entier ; la liste des tests en échec a été relue défaut par défaut. Les tests
+  ont pourtant été complétés deux fois, **à la relecture et non par ce contrôle** : pour
+  éprouver le refus sous chaque rôle et pour chaque auteur ; puis, juste avant la livraison,
+  pour établir qu'une écriture ne change pas de type après coup — sans quoi un contrôle fait
+  à l'écriture se contournerait. Quatre défauts ont été ajoutés en chemin, deux en relisant
+  la première passe, deux avec ce dernier test ; **les 62 ont été rejoués d'une traite sur le
+  code livré**.
+
+  Ce lot modifie le code du grand livre, les constantes des contrats et dix fichiers de tests
+  des lots précédents ; deux motifs de défauts antérieurs ne s'appliquaient plus, et ont été
+  réécrits. **Les défauts antérieurs n'ont pas tous été rejoués.** L'ont été, 257 en tout :
+  les 140 qui touchent un type d'écriture ou un fichier de code modifié par ce lot — 77 du
+  grand livre, 33 des transferts, 29 des opérations du personnel, 1 des retouches du
+  socle — ; les 5 du grand livre que voit un test adapté par ce lot, et les 3 de la clôture
+  que voit un fichier de tests modifié ; puis, parmi les autres défauts du grand livre, des
+  transferts et des opérations du personnel, un sur huit, pris à intervalle régulier — 109.
+  Tous sont détectés. Six le sont désormais par le refus nouveau lui-même, à bon droit : un
+  type d'écriture faussé dans le code, ou mal formé, bute maintenant sur la liste ; les
+  sorties des 251 autres ne le mettent pas en jeu. Les quelque 1 800 défauts restants n'ont
+  pas été rejoués : leurs motifs s'appliquent tous au code livré, ce qui porte à 2 120 les
+  défauts rejouables par script, mais **seul un rejeu complet — cinq heures environ —
+  établirait qu'aucun n'a cessé d'être détecté**. Le risque est jugé faible : sept des dix
+  fichiers de tests ne sont modifiés que par la déclaration de leurs types d'essai ; les
+  trois autres ont en outre un test adapté ou ajouté, dont tous les défauts ont été rejoués.
+
 ## Infrastructure : vérifications hors Docker
 
 L'environnement de développement utilisé ne dispose **ni de Docker, ni d'accès aux dépôts de
@@ -1486,6 +1630,37 @@ sauvegarde, ni montée en charge (phase 9) ; elle n'exécute que Node.js 24.
 
 ## Problèmes identifiés
 
+### Pendant le lot 4 de la phase 3
+
+Deux constats, faits l'un avant d'écrire le lot, l'autre en l'écrivant. Aucun n'a demandé de
+modifier le code des lots précédents ; le second a demandé d'en modifier les tests.
+
+1. **Le défaut était plus large que sa description.** L'état du lot 3 parlait d'un
+   portefeuille crédité depuis le compte de conservation, et proposait une règle sur ce
+   compte. En relisant les règles de la base avant d'écrire celle-ci, le même chemin existait
+   sans passer par ce compte : une écriture équilibrée d'un type quelconque déplaçait des
+   fonds **d'un portefeuille à un autre**, hors des plafonds et des niveaux de vérification
+   que la base impose aux transferts. Les tests des lots précédents le faisaient eux-mêmes,
+   sans que cela ait été relevé : ils déplaçaient ainsi des fonds entre des titulaires à qui
+   les transferts sont fermés. Une règle sur le seul compte de conservation aurait laissé ce
+   chemin ouvert ; la règle livrée — une liste
+   fermée des types d'écriture — ferme les deux. Comme le premier, ce chemin supposait
+   d'écrire dans la base à côté de l'API : aucune route ne l'ouvrait.
+2. **Les tests des lots précédents reposaient sur ce défaut.** La migration appliquée, 254
+   des 673 tests d'intégration ont échoué, tous sur le nouveau refus : pour disposer d'un
+   solde, ou pour éprouver le grand livre avec des écritures qu'aucune opération ne produit —
+   cinq lignes, plusieurs actifs, le compte des frais —, ils passaient des écritures de types
+   inventés. Ils les passent toujours, faute de dépôt ou d'échange pour en produire de
+   réelles ; mais chaque fichier déclare désormais ces types dans sa propre base jetable,
+   avec le rôle propriétaire. **À connaître : dans ces dix fichiers, la base est donc plus
+   permissive que celle d'une installation.** Trois garde-fous : le fichier de tests de ce
+   lot travaille sur la base telle que les migrations la laissent, et y passe un crédit, un
+   transfert et un débit réels ; le parcours de la CI et celui de l'aperçu font de même, à
+   travers l'API ; enfin, le refus nouveau a été cherché dans le journal de PostgreSQL
+   pendant l'exécution, un à un, des 45 fichiers de tests sur services réels : il n'apparaît
+   que dans les deux fichiers qui l'éprouvent. Aucun autre test ne passe, ni n'échoue, à
+   cause de lui.
+
 ### Pendant les corrections de robustesse
 
 Le premier et le quatrième sont antérieurs à ces corrections ; le deuxième est un écart par
@@ -1588,12 +1763,12 @@ corrigé avant sa publication.
 ### Pendant le lot 3 de la phase 3
 
 Les cinq premiers ont été relevés avant la publication du lot, ou le jour même ; les cinq
-autres, par le contrôle des tests qui l'a suivie. Le premier touche le produit, et reste
-ouvert ; le deuxième, son déploiement ; les trois suivants, le parcours de vérification ; les
-sixième, septième et huitième, les tests eux-mêmes — aucun de ces trois-là n'a demandé de
-modifier le code livré. Les deux derniers touchent de nouveau le produit : non ce lot, mais
-le socle sur lequel il repose, tel qu'il est depuis la phase 1. Ouverts à la fin du lot, ils
-ont été corrigés depuis (« Retouches du socle »).
+autres, par le contrôle des tests qui l'a suivie. Le premier touche le produit : ouvert à la
+fin du lot, il a été fermé par le lot 4 ; le deuxième, son déploiement ; les trois suivants,
+le parcours de vérification ; les sixième, septième et huitième, les tests eux-mêmes — aucun
+de ces trois-là n'a demandé de modifier le code livré. Les deux derniers touchent de nouveau
+le produit : non ce lot, mais le socle sur lequel il repose, tel qu'il est depuis la phase 1.
+Ouverts à la fin du lot, ils ont été corrigés depuis (« Retouches du socle »).
 
 1. **La base de données ne ferme pas la liste des types d'écriture.** Ce lot fait vérifier
    par PostgreSQL qu'une écriture d'ajustement a son ajustement, approuvé par deux personnes
@@ -1610,7 +1785,8 @@ ont été corrigés depuis (« Retouches du socle »).
    autre montant, passée deux fois — est arrêté par la base. Ce qu'elle ne garantit pas :
    qu'aucun autre code, ni personne disposant des identifiants de l'API, ne crédite un
    portefeuille. Aucune route de l'API ne le permet ; fermer ce chemin dans la base est
-   proposé pour le lot suivant.
+   proposé pour le lot suivant. **Fermé depuis par le lot 4**, qui a montré que le chemin
+   était plus large encore (ci-dessus).
 2. **Après un gel, la version précédente de l'API répond par une erreur serveur.** Essai fait
    sur la base de l'aperçu, la migration appliquée et la version du lot 2 encore en service :
    un transfert depuis un portefeuille gelé, ou vers lui, est refusé par la base — rien ne
@@ -2290,10 +2466,12 @@ Opérations du personnel :
 - **Pas de rapprochement, pas de montant maximal, pas de pièce jointe.** Un crédit constate
   ce que deux personnes déclarent ; sa justification est un texte, qui doit désigner la
   pièce. La procédure qui fonde un ajustement n'est pas écrite (décision 15).
-- **La base ne ferme pas la liste des types d'écriture** : une écriture équilibrée d'un autre
-  type que ceux des ajustements, écrite dans la base avec les identifiants de l'API, crédite
-  un portefeuille sans double validation. Aucune route ne le permet ; à fermer au lot suivant
-  (voir « Problèmes identifiés »).
+- **La liste des types d'écriture est fermée pour ce qui s'écrit désormais, non pour ce qui
+  l'a été** (lot 4) : les écritures antérieures à la migration ne sont pas réexaminées, et la
+  vérification horaire ne relit ni le type des écritures, ni leur lien à une opération. Un
+  type ajouté à la liste sans la règle qui le lie à son opération rouvrirait le chemin : un
+  test le garde pour les types présents, rien dans la base ne l'impose. Le propriétaire des
+  tables peut suspendre ces règles, comme toutes celles du grand livre.
 - **La base vérifie la qualité des deux intervenants, pas leur présence** : c'est l'API qui
   les lui désigne, et c'est elle qui vérifie la preuve de l'approbateur. Qui écrirait dans la
   base avec les identifiants de l'API pourrait fabriquer une demande et son approbation au
@@ -2489,3 +2667,18 @@ réalisées.
     - l'API **refuse les connexions dès la demande d'arrêt** : une instance se retire du
       trafic avant d'être arrêtée ;
     - à l'échéance, **ce qui est encore en cours est coupé**.
+
+17. **Lot 4 : fait sans votre confirmation — à valider, avec cinq choix.** D'abord le
+    principe : ce lot était proposé, non confirmé ; votre « continue » a été pris pour un
+    accord. S'il ne devait pas être fait, ou pas ainsi, il se retire. Puis les cinq choix
+    faits pour qu'il soit complet (ADR 0030) ; sans objection de votre part, ils restent :
+    - une **liste fermée des types d'écriture**, plutôt que la règle proposée sur le seul
+      compte de conservation : elle ferme aussi le déplacement d'un portefeuille à un autre ;
+    - les **écritures déjà passées ne sont pas réexaminées** : la règle vaut pour ce qui
+      s'écrit après la migration ;
+    - la **vérification horaire n'est pas étendue** au type des écritures — proposé pour la
+      suite ;
+    - un type inconnu passé par le code est **un défaut, non un refus prévu** : erreur
+      serveur, rien d'écrit, un code d'erreur propre dans les journaux (`MGX13`) ;
+    - les **tests gardent leurs écritures d'essai**, dont ils déclarent les types avec le
+      rôle propriétaire, dans leur propre base.

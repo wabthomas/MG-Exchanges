@@ -3,6 +3,64 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ; versions selon
 [SemVer](https://semver.org/lang/fr/).
 
+## [Non publié] — Phase 3, lot 4 : types d'écriture en liste fermée
+
+**La base n'accepte plus d'écriture hors d'une opération qu'elle connaît** (ADR 0030, cinq
+choix à confirmer). Une migration ; ni route, ni contrat de l'API, ni dépendance nouvelle :
+rien ne change pour un client de l'API.
+
+### Corrigé
+
+- **Une écriture équilibrée d'un type inventé, écrite en SQL sous le rôle de l'API, n'est
+  plus acceptée.** Seules les écritures `transfer.internal`, `adjustment.credit` et
+  `adjustment.debit` étaient liées à leur opération ; toute autre passait — un portefeuille
+  crédité depuis le compte de conservation, des fonds déplacés d'un portefeuille à un autre
+  hors des règles des transferts (constaté sur la base d'aperçu au lot 3). La base tient
+  désormais la liste des types d'écriture et refuse tout autre (`MGX13`), quels que soient le
+  rôle qui écrit et l'auteur que l'écriture désigne. Le même essai, rejoué sur la base
+  d'aperçu migrée : refusé, rien n'a bougé.
+
+### Ajouté
+
+- Migration `20261123121500_ledger_entry_kinds` : table `ledger_entry_kinds` (trois types) et
+  déclencheur `ledger_entries_kind_known`. Seul le rôle propriétaire ajoute un type, par
+  migration ; un type ne se modifie ni ne se retire ; le rôle de l'API ne fait que lire la
+  liste.
+- `@mgx/contracts` : `LEDGER_ENTRY_KINDS`, la même liste — le type de chaque opération doit y
+  figurer, le compilateur le vérifie — ; un test exige que la base et le code s'accordent.
+- `MGX13` traduit en `LedgerIntegrityError` : un type inconnu passé par le code est un défaut
+  (`500`), et rien n'est écrit.
+- Tests : la liste et ses droits ; le refus sous chaque rôle et pour chaque auteur ; les
+  trois chemins fermés, soldes inchangés ; un test relit dans la base les règles de fin de
+  transaction et exige que chaque type de la liste ait la sienne, et aucun autre.
+- ADR 0030. `DATABASE.md` : `ledger_entry_kinds`. `DEPLOYMENT.md` : la requête qui recense
+  les écritures d'un autre type, ce que les journaux portent.
+
+### Modifié — à prendre en compte pour l'exploitation
+
+- **Avant de migrer une base qui a déjà servi**, exécuter la requête de `DEPLOYMENT.md`
+  (« Grand livre ») : un résultat non vide désigne des écritures faites hors de l'API. La
+  migration s'applique dans les deux cas.
+- La version précédente de l'API fonctionne sur la base migrée : aucun ordre de mise en
+  service particulier, et un retour arrière ne demande rien. Constaté sur la base d'aperçu.
+- **Une opération nouvelle apporte son type d'écriture** : dans `LEDGER_ENTRY_KINDS` et, par
+  sa migration, dans `ledger_entry_kinds`, avec la règle qui lie l'écriture à l'opération
+  (`ARCHITECTURE.md`, « Ajouter un module métier »).
+- Tests : chaque fichier qui passe des écritures d'essai (`test.deposit`…) déclare leurs
+  types, avec le rôle propriétaire, dans sa base jetable (`registerEntryKindsInSql`).
+
+### Non fait
+
+- **Les écritures déjà passées ne sont pas réexaminées** : une écriture d'un autre type
+  antérieure à la migration reste dans le grand livre — la base d'aperçu en porte une.
+- **La vérification horaire ne relit pas le type des écritures**, ni leur lien à une
+  opération.
+- **Un type ajouté sans sa règle rouvrirait le chemin** : un test le garde pour les types
+  présents ; rien dans la base ne l'empêche.
+- **Qui détient les identifiants du rôle de l'API peut encore écrire une opération
+  entière** — un ajustement et son approbation, au nom de deux membres habilités du
+  personnel ; un transfert dans les plafonds. Le propriétaire du schéma, lui, peut tout.
+
 ## [Non publié] — Socle : tâches planifiées surveillées, arrêt borné
 
 **Deux corrections du socle** (ADR 0029) — les deux comportements que les essais de panne
@@ -240,7 +298,8 @@ Aucun code de l'API n'est modifié par ces corrections.
   `adjustment.credit` ou `adjustment.debit` qu'elle ait son ajustement approuvé, mais accepte
   une écriture équilibrée d'un autre type. La double validation est la seule route de l'API
   qui apporte des fonds ; elle ne protège pas d'un accès en écriture à la base sous le rôle
-  de l'API (voir `docs/SECURITY.md`, « Opérations du personnel »).
+  de l'API (voir `docs/SECURITY.md`, « Opérations du personnel »). _Fermé depuis par le
+  lot 4, ci-dessus._
 - **Fonds réservés** — toujours reportés à la première opération en plusieurs temps.
 - Pas de double validation de la levée d'un gel ; pas de gel de tout un compte en une fois ;
   pas de gel que le titulaire ne verrait pas ; le support ne consulte pas les gels.

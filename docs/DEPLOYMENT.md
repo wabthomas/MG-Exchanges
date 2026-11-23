@@ -128,6 +128,19 @@ parcours complet sans une erreur ; puis la nouvelle version a passé le sien.
 > (format `4`) ne disent qu'il est gelé ; la clôture du compte, elle, reste refusée (`409`).
 > Le gel levé, tout reprend.
 
+La migration `ledger_entry_kinds` (liste fermée des types d'écriture) ajoute une table de
+trois lignes, une permission de lecture et — comme la précédente — **une règle sur une table
+existante** : un déclencheur sur `ledger_entries`, qui refuse toute écriture d'un type absent
+de la liste. La version précédente de l'API ne passe que des écritures des trois types
+listés : pour elle, rien ne change, et **y revenir ne demande rien**. La migration ne
+modifie, ne relit ni ne retire aucune écriture existante ; elle n'ouvre aucune fonctionnalité
+et ne déplace aucun fonds. Constaté sur la base d'aperçu, qui contenait des comptes, des
+transferts, des ajustements et une écriture d'un autre type : la migration appliquée pendant
+que la version précédente tournait, celle-ci a ensuite passé son parcours complet sans une
+erreur — double validation, transfert et débit compris — ; puis la nouvelle version a passé
+le sien. **Avant de l'appliquer à une base qui a déjà servi**, recenser les écritures d'un
+autre type : la requête est donnée sous « Grand livre ».
+
 **Retour arrière.** Redéployer l'image précédente. Une migration n'est pas annulée : elle
 est corrigée par une nouvelle migration. Procédure détaillée et testée : phase 9.
 
@@ -240,9 +253,9 @@ row`) — de même si un compte avait été mis au statut `CLOSED` à la main, c
 
 ## Grand livre
 
-Décisions : ADR 0025. Deux opérations passent des écritures à ce jour : le transfert entre
-titulaires, et l'ajustement du personnel sous double validation — **la seule route de l'API
-par laquelle des fonds entrent dans le grand livre ou en sortent** —, décrits aux deux
+Décisions : ADR 0025 et 0030. Deux opérations passent des écritures à ce jour : le transfert
+entre titulaires, et l'ajustement du personnel sous double validation — **la seule route de
+l'API par laquelle des fonds entrent dans le grand livre ou en sortent** —, décrits aux deux
 sections suivantes. Ce que l'exploitation doit savoir :
 
 - **Actifs.** Le grand livre ne tient de comptes que dans les actifs **enregistrés**, et
@@ -261,6 +274,39 @@ sections suivantes. Ce que l'exploitation doit savoir :
   enregistrer l'actif sous un autre code. Enregistrer un actif ne déplace aucun fonds et
   n'ouvre aucune opération : chaque titulaire voit apparaître un portefeuille à zéro.
 
+- **Types d'écriture.** La base tient la liste des types d'écriture — `transfer.internal`,
+  `adjustment.credit`, `adjustment.debit` — et refuse toute écriture d'un autre type, sous
+  tous les rôles (`MGX13`). La liste ne s'étend que par une migration, avec la version qui
+  apporte l'opération ; rien n'est à régler.
+
+  **Avant la migration `ledger_entry_kinds`, sur une base qui a déjà servi**, recenser les
+  écritures d'un autre type :
+
+  ```sql
+  SELECT kind, count(*) AS entries, min(posted_at) AS first_posted, max(posted_at) AS last_posted
+  FROM ledger_entries
+  WHERE kind NOT IN ('transfer.internal', 'adjustment.credit', 'adjustment.debit')
+  GROUP BY kind
+  ORDER BY kind;
+  ```
+
+  L'API n'en a jamais passé : **un résultat non vide désigne des écritures faites hors de
+  l'API**, en SQL — à examiner comme un incident, avant ou après la migration. Celle-ci
+  s'applique dans les deux cas et n'y touche pas : une écriture ne se modifie ni ne s'efface.
+  La migration appliquée, la même requête s'écrit
+  `WHERE kind NOT IN (SELECT key FROM ledger_entry_kinds)`. **Rien ne l'exécute
+  périodiquement** : la vérification horaire ne relit pas le type des écritures.
+
+  **Dans les journaux.** Une écriture d'un type hors liste tentée en SQL laisse, dans le
+  journal de PostgreSQL, l'erreur `MGX13`
+  (`ledger entry … is of kind "…", which the database does not know`) : quelqu'un a tenté
+  d'écrire dans le grand livre hors de l'API — **à traiter sans délai**. Si c'est une requête
+  de l'API qui s'y heurte, elle répond `500`, rien n'est écrit, et le journal de l'API porte
+  `Request failed` avec cette même erreur : le code passe une écriture d'un type que la base
+  ne connaît pas — une version de l'API mise en service avant sa migration, ou un défaut.
+  Aucune route ne le fait à ce jour : le message a été relu sur l'erreur elle-même, non sur
+  une requête.
+
 - **Vérification horaire.** L'étape `verify-ledger` de la tâche de maintenance relit **tout**
   le grand livre. Une anomalie produit :
   - une erreur dans les journaux, `Ledger verification failed`, avec la liste des anomalies
@@ -274,7 +320,8 @@ sections suivantes. Ce que l'exploitation doit savoir :
   peut venir que d'une écriture faite hors des règles de la base (déclencheurs désactivés
   avec le rôle propriétaire, restauration partielle) ou d'un défaut de ces règles. **Ne rien
   corriger à la main** : passer en mode maintenance, conserver les journaux, examiner. Rien
-  n'est corrigé automatiquement.
+  n'est corrigé automatiquement. Elle recalcule les soldes et les équilibres ; **elle ne
+  relit ni le type des écritures, ni leur lien à un transfert ou à un ajustement**.
 
 - **Rôle propriétaire.** Il peut désactiver les règles du grand livre ; le rôle de l'API ne
   le peut pas. Ses identifiants (`DATABASE_MIGRATION_URL`) ne servent qu'aux migrations et
@@ -408,6 +455,12 @@ Décisions : ADR 0027. Ce que l'exploitation doit savoir :
   72 heures. La justification (`reason`) est conservée indéfiniment et n'est jamais montrée
   au titulaire : y désigner la pièce qui fonde l'ajustement — relevé, reçu, décision.
 
+- **Seule voie d'entrée des fonds, dans la base aussi.** La base refuse désormais toute
+  écriture qui n'est ni un transfert ni un ajustement approuvé (voir « Grand livre », types
+  d'écriture) : un crédit ne s'écrit plus en SQL sous le rôle de l'API par une écriture d'un
+  type inventé. Ce rôle peut encore écrire **l'ajustement entier** — la demande, la décision
+  et l'écriture, en désignant deux membres habilités du personnel : ses identifiants restent
+  à protéger comme ceux d'un compte qui peut créditer.
 - **Ce que crédite un ajustement.** La contrepartie est le compte de conservation de la
   plateforme : un crédit dit que la plateforme détient, hors du grand livre, des fonds de
   plus pour ce titulaire. **Rien ne le vérifie** : le rapprochement avec ce qu'elle détient

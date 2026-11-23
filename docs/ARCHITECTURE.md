@@ -285,6 +285,15 @@ ses comptes, dans l'ordre des leurs ; deux écritures qui se croisent s'attenden
 s'interbloquer. Une opération peut donc verrouiller un titulaire _avant_ de passer une
 écriture — pour vérifier un plafond, par exemple —, jamais après (ADR 0025).
 
+**Une écriture a son opération.** Le type d'une écriture (`kind`) est une constante de
+l'opération qui la passe, déclarée dans `@mgx/contracts` et typée `LedgerEntryKind` : le
+compilateur refuse alors un type absent de `LEDGER_ENTRY_KINDS`. La base tient la même liste
+(`ledger_entry_kinds`) : elle refuse toute écriture d'un autre type, et ne valide une
+écriture d'un type connu qu'avec la ligne de son opération — le transfert, l'ajustement
+approuvé (ADR 0030). `LedgerService`, lui, accepte toute chaîne et ne contrôle pas le type
+d'avance : un type inconnu est un défaut du code, que la base arrête
+(`LedgerIntegrityError`).
+
 **Une opération, une transaction.** Le transfert en est le modèle (`TransferService`, ADR
 0026). Hors transaction d'abord : la preuve du titulaire, ce que la requête demande, la clé
 d'idempotence — le transfert existe-t-il déjà ? —, puis les bornes du compte. Dans la
@@ -364,6 +373,11 @@ partie du code ne lit `process.env` en dehors de `config/` et des deux points d'
    titulaire (`HolderProofService`), et suit l'ordre décrit sous « Une opération, une
    transaction ». Un portefeuille gelé la refuse d'office : ne l'ajouter aux types qui
    passent un gel que si deux personnes doivent pouvoir la mener sur un portefeuille gelé.
+   **Son type d'écriture s'ajoute à `LEDGER_ENTRY_KINDS` et, par la migration du module, à
+   `ledger_entry_kinds` — avec, dans cette même migration, la règle qui lie l'écriture à la
+   ligne de l'opération** (un déclencheur de contrainte différé sur `ledger_entries`, et sa
+   réciproque sur la table de l'opération : voir `transfers` et `ledger_adjustments`). Sans
+   type, la base refuse l'écriture ; sans règle, un test échoue.
 5. Protéger les routes : elles exigent déjà une authentification ; ajouter
    `@RequiresFeature(...)`, des limites de débit dédiées, `@RequirePermissions(...)` pour le
    back-office. Vérifier que chaque accès à une donnée est filtré par le compte de l'appelant.

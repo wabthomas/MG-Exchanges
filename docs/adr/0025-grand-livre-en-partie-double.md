@@ -108,6 +108,11 @@ pourrait pas les verrouiller, mais un solde écrit par ce biais n'est jamais val
 Deux erreurs nouvelles : `MGX08`, règle du grand livre enfreinte ; `MGX09`, fonds
 insuffisants. La seconde est un cas **attendu**.
 
+Ces règles portent sur l'**arithmétique** d'une écriture, non sur sa légitimité : le type
+d'une écriture était ici un texte libre. Depuis l'ADR 0030, la base tient la liste des types
+d'écriture et refuse toute écriture d'un autre type (`MGX13`) ; chaque type y est lié à son
+opération (ADR 0026, 0027).
+
 ### Un seul chemin dans le code : `LedgerService`
 
 Aucun module n'écrit un solde. Il décrit une écriture — sa clé, son type, son auteur, ses
